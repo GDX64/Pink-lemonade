@@ -3,12 +3,12 @@ import { createCanvas2DContext } from "../../src";
 import { detectWebGPUSupport } from "./support";
 
 describe("WebGPUCanvas2DContext", () => {
-  test("clear executes on supported systems and destroy guards subsequent calls", async () => {
+  test("basic commands", async () => {
     const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 64;
-    canvas.style.width = "64px";
-    canvas.style.height = "64px";
+    canvas.width = 400;
+    canvas.height = 400;
+    canvas.style.width = "400px";
+    canvas.style.height = "400px";
     document.body.appendChild(canvas);
 
     const support = await detectWebGPUSupport();
@@ -21,8 +21,15 @@ describe("WebGPUCanvas2DContext", () => {
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
     context.fillStyle = "red";
-    context.rect(32, 32, 16, 16);
+    context.rect(200, 200, 100, 100);
     context.fill();
+
+    context.moveTo(1, 1);
+    context.lineTo(200, 200);
+    context.lineTo(200, 1);
+    context.lineTo(1, 1);
+    context.strokeStyle = "blue";
+    context.stroke();
 
     await context.flush();
 

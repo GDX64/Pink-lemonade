@@ -21,6 +21,16 @@ interface RectPathSegment {
   height: number;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface LineSegment {
+  from: Point;
+  to: Point;
+}
+
 interface FillColor {
   r: number;
   g: number;
@@ -37,6 +47,11 @@ type PendingCommand =
       kind: "fill-rects";
       rects: ReadonlyArray<RectPathSegment>;
       color: FillColor;
+    }
+  | {
+      kind: "stroke-lines";
+      lines: ReadonlyArray<LineSegment>;
+      color: FillColor;
     };
 
 const DEFAULT_CLEAR: ClearColor = {
@@ -51,13 +66,18 @@ export class WebGPUCanvas2DContext {
   private readonly state: InitializedWebGPU;
   private readonly commandQueue: PendingCommand[] = [];
   private readonly pathRectangles: RectPathSegment[] = [];
+  private readonly pathLines: LineSegment[] = [];
+  private currentPathCursor: Point | null = null;
   private readonly fillPipeline: GPURenderPipeline;
+  private readonly strokePipeline: GPURenderPipeline;
   private readonly colorResolver: CanvasRenderingContext2D;
   private currentFillStyle = "#000000";
+  private currentStrokeStyle = "#000000";
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
-    this.fillPipeline = this.createFillPipeline();
+    this.fillPipeline = this.createColorPipeline("triangle-list");
+    this.strokePipeline = this.createColorPipeline("line-list");
 
     const colorResolverCanvas = document.createElement("canvas");
     colorResolverCanvas.width = 1;
@@ -101,6 +121,20 @@ export class WebGPUCanvas2DContext {
     }
   }
 
+  get strokeStyle(): string {
+    return this.currentStrokeStyle;
+  }
+
+  set strokeStyle(value: string) {
+    this.assertActive();
+    this.colorResolver.fillStyle = this.currentStrokeStyle;
+    this.colorResolver.fillStyle = value;
+
+    if (typeof this.colorResolver.fillStyle === "string") {
+      this.currentStrokeStyle = this.colorResolver.fillStyle;
+    }
+  }
+
   clear(color: Partial<ClearColor> = {}): void {
     this.assertActive();
 
@@ -132,6 +166,37 @@ export class WebGPUCanvas2DContext {
     this.pathRectangles.push({ x, y, width, height });
   }
 
+  moveTo(x: number, y: number): void {
+    this.assertActive();
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new TypeError("moveTo() requires finite numeric arguments.");
+    }
+
+    this.currentPathCursor = { x, y };
+  }
+
+  lineTo(x: number, y: number): void {
+    this.assertActive();
+
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new TypeError("lineTo() requires finite numeric arguments.");
+    }
+
+    const nextPoint: Point = { x, y };
+
+    if (this.currentPathCursor == null) {
+      this.currentPathCursor = nextPoint;
+      return;
+    }
+
+    this.pathLines.push({
+      from: { ...this.currentPathCursor },
+      to: nextPoint,
+    });
+    this.currentPathCursor = nextPoint;
+  }
+
   fill(): void {
     this.assertActive();
 
@@ -143,6 +208,23 @@ export class WebGPUCanvas2DContext {
       kind: "fill-rects",
       rects: this.pathRectangles.map((segment) => ({ ...segment })),
       color: this.parseCssColor(this.currentFillStyle),
+    });
+  }
+
+  stroke(): void {
+    this.assertActive();
+
+    if (this.pathLines.length === 0) {
+      return;
+    }
+
+    this.commandQueue.push({
+      kind: "stroke-lines",
+      lines: this.pathLines.map((segment) => ({
+        from: { ...segment.from },
+        to: { ...segment.to },
+      })),
+      color: this.parseCssColor(this.currentStrokeStyle),
     });
   }
 
@@ -191,7 +273,14 @@ export class WebGPUCanvas2DContext {
         ],
       });
 
-      this.encodeFilledRects(pass, command, transientBuffers);
+      if (command.kind === "fill-rects") {
+        this.encodeFilledRects(pass, command, transientBuffers);
+      }
+
+      if (command.kind === "stroke-lines") {
+        this.encodeStrokedLines(pass, command, transientBuffers);
+      }
+
       pass.end();
     }
 
@@ -210,10 +299,14 @@ export class WebGPUCanvas2DContext {
 
     this.commandQueue.length = 0;
     this.pathRectangles.length = 0;
+    this.pathLines.length = 0;
+    this.currentPathCursor = null;
     this.destroyed = true;
   }
 
-  private createFillPipeline(): GPURenderPipeline {
+  private createColorPipeline(
+    topology: GPUPrimitiveTopology,
+  ): GPURenderPipeline {
     const shaderModule = this.state.device.createShaderModule({
       code: `
         struct VertexInput {
@@ -270,7 +363,7 @@ export class WebGPUCanvas2DContext {
         targets: [{ format: this.state.format }],
       },
       primitive: {
-        topology: "triangle-list",
+        topology,
       },
     });
   }
@@ -295,6 +388,30 @@ export class WebGPUCanvas2DContext {
     transientBuffers.push(vertexBuffer);
 
     pass.setPipeline(this.fillPipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.draw(vertices.length / 6);
+  }
+
+  private encodeStrokedLines(
+    pass: GPURenderPassEncoder,
+    command: Extract<PendingCommand, { kind: "stroke-lines" }>,
+    transientBuffers: GPUBuffer[],
+  ): void {
+    const vertices = this.buildLineVertices(command.lines, command.color);
+
+    if (vertices.length === 0) {
+      return;
+    }
+
+    const vertexBuffer = this.state.device.createBuffer({
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+
+    this.state.device.queue.writeBuffer(vertexBuffer, 0, vertices);
+    transientBuffers.push(vertexBuffer);
+
+    pass.setPipeline(this.strokePipeline);
     pass.setVertexBuffer(0, vertexBuffer);
     pass.draw(vertices.length / 6);
   }
@@ -344,6 +461,45 @@ export class WebGPUCanvas2DContext {
       writeVertex(x0, y1);
       writeVertex(x1, y0);
       writeVertex(x1, y1);
+    }
+
+    return data;
+  }
+
+  private buildLineVertices(
+    lines: ReadonlyArray<LineSegment>,
+    color: FillColor,
+  ): Float32Array {
+    const canvasWidth = this.state.canvas.width;
+    const canvasHeight = this.state.canvas.height;
+
+    if (canvasWidth === 0 || canvasHeight === 0) {
+      return new Float32Array();
+    }
+
+    const floatsPerVertex = 6;
+    const verticesPerLine = 2;
+    const data = new Float32Array(
+      lines.length * verticesPerLine * floatsPerVertex,
+    );
+
+    let offset = 0;
+    const writeVertex = (x: number, y: number): void => {
+      const normalizedX = (x / canvasWidth) * 2 - 1;
+      const normalizedY = 1 - (y / canvasHeight) * 2;
+
+      data[offset] = normalizedX;
+      data[offset + 1] = normalizedY;
+      data[offset + 2] = color.r;
+      data[offset + 3] = color.g;
+      data[offset + 4] = color.b;
+      data[offset + 5] = color.a;
+      offset += floatsPerVertex;
+    };
+
+    for (const line of lines) {
+      writeVertex(line.from.x, line.from.y);
+      writeVertex(line.to.x, line.to.y);
     }
 
     return data;
