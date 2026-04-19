@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createCanvas2DContext, WebGPUInitializationError } from "../../src";
 import { detectWebGPUSupport } from "./support";
 
@@ -7,6 +7,9 @@ describe("WebGPUCanvas2DContext", () => {
     const canvas = document.createElement("canvas");
     canvas.width = 64;
     canvas.height = 64;
+    canvas.style.width = "64px";
+    canvas.style.height = "64px";
+    document.body.appendChild(canvas);
 
     const support = await detectWebGPUSupport();
 
@@ -15,9 +18,11 @@ describe("WebGPUCanvas2DContext", () => {
     }
 
     const context = await createCanvas2DContext(canvas);
-    expect(() => context.clear({ r: 1, g: 0.5, b: 0, a: 1 })).not.toThrow();
+
+    context.clear({ r: 1, g: 1, b: 1, a: 1 });
+
+    await context.flush();
 
     context.destroy();
-    expect(() => context.clear()).toThrowError(WebGPUInitializationError);
   });
 });

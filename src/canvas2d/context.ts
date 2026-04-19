@@ -14,6 +14,11 @@ export interface ClearColor {
 
 export interface Canvas2DContextOptions extends InitializeWebGPUOptions {}
 
+type PendingCommand = {
+  kind: "clear";
+  clearValue: GPUColor;
+};
+
 const DEFAULT_CLEAR: ClearColor = {
   r: 0,
   g: 0,
@@ -24,6 +29,7 @@ const DEFAULT_CLEAR: ClearColor = {
 export class WebGPUCanvas2DContext {
   private destroyed = false;
   private readonly state: InitializedWebGPU;
+  private readonly commandQueue: PendingCommand[] = [];
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
@@ -44,29 +50,52 @@ export class WebGPUCanvas2DContext {
   clear(color: Partial<ClearColor> = {}): void {
     this.assertActive();
 
-    const clearValue = {
+    const clearValue: GPUColor = {
       r: color.r ?? DEFAULT_CLEAR.r,
       g: color.g ?? DEFAULT_CLEAR.g,
       b: color.b ?? DEFAULT_CLEAR.b,
       a: color.a ?? DEFAULT_CLEAR.a,
     };
 
-    const encoder = this.state.device.createCommandEncoder();
-    const view = this.state.context.getCurrentTexture().createView();
-
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view,
-          clearValue,
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
+    this.commandQueue.push({
+      kind: "clear",
+      clearValue,
     });
+  }
 
-    pass.end();
+  async flush(): Promise<void> {
+    this.assertActive();
+
+    if (this.commandQueue.length === 0) {
+      return this.state.device.queue.onSubmittedWorkDone();
+    }
+
+    const encoder = this.state.device.createCommandEncoder();
+    const queuedCommands = this.commandQueue.splice(
+      0,
+      this.commandQueue.length,
+    );
+
+    for (const command of queuedCommands) {
+      if (command.kind === "clear") {
+        const view = this.state.context.getCurrentTexture().createView();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view,
+              clearValue: command.clearValue,
+              loadOp: "clear",
+              storeOp: "store",
+            },
+          ],
+        });
+
+        pass.end();
+      }
+    }
+
     this.state.device.queue.submit([encoder.finish()]);
+    await this.state.device.queue.onSubmittedWorkDone();
   }
 
   destroy(): void {
@@ -74,6 +103,7 @@ export class WebGPUCanvas2DContext {
       return;
     }
 
+    this.commandQueue.length = 0;
     this.destroyed = true;
   }
 
