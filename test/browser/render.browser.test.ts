@@ -20,12 +20,21 @@ describe("WebGPUCanvas2DContext", () => {
     const context = await createCanvas2DContext(canvas);
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
+
+    const fragmentShader = `
+    @fragment
+    fn main() -> @location(0) vec4<f32> {
+      return vec4<f32>(1.0, 1.0, 0.0, 1.0);
+    }
+    `;
+
     const rect = new Rect({
       x: 50,
       y: 50,
       width: 100,
       height: 100,
-      fill: "#ff0000",
+      fragmentShader,
+      fragmentShaderEntryPoint: "main",
     });
 
     const scene = new Scene();

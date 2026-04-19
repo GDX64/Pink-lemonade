@@ -20,6 +20,8 @@ export interface RectOptions {
   width: number;
   height: number;
   fill?: string;
+  fragmentShader?: string | undefined;
+  fragmentShaderEntryPoint?: string | undefined;
 }
 
 interface RectGeometry {
@@ -49,6 +51,8 @@ export class Rect {
   width: number;
   height: number;
   fill: string;
+  fragmentShader: string | undefined;
+  fragmentShaderEntryPoint: string | undefined;
 
   constructor(options: RectOptions) {
     assertFiniteRect(options, "Rect");
@@ -58,6 +62,8 @@ export class Rect {
     this.width = options.width;
     this.height = options.height;
     this.fill = normalizeHexColor(options.fill ?? "#000000");
+    this.fragmentShader = options.fragmentShader;
+    this.fragmentShaderEntryPoint = options.fragmentShaderEntryPoint;
   }
 }
 
@@ -92,11 +98,18 @@ export class WebGPUCanvas2DContext {
   private destroyed = false;
   private readonly state: InitializedWebGPU;
   private pendingClearValue: GPUColor | null = null;
-  private readonly fillPipeline: GPURenderPipeline;
+  private readonly pipelineCache = new Map<string, GPURenderPipeline>();
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
-    this.fillPipeline = this.createColorPipeline("triangle-list");
+    this.pipelineCache.set(
+      this.getPipelineCacheKey(undefined, undefined),
+      this.createPipeline(
+        "triangle-list",
+        DEFAULT_FRAGMENT_SHADER_SOURCE,
+        "fs_main",
+      ),
+    );
   }
 
   static async create(
@@ -170,6 +183,8 @@ export class WebGPUCanvas2DContext {
           pass,
           group.rectangles,
           group.color,
+          group.fragmentShader,
+          group.fragmentShaderEntryPoint,
           transientBuffers,
         );
       }
@@ -185,35 +200,6 @@ export class WebGPUCanvas2DContext {
     }
   }
 
-  async flush(): Promise<void> {
-    this.assertActive();
-
-    if (this.pendingClearValue == null) {
-      return this.state.device.queue.onSubmittedWorkDone();
-    }
-
-    const encoder = this.state.device.createCommandEncoder();
-    const currentTextureView = this.state.context
-      .getCurrentTexture()
-      .createView();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: currentTextureView,
-          clearValue: this.pendingClearValue,
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-    });
-
-    pass.end();
-    this.pendingClearValue = null;
-
-    this.state.device.queue.submit([encoder.finish()]);
-    return this.state.device.queue.onSubmittedWorkDone();
-  }
-
   destroy(): void {
     if (this.destroyed) {
       return;
@@ -226,14 +212,29 @@ export class WebGPUCanvas2DContext {
   private groupRectanglesByColor(scene: Scene): ReadonlyArray<{
     rectangles: ReadonlyArray<RectGeometry>;
     color: FillColor;
+    fragmentShader: string | undefined;
+    fragmentShaderEntryPoint: string | undefined;
   }> {
-    const groups = new Map<string, RectGeometry[]>();
+    const groups = new Map<
+      string,
+      {
+        rectangles: RectGeometry[];
+        colorHex: string;
+        fragmentShader: string | undefined;
+        fragmentShaderEntryPoint: string | undefined;
+      }
+    >();
 
     for (const rect of scene.getRectangles()) {
       assertFiniteRect(rect, "Rect");
 
       const colorKey = normalizeHexColor(rect.fill);
-      const group = groups.get(colorKey);
+      const pipelineKey = this.getPipelineCacheKey(
+        rect.fragmentShader,
+        rect.fragmentShaderEntryPoint,
+      );
+      const groupKey = `${pipelineKey}::${colorKey}`;
+      const group = groups.get(groupKey);
       const geometry: RectGeometry = {
         x: rect.x,
         y: rect.y,
@@ -242,20 +243,29 @@ export class WebGPUCanvas2DContext {
       };
 
       if (group == null) {
-        groups.set(colorKey, [geometry]);
+        groups.set(groupKey, {
+          rectangles: [geometry],
+          colorHex: colorKey,
+          fragmentShader: rect.fragmentShader,
+          fragmentShaderEntryPoint: rect.fragmentShaderEntryPoint,
+        });
       } else {
-        group.push(geometry);
+        group.rectangles.push(geometry);
       }
     }
 
-    return Array.from(groups, ([hex, rectangles]) => ({
-      rectangles,
-      color: parseHexColor(hex),
+    return Array.from(groups.values(), (group) => ({
+      rectangles: group.rectangles,
+      color: parseHexColor(group.colorHex),
+      fragmentShader: group.fragmentShader,
+      fragmentShaderEntryPoint: group.fragmentShaderEntryPoint,
     }));
   }
 
-  private createColorPipeline(
+  private createPipeline(
     topology: GPUPrimitiveTopology,
+    fragmentShaderSource: string,
+    fragmentEntryPoint: string,
   ): GPURenderPipeline {
     const shaderModule = this.state.device.createShaderModule({
       code: `
@@ -277,10 +287,7 @@ export class WebGPUCanvas2DContext {
           return output;
         }
 
-        @fragment
-        fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-          return input.color;
-        }
+        ${fragmentShaderSource}
       `,
     });
 
@@ -309,7 +316,7 @@ export class WebGPUCanvas2DContext {
       },
       fragment: {
         module: shaderModule,
-        entryPoint: "fs_main",
+        entryPoint: fragmentEntryPoint,
         targets: [{ format: this.state.format }],
       },
       primitive: {
@@ -322,6 +329,8 @@ export class WebGPUCanvas2DContext {
     pass: GPURenderPassEncoder,
     rectangles: ReadonlyArray<RectGeometry>,
     color: FillColor,
+    fragmentShader: string | undefined,
+    fragmentShaderEntryPoint: string | undefined,
     transientBuffers: GPUBuffer[],
   ): void {
     const vertices = this.buildRectVertices(rectangles, color);
@@ -338,9 +347,45 @@ export class WebGPUCanvas2DContext {
     this.state.device.queue.writeBuffer(vertexBuffer, 0, vertices);
     transientBuffers.push(vertexBuffer);
 
-    pass.setPipeline(this.fillPipeline);
+    pass.setPipeline(
+      this.getOrCreatePipeline(fragmentShader, fragmentShaderEntryPoint),
+    );
     pass.setVertexBuffer(0, vertexBuffer);
     pass.draw(vertices.length / 6);
+  }
+
+  private getOrCreatePipeline(
+    fragmentShader: string | undefined,
+    fragmentShaderEntryPoint: string | undefined,
+  ): GPURenderPipeline {
+    const key = this.getPipelineCacheKey(
+      fragmentShader,
+      fragmentShaderEntryPoint,
+    );
+    const cached = this.pipelineCache.get(key);
+
+    if (cached != null) {
+      return cached;
+    }
+
+    const source = fragmentShader ?? DEFAULT_FRAGMENT_SHADER_SOURCE;
+    const entryPoint =
+      fragmentShader == null ? "fs_main" : (fragmentShaderEntryPoint ?? "main");
+    const pipeline = this.createPipeline("triangle-list", source, entryPoint);
+    this.pipelineCache.set(key, pipeline);
+    return pipeline;
+  }
+
+  private getPipelineCacheKey(
+    fragmentShader: string | undefined,
+    fragmentShaderEntryPoint: string | undefined,
+  ): string {
+    if (fragmentShader == null) {
+      return "default::fs_main";
+    }
+
+    const entryPoint = fragmentShaderEntryPoint ?? "main";
+    return `${entryPoint}::${fragmentShader}`;
   }
 
   private buildRectVertices(
@@ -430,6 +475,13 @@ function normalizeHexColor(value: string): string {
 
 const HEX_COLOR_REGEX =
   /^#(?:[\da-fA-F]{3}|[\da-fA-F]{4}|[\da-fA-F]{6}|[\da-fA-F]{8})$/;
+
+const DEFAULT_FRAGMENT_SHADER_SOURCE = `
+  @fragment
+  fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return input.color;
+  }
+`;
 
 function parseHexColor(value: string): FillColor {
   const hex = value.slice(1);
