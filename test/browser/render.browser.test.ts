@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from "vitest";
-import { createCanvas2DContext } from "../../src";
+import { describe, test } from "vitest";
+import { createCanvas2DContext, Rect, Scene } from "../../src";
 import { detectWebGPUSupport } from "./support";
 
 describe("WebGPUCanvas2DContext", () => {
@@ -20,18 +20,18 @@ describe("WebGPUCanvas2DContext", () => {
     const context = await createCanvas2DContext(canvas);
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
-    context.fillStyle = "red";
-    context.rect(200, 200, 100, 100);
-    context.fill();
+    const rect = new Rect({
+      x: 50,
+      y: 50,
+      width: 100,
+      height: 100,
+      fill: "#ff0000",
+    });
 
-    context.moveTo(1, 1);
-    context.lineTo(200, 200);
-    context.lineTo(200, 1);
-    context.lineTo(1, 1);
-    context.strokeStyle = "blue";
-    context.stroke();
+    const scene = new Scene();
+    scene.add(rect);
 
-    await context.flush();
+    await context.draw(scene);
 
     context.destroy();
   });

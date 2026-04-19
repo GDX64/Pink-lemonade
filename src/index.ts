@@ -1,8 +1,11 @@
 export {
   createCanvas2DContext,
+  Rect,
+  Scene,
   WebGPUCanvas2DContext,
   type Canvas2DContextOptions,
   type ClearColor,
+  type RectOptions,
 } from "./canvas2d/context";
 
 export {

@@ -14,21 +14,19 @@ export interface ClearColor {
 
 export interface Canvas2DContextOptions extends InitializeWebGPUOptions {}
 
-interface RectPathSegment {
+export interface RectOptions {
   x: number;
   y: number;
   width: number;
   height: number;
+  fill?: string;
 }
 
-interface Point {
+interface RectGeometry {
   x: number;
   y: number;
-}
-
-interface LineSegment {
-  from: Point;
-  to: Point;
+  width: number;
+  height: number;
 }
 
 interface FillColor {
@@ -38,22 +36,6 @@ interface FillColor {
   a: number;
 }
 
-type PendingCommand =
-  | {
-      kind: "clear";
-      clearValue: GPUColor;
-    }
-  | {
-      kind: "fill-rects";
-      rects: ReadonlyArray<RectPathSegment>;
-      color: FillColor;
-    }
-  | {
-      kind: "stroke-lines";
-      lines: ReadonlyArray<LineSegment>;
-      color: FillColor;
-    };
-
 const DEFAULT_CLEAR: ClearColor = {
   r: 0,
   g: 0,
@@ -61,38 +43,60 @@ const DEFAULT_CLEAR: ClearColor = {
   a: 1,
 };
 
+export class Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+
+  constructor(options: RectOptions) {
+    assertFiniteRect(options, "Rect");
+
+    this.x = options.x;
+    this.y = options.y;
+    this.width = options.width;
+    this.height = options.height;
+    this.fill = normalizeHexColor(options.fill ?? "#000000");
+  }
+}
+
+export class Scene {
+  private readonly rectangles: Rect[] = [];
+
+  add(rect: Rect): void {
+    this.rectangles.push(rect);
+  }
+
+  remove(rect: Rect): boolean {
+    const index = this.rectangles.indexOf(rect);
+
+    if (index < 0) {
+      return false;
+    }
+
+    this.rectangles.splice(index, 1);
+    return true;
+  }
+
+  clear(): void {
+    this.rectangles.length = 0;
+  }
+
+  getRectangles(): ReadonlyArray<Rect> {
+    return this.rectangles;
+  }
+}
+
 export class WebGPUCanvas2DContext {
   private destroyed = false;
   private readonly state: InitializedWebGPU;
-  private readonly commandQueue: PendingCommand[] = [];
-  private readonly pathRectangles: RectPathSegment[] = [];
-  private readonly pathLines: LineSegment[] = [];
-  private currentPathCursor: Point | null = null;
+  private pendingClearValue: GPUColor | null = null;
   private readonly fillPipeline: GPURenderPipeline;
-  private readonly strokePipeline: GPURenderPipeline;
-  private readonly colorResolver: CanvasRenderingContext2D;
-  private currentFillStyle = "#000000";
-  private currentStrokeStyle = "#000000";
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
     this.fillPipeline = this.createColorPipeline("triangle-list");
-    this.strokePipeline = this.createColorPipeline("line-list");
-
-    const colorResolverCanvas = document.createElement("canvas");
-    colorResolverCanvas.width = 1;
-    colorResolverCanvas.height = 1;
-
-    const colorResolver = colorResolverCanvas.getContext("2d");
-
-    if (colorResolver == null) {
-      throw new WebGPUInitializationError(
-        "Unable to create an internal color parser for fill operations.",
-      );
-    }
-
-    colorResolver.fillStyle = this.currentFillStyle;
-    this.colorResolver = colorResolver;
   }
 
   static async create(
@@ -107,161 +111,49 @@ export class WebGPUCanvas2DContext {
     return this.state.canvas;
   }
 
-  get fillStyle(): string {
-    return this.currentFillStyle;
-  }
-
-  set fillStyle(value: string) {
-    this.assertActive();
-    this.colorResolver.fillStyle = this.currentFillStyle;
-    this.colorResolver.fillStyle = value;
-
-    if (typeof this.colorResolver.fillStyle === "string") {
-      this.currentFillStyle = this.colorResolver.fillStyle;
-    }
-  }
-
-  get strokeStyle(): string {
-    return this.currentStrokeStyle;
-  }
-
-  set strokeStyle(value: string) {
-    this.assertActive();
-    this.colorResolver.fillStyle = this.currentStrokeStyle;
-    this.colorResolver.fillStyle = value;
-
-    if (typeof this.colorResolver.fillStyle === "string") {
-      this.currentStrokeStyle = this.colorResolver.fillStyle;
-    }
-  }
-
   clear(color: Partial<ClearColor> = {}): void {
     this.assertActive();
 
-    const clearValue: GPUColor = {
+    this.pendingClearValue = {
       r: color.r ?? DEFAULT_CLEAR.r,
       g: color.g ?? DEFAULT_CLEAR.g,
       b: color.b ?? DEFAULT_CLEAR.b,
       a: color.a ?? DEFAULT_CLEAR.a,
     };
-
-    this.commandQueue.push({
-      kind: "clear",
-      clearValue,
-    });
   }
 
-  rect(x: number, y: number, width: number, height: number): void {
+  async draw(scene: Scene): Promise<void> {
     this.assertActive();
 
-    if (
-      !Number.isFinite(x) ||
-      !Number.isFinite(y) ||
-      !Number.isFinite(width) ||
-      !Number.isFinite(height)
-    ) {
-      throw new TypeError("rect() requires finite numeric arguments.");
-    }
+    const groups = this.groupRectanglesByColor(scene);
 
-    this.pathRectangles.push({ x, y, width, height });
-  }
-
-  moveTo(x: number, y: number): void {
-    this.assertActive();
-
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      throw new TypeError("moveTo() requires finite numeric arguments.");
-    }
-
-    this.currentPathCursor = { x, y };
-  }
-
-  lineTo(x: number, y: number): void {
-    this.assertActive();
-
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      throw new TypeError("lineTo() requires finite numeric arguments.");
-    }
-
-    const nextPoint: Point = { x, y };
-
-    if (this.currentPathCursor == null) {
-      this.currentPathCursor = nextPoint;
-      return;
-    }
-
-    this.pathLines.push({
-      from: { ...this.currentPathCursor },
-      to: nextPoint,
-    });
-    this.currentPathCursor = nextPoint;
-  }
-
-  fill(): void {
-    this.assertActive();
-
-    if (this.pathRectangles.length === 0) {
-      return;
-    }
-
-    this.commandQueue.push({
-      kind: "fill-rects",
-      rects: this.pathRectangles.map((segment) => ({ ...segment })),
-      color: this.parseCssColor(this.currentFillStyle),
-    });
-  }
-
-  stroke(): void {
-    this.assertActive();
-
-    if (this.pathLines.length === 0) {
-      return;
-    }
-
-    this.commandQueue.push({
-      kind: "stroke-lines",
-      lines: this.pathLines.map((segment) => ({
-        from: { ...segment.from },
-        to: { ...segment.to },
-      })),
-      color: this.parseCssColor(this.currentStrokeStyle),
-    });
-  }
-
-  async flush(): Promise<void> {
-    this.assertActive();
-
-    if (this.commandQueue.length === 0) {
+    if (this.pendingClearValue == null && groups.length === 0) {
       return this.state.device.queue.onSubmittedWorkDone();
     }
 
+    const transientBuffers: GPUBuffer[] = [];
     const encoder = this.state.device.createCommandEncoder();
-    const queuedCommands = this.commandQueue.splice(
-      0,
-      this.commandQueue.length,
-    );
     const currentTextureView = this.state.context
       .getCurrentTexture()
       .createView();
-    const transientBuffers: GPUBuffer[] = [];
 
-    for (const command of queuedCommands) {
-      if (command.kind === "clear") {
-        const pass = encoder.beginRenderPass({
-          colorAttachments: [
-            {
-              view: currentTextureView,
-              clearValue: command.clearValue,
-              loadOp: "clear",
-              storeOp: "store",
-            },
-          ],
-        });
+    if (this.pendingClearValue != null) {
+      const clearPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: currentTextureView,
+            clearValue: this.pendingClearValue,
+            loadOp: "clear",
+            storeOp: "store",
+          },
+        ],
+      });
 
-        pass.end();
-        continue;
-      }
+      clearPass.end();
+      this.pendingClearValue = null;
+    }
 
+    if (groups.length > 0) {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
@@ -273,12 +165,13 @@ export class WebGPUCanvas2DContext {
         ],
       });
 
-      if (command.kind === "fill-rects") {
-        this.encodeFilledRects(pass, command, transientBuffers);
-      }
-
-      if (command.kind === "stroke-lines") {
-        this.encodeStrokedLines(pass, command, transientBuffers);
+      for (const group of groups) {
+        this.encodeFilledRects(
+          pass,
+          group.rectangles,
+          group.color,
+          transientBuffers,
+        );
       }
 
       pass.end();
@@ -292,16 +185,73 @@ export class WebGPUCanvas2DContext {
     }
   }
 
+  async flush(): Promise<void> {
+    this.assertActive();
+
+    if (this.pendingClearValue == null) {
+      return this.state.device.queue.onSubmittedWorkDone();
+    }
+
+    const encoder = this.state.device.createCommandEncoder();
+    const currentTextureView = this.state.context
+      .getCurrentTexture()
+      .createView();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: currentTextureView,
+          clearValue: this.pendingClearValue,
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+    });
+
+    pass.end();
+    this.pendingClearValue = null;
+
+    this.state.device.queue.submit([encoder.finish()]);
+    return this.state.device.queue.onSubmittedWorkDone();
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;
     }
 
-    this.commandQueue.length = 0;
-    this.pathRectangles.length = 0;
-    this.pathLines.length = 0;
-    this.currentPathCursor = null;
+    this.pendingClearValue = null;
     this.destroyed = true;
+  }
+
+  private groupRectanglesByColor(scene: Scene): ReadonlyArray<{
+    rectangles: ReadonlyArray<RectGeometry>;
+    color: FillColor;
+  }> {
+    const groups = new Map<string, RectGeometry[]>();
+
+    for (const rect of scene.getRectangles()) {
+      assertFiniteRect(rect, "Rect");
+
+      const colorKey = normalizeHexColor(rect.fill);
+      const group = groups.get(colorKey);
+      const geometry: RectGeometry = {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      };
+
+      if (group == null) {
+        groups.set(colorKey, [geometry]);
+      } else {
+        group.push(geometry);
+      }
+    }
+
+    return Array.from(groups, ([hex, rectangles]) => ({
+      rectangles,
+      color: parseHexColor(hex),
+    }));
   }
 
   private createColorPipeline(
@@ -370,10 +320,11 @@ export class WebGPUCanvas2DContext {
 
   private encodeFilledRects(
     pass: GPURenderPassEncoder,
-    command: Extract<PendingCommand, { kind: "fill-rects" }>,
+    rectangles: ReadonlyArray<RectGeometry>,
+    color: FillColor,
     transientBuffers: GPUBuffer[],
   ): void {
-    const vertices = this.buildRectVertices(command.rects, command.color);
+    const vertices = this.buildRectVertices(rectangles, color);
 
     if (vertices.length === 0) {
       return;
@@ -392,32 +343,8 @@ export class WebGPUCanvas2DContext {
     pass.draw(vertices.length / 6);
   }
 
-  private encodeStrokedLines(
-    pass: GPURenderPassEncoder,
-    command: Extract<PendingCommand, { kind: "stroke-lines" }>,
-    transientBuffers: GPUBuffer[],
-  ): void {
-    const vertices = this.buildLineVertices(command.lines, command.color);
-
-    if (vertices.length === 0) {
-      return;
-    }
-
-    const vertexBuffer = this.state.device.createBuffer({
-      size: vertices.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    this.state.device.queue.writeBuffer(vertexBuffer, 0, vertices);
-    transientBuffers.push(vertexBuffer);
-
-    pass.setPipeline(this.strokePipeline);
-    pass.setVertexBuffer(0, vertexBuffer);
-    pass.draw(vertices.length / 6);
-  }
-
   private buildRectVertices(
-    rects: ReadonlyArray<RectPathSegment>,
+    rects: ReadonlyArray<RectGeometry>,
     color: FillColor,
   ): Float32Array {
     const canvasWidth = this.state.canvas.width;
@@ -466,57 +393,6 @@ export class WebGPUCanvas2DContext {
     return data;
   }
 
-  private buildLineVertices(
-    lines: ReadonlyArray<LineSegment>,
-    color: FillColor,
-  ): Float32Array {
-    const canvasWidth = this.state.canvas.width;
-    const canvasHeight = this.state.canvas.height;
-
-    if (canvasWidth === 0 || canvasHeight === 0) {
-      return new Float32Array();
-    }
-
-    const floatsPerVertex = 6;
-    const verticesPerLine = 2;
-    const data = new Float32Array(
-      lines.length * verticesPerLine * floatsPerVertex,
-    );
-
-    let offset = 0;
-    const writeVertex = (x: number, y: number): void => {
-      const normalizedX = (x / canvasWidth) * 2 - 1;
-      const normalizedY = 1 - (y / canvasHeight) * 2;
-
-      data[offset] = normalizedX;
-      data[offset + 1] = normalizedY;
-      data[offset + 2] = color.r;
-      data[offset + 3] = color.g;
-      data[offset + 4] = color.b;
-      data[offset + 5] = color.a;
-      offset += floatsPerVertex;
-    };
-
-    for (const line of lines) {
-      writeVertex(line.from.x, line.from.y);
-      writeVertex(line.to.x, line.to.y);
-    }
-
-    return data;
-  }
-
-  private parseCssColor(value: string): FillColor {
-    this.colorResolver.fillStyle = "#000000";
-    this.colorResolver.fillStyle = value;
-    const normalized = this.colorResolver.fillStyle;
-
-    if (typeof normalized !== "string") {
-      return { r: 0, g: 0, b: 0, a: 1 };
-    }
-
-    return parseNormalizedColor(normalized);
-  }
-
   private assertActive(): void {
     if (this.destroyed) {
       throw new WebGPUInitializationError(
@@ -526,32 +402,34 @@ export class WebGPUCanvas2DContext {
   }
 }
 
-function parseNormalizedColor(value: string): FillColor {
-  if (value.startsWith("#")) {
-    return parseHexColor(value);
+function assertFiniteRect(
+  rect: { x: number; y: number; width: number; height: number },
+  source: string,
+): void {
+  if (
+    !Number.isFinite(rect.x) ||
+    !Number.isFinite(rect.y) ||
+    !Number.isFinite(rect.width) ||
+    !Number.isFinite(rect.height)
+  ) {
+    throw new TypeError(
+      `${source} requires finite numeric coordinates and dimensions.`,
+    );
   }
-
-  const rgbaMatch = value.match(
-    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/,
-  );
-
-  if (rgbaMatch == null) {
-    return { r: 0, g: 0, b: 0, a: 1 };
-  }
-
-  const [, rText, gText, bText, aText] = rgbaMatch;
-  const r = Number(rText) / 255;
-  const g = Number(gText) / 255;
-  const b = Number(bText) / 255;
-  const a = aText == null ? 1 : Number(aText);
-
-  return {
-    r: clamp01(r),
-    g: clamp01(g),
-    b: clamp01(b),
-    a: clamp01(a),
-  };
 }
+
+function normalizeHexColor(value: string): string {
+  if (!HEX_COLOR_REGEX.test(value)) {
+    throw new TypeError(
+      "Only hex colors are supported. Use #RGB, #RGBA, #RRGGBB, or #RRGGBBAA.",
+    );
+  }
+
+  return value.toLowerCase();
+}
+
+const HEX_COLOR_REGEX =
+  /^#(?:[\da-fA-F]{3}|[\da-fA-F]{4}|[\da-fA-F]{6}|[\da-fA-F]{8})$/;
 
 function parseHexColor(value: string): FillColor {
   const hex = value.slice(1);

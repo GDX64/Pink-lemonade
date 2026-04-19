@@ -24,13 +24,26 @@ npx playwright install chromium
 ## Quick start
 
 ```ts
-import { createCanvas2DContext } from "pink-lemonade";
+import { createCanvas2DContext, Rect, Scene } from "pink-lemonade";
 
 const canvas = document.querySelector("canvas");
 
 if (canvas instanceof HTMLCanvasElement) {
   const ctx = await createCanvas2DContext(canvas);
   ctx.clear({ r: 1, g: 0.9, b: 0.6, a: 1 });
+
+  const scene = new Scene();
+  scene.add(
+    new Rect({
+      x: 40,
+      y: 40,
+      width: 160,
+      height: 120,
+      fill: "#ff3366",
+    }),
+  );
+
+  await ctx.draw(scene);
 }
 ```
 
