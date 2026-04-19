@@ -99,9 +99,39 @@ export class WebGPUCanvas2DContext {
   private readonly state: InitializedWebGPU;
   private pendingClearValue: GPUColor | null = null;
   private readonly pipelineCache = new Map<string, GPURenderPipeline>();
+  private readonly globalUniformBuffer: GPUBuffer;
+  private readonly globalUniformData = new Float32Array(8);
+  private readonly globalBindGroupLayout: GPUBindGroupLayout;
+  private readonly globalBindGroup: GPUBindGroup;
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
+    this.globalBindGroupLayout = this.state.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: {
+            type: "uniform",
+          },
+        },
+      ],
+    });
+    this.globalUniformBuffer = this.state.device.createBuffer({
+      size: this.globalUniformData.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.globalBindGroup = this.state.device.createBindGroup({
+      layout: this.globalBindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: this.globalUniformBuffer,
+          },
+        },
+      ],
+    });
     this.pipelineCache.set(
       this.getPipelineCacheKey(undefined, undefined),
       this.createPipeline(
@@ -135,8 +165,29 @@ export class WebGPUCanvas2DContext {
     };
   }
 
+  async loop(time: number, cb: () => Promise<void>): Promise<void> {
+    const start = Date.now();
+
+    while (true) {
+      const now = Date.now();
+      const elapsed = now - start;
+      if (elapsed >= time) {
+        break;
+      }
+      await this.raf();
+      await cb();
+    }
+  }
+
+  raf(): Promise<void> {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+  }
+
   async draw(scene: Scene): Promise<void> {
     this.assertActive();
+    this.updateGlobalTimestamp(performance.now());
 
     const groups = this.groupRectanglesByColor(scene);
 
@@ -206,6 +257,7 @@ export class WebGPUCanvas2DContext {
     }
 
     this.pendingClearValue = null;
+    this.globalUniformBuffer.destroy();
     this.destroyed = true;
   }
 
@@ -287,12 +339,18 @@ export class WebGPUCanvas2DContext {
           return output;
         }
 
+        ${FRAGMENT_GLOBALS_SHADER_SOURCE}
+
         ${fragmentShaderSource}
       `,
     });
 
+    const pipelineLayout = this.state.device.createPipelineLayout({
+      bindGroupLayouts: [this.globalBindGroupLayout],
+    });
+
     return this.state.device.createRenderPipeline({
-      layout: "auto",
+      layout: pipelineLayout,
       vertex: {
         module: shaderModule,
         entryPoint: "vs_main",
@@ -350,8 +408,25 @@ export class WebGPUCanvas2DContext {
     pass.setPipeline(
       this.getOrCreatePipeline(fragmentShader, fragmentShaderEntryPoint),
     );
+    pass.setBindGroup(0, this.globalBindGroup);
     pass.setVertexBuffer(0, vertexBuffer);
     pass.draw(vertices.length / 6);
+  }
+
+  private updateGlobalTimestamp(timestampMs: number): void {
+    this.globalUniformData[0] = timestampMs;
+    this.globalUniformData[1] = 0;
+    this.globalUniformData[2] = 0;
+    this.globalUniformData[3] = 0;
+    this.globalUniformData[4] = 0;
+    this.globalUniformData[5] = 0;
+    this.globalUniformData[6] = 0;
+    this.globalUniformData[7] = 0;
+    this.state.device.queue.writeBuffer(
+      this.globalUniformBuffer,
+      0,
+      this.globalUniformData,
+    );
   }
 
   private getOrCreatePipeline(
@@ -481,6 +556,16 @@ const DEFAULT_FRAGMENT_SHADER_SOURCE = `
   fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return input.color;
   }
+`;
+
+const FRAGMENT_GLOBALS_SHADER_SOURCE = `
+  struct GlobalUniforms {
+    timestamp: f32,
+    _pad0: vec3<f32>,
+  };
+
+  @group(0) @binding(0)
+  var<uniform> globalUniforms: GlobalUniforms;
 `;
 
 function parseHexColor(value: string): FillColor {

@@ -24,7 +24,8 @@ describe("WebGPUCanvas2DContext", () => {
     const fragmentShader = `
     @fragment
     fn main() -> @location(0) vec4<f32> {
-      return vec4<f32>(1.0, 1.0, 0.0, 1.0);
+      let pulse = fract(globalUniforms.timestamp / 1000.0);
+      return vec4<f32>(pulse, 1.0, 0.0, 1.0);
     }
     `;
 
@@ -40,7 +41,9 @@ describe("WebGPUCanvas2DContext", () => {
     const scene = new Scene();
     scene.add(rect);
 
-    await context.draw(scene);
+    await context.loop(5_000, async () => {
+      await context.draw(scene);
+    });
 
     context.destroy();
   });
