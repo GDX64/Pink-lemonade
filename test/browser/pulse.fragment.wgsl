@@ -1,63 +1,52 @@
-fn hash21(p: vec2<f32>) -> f32 {
-    let h = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
-}
+const U_SPEED: f32 = 0.1;
+const U_INTENSITY: f32 = 1.0;
+const U_HEIGHT: f32 = 1.0;
+const U_TURBULENCE: f32 = 1.0;
+const U_COLOR_SHIFT: f32 = 1.0;
 
-fn noise2(p: vec2<f32>) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-
-    let a = hash21(i);
-    let b = hash21(i + vec2<f32>(1.0, 0.0));
-    let c = hash21(i + vec2<f32>(0.0, 1.0));
-    let d = hash21(i + vec2<f32>(1.0, 1.0));
-
-    let u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}
-
-fn fbm(p: vec2<f32>) -> f32 {
-    var value = 0.0;
-    var amplitude = 0.5;
-    var frequency = 1.0;
-
-    for (var i = 0; i < 5; i = i + 1) {
-        value = value + amplitude * noise2(p * frequency);
-        frequency = frequency * 2.0;
-        amplitude = amplitude * 0.5;
-    }
-
-    return value;
+fn tanhApprox(x: vec4<f32>) -> vec4<f32> {
+    let x2 = x * x;
+    return x * (vec4<f32>(3.0) + x2) / (vec4<f32>(3.0) + 3.0 * x2);
 }
 
 @fragment
 fn main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
-    let time: f32 = globalUniforms.timestamp * 0.001;
+    let t: f32 = globalUniforms.timestamp * 0.001 * U_SPEED;
+    let resolution = vec2<f32>(400.0, 400.0);
+    let I = vec2<f32>(fragCoord.x, resolution.y - fragCoord.y);
 
-    // Tile flames so each rectangle gets multiple tongues regardless of size.
-    let uv = fract(fragCoord.xy / vec2<f32>(400.0, 400.0));
-    let height = 1.0 - uv.y;
+    var O = vec4<f32>(0.0);
+    var z = 0.0;
 
-    let baseNoise = fbm(vec2<f32>(uv.x * 3.5, height * 4.0 - time * 1.8));
-    let drift = (baseNoise - 0.5) * (0.55 - 0.35 * height);
-    // Squash X into quarter scale so the flame reads about 4x wider than tall.
-    let flameX = ((uv.x * 2.0 - 1.0) + drift) * 0.25;
+    for (var step = 0; step < 50; step = step + 1) {
+        var p = z * normalize(vec3<f32>(I + I, 0.0) - vec3<f32>(resolution.x, resolution.y, resolution.y));
 
-    let width = mix(0.6, 0.1, height);
-    let silhouette = 1.0 - smoothstep(width, width + 0.15, abs(flameX));
+        p.z = p.z + 5.0 + cos(t) * U_HEIGHT;
 
-    let flickerNoise = fbm(vec2<f32>(flameX * 20.0 + time * 0.7, height * 7.5 - time * 4.2));
-    let flicker = smoothstep(0.22, 0.95, flickerNoise);
-    let tipFade = 1.0 - smoothstep(0.75, 1.0, height);
-    let intensity = silhouette * tipFade * (0.5 + 0.5 * flicker);
+        let angle = p.y * 0.5;
+        let rotMat = mat2x2<f32>(
+            cos(angle + 0.0),
+            cos(angle + 33.0),
+            cos(angle + 11.0),
+            cos(angle + 0.0),
+        );
 
-    let dark = vec3<f32>(0.03, 0.01, 0.01);
-    let ember = vec3<f32>(0.95, 0.23, 0.03);
-    let hot = vec3<f32>(1.0, 0.86, 0.26);
+        let xz = (rotMat * vec2<f32>(p.x, p.z)) / max(p.y * 0.1 + 1.0, 0.1);
+        p = vec3<f32>(xz.x, p.y, xz.y);
 
-    let warmMix = clamp(intensity * 1.35, 0.0, 1.0);
-    let hotMix = clamp(intensity * intensity * 2.0, 0.0, 1.0);
-    let color = mix(mix(dark, ember, warmMix), hot, hotMix);
+        var freq = 2.0;
+        for (var turbLoop = 0; turbLoop < 8; turbLoop = turbLoop + 1) {
+            let yzx = vec3<f32>(p.y, p.z, p.x);
+            p = p + cos((yzx - vec3<f32>(t / 0.1, t, freq)) * freq * U_TURBULENCE) / freq;
+            freq = freq / 0.6;
+        }
 
-    return vec4<f32>(color, 1.0);
+        let dist = 0.01 + abs(length(vec2<f32>(p.x, p.z)) + p.y * 0.3 - 0.5) / 7.0;
+        z = z + dist;
+
+        let color = (sin(z / 3.0 + vec4<f32>(7.0, 2.0, 3.0, 0.0) * U_COLOR_SHIFT) + 1.1) / max(dist, 0.0001);
+        O = O + color * U_INTENSITY;
+    }
+
+    return tanhApprox(O / 1000.0);
 }
