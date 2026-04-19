@@ -3,6 +3,8 @@ const U_INTENSITY: f32 = 1.0;
 const U_HEIGHT: f32 = 1.0;
 const U_TURBULENCE: f32 = 1.0;
 const U_COLOR_SHIFT: f32 = 1.0;
+override u_resolution_x: f32 = 400.0;
+override u_resolution_y: f32 = 400.0;
 
 fn tanhApprox(x: vec4<f32>) -> vec4<f32> {
     let x2 = x * x;
@@ -12,7 +14,7 @@ fn tanhApprox(x: vec4<f32>) -> vec4<f32> {
 @fragment
 fn main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     let t: f32 = globalUniforms.timestamp * 0.001 * U_SPEED;
-    let resolution = vec2<f32>(400.0, 400.0);
+    let resolution = vec2<f32>(u_resolution_x, u_resolution_y);
     let I = vec2<f32>(fragCoord.x, resolution.y - fragCoord.y);
 
     var O = vec4<f32>(0.0);

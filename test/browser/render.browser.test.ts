@@ -1,5 +1,5 @@
 import { describe, test } from "vitest";
-import { createCanvas2DContext, Rect, Scene } from "../../src";
+import { createCanvas2DContext, Rect, Scene, FragmentShader } from "../../src";
 import pulseFragmentShader from "./pulse.fragment.wgsl?raw";
 import { detectWebGPUSupport } from "./support";
 
@@ -20,6 +20,11 @@ describe("WebGPUCanvas2DContext", () => {
 
     const context = await createCanvas2DContext(canvas);
 
+    const fragmentShader = FragmentShader.new({
+      source: pulseFragmentShader,
+      overrides: { u_resolution_x: 400, u_resolution_y: 400 },
+    });
+
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
 
     const rect = new Rect({
@@ -27,7 +32,7 @@ describe("WebGPUCanvas2DContext", () => {
       y: 0,
       width: 400,
       height: 400,
-      fragmentShader: pulseFragmentShader,
+      fragmentShader,
       fragmentShaderEntryPoint: "main",
     });
 
