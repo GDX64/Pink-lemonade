@@ -1,10 +1,3 @@
-import {
-  initializeWebGPU,
-  type InitializedWebGPU,
-  type InitializeWebGPUOptions,
-} from "../core/webgpu";
-import { WebGPUInitializationError } from "../errors";
-
 export interface ClearColor {
   r: number;
   g: number;
@@ -27,7 +20,14 @@ export interface RectOptions {
 export interface FragmentShaderOptions {
   source: string;
   overrides?: Record<string, number> | undefined;
+  uniforms?: FragmentShaderUniforms | undefined;
 }
+
+export type FragmentShaderUniformValue =
+  | number
+  | readonly [number, number, number, number];
+
+export type FragmentShaderUniforms = Record<string, FragmentShaderUniformValue>;
 
 export type RectFragmentShader = string | FragmentShader;
 
@@ -53,16 +53,31 @@ const DEFAULT_CLEAR: ClearColor = {
 };
 
 export class FragmentShader {
+  private static nextId = 1;
+
+  readonly id: number;
   readonly source: string;
   readonly overrides: Record<string, number> | undefined;
+  private uniforms: FragmentShaderUniforms | undefined;
 
   private constructor(options: FragmentShaderOptions) {
+    this.id = FragmentShader.nextId;
+    FragmentShader.nextId += 1;
     this.source = options.source;
     this.overrides = normalizeOverrides(options.overrides);
+    this.uniforms = normalizeUniforms(options.uniforms);
   }
 
   static new(options: FragmentShaderOptions): FragmentShader {
     return new FragmentShader(options);
+  }
+
+  setUniforms(uniforms: FragmentShaderUniforms): void {
+    this.uniforms = normalizeUniforms(uniforms);
+  }
+
+  getUniforms(): FragmentShaderUniforms | undefined {
+    return this.uniforms;
   }
 }
 
@@ -124,6 +139,11 @@ export class WebGPUCanvas2DContext {
   private readonly globalUniformData = new Float32Array(8);
   private readonly globalBindGroupLayout: GPUBindGroupLayout;
   private readonly globalBindGroup: GPUBindGroup;
+  private readonly customUniformBindGroupLayout: GPUBindGroupLayout;
+  private readonly customUniformStates = new Map<
+    FragmentShader,
+    { buffer: GPUBuffer; bindGroup: GPUBindGroup; floatCount: number }
+  >();
 
   private constructor(state: InitializedWebGPU) {
     this.state = state;
@@ -153,6 +173,19 @@ export class WebGPUCanvas2DContext {
         },
       ],
     });
+    this.customUniformBindGroupLayout = this.state.device.createBindGroupLayout(
+      {
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: {
+              type: "uniform",
+            },
+          },
+        ],
+      },
+    );
     this.pipelineCache.set(
       this.getPipelineCacheKey("default", "fs_main"),
       this.createPipeline(
@@ -160,6 +193,7 @@ export class WebGPUCanvas2DContext {
         DEFAULT_FRAGMENT_SHADER_SOURCE,
         "fs_main",
         undefined,
+        false,
       ),
     );
   }
@@ -280,6 +314,10 @@ export class WebGPUCanvas2DContext {
 
     this.pendingClearValue = null;
     this.globalUniformBuffer.destroy();
+    for (const state of this.customUniformStates.values()) {
+      state.buffer.destroy();
+    }
+    this.customUniformStates.clear();
     this.destroyed = true;
   }
 
@@ -312,7 +350,7 @@ export class WebGPUCanvas2DContext {
         resolvedShader.cacheKey,
         entryPoint,
       );
-      const groupKey = `${pipelineKey}::${colorKey}`;
+      const groupKey = `${pipelineKey}::${resolvedShader.bindingKey}::${colorKey}`;
       const group = groups.get(groupKey);
       const geometry: RectGeometry = {
         x: rect.x,
@@ -346,6 +384,7 @@ export class WebGPUCanvas2DContext {
     fragmentShaderSource: string,
     fragmentEntryPoint: string,
     fragmentConstants: Record<string, number> | undefined,
+    useCustomUniformGroup: boolean,
   ): GPURenderPipeline {
     const shaderModule = this.state.device.createShaderModule({
       code: `
@@ -374,7 +413,9 @@ export class WebGPUCanvas2DContext {
     });
 
     const pipelineLayout = this.state.device.createPipelineLayout({
-      bindGroupLayouts: [this.globalBindGroupLayout],
+      bindGroupLayouts: useCustomUniformGroup
+        ? [this.globalBindGroupLayout, this.customUniformBindGroupLayout]
+        : [this.globalBindGroupLayout],
     });
 
     const fragmentStage: GPUFragmentState = {
@@ -443,8 +484,58 @@ export class WebGPUCanvas2DContext {
       this.getOrCreatePipeline(fragmentShader, fragmentShaderEntryPoint),
     );
     pass.setBindGroup(0, this.globalBindGroup);
+    if (fragmentShader instanceof FragmentShader) {
+      pass.setBindGroup(
+        1,
+        this.getOrCreateCustomUniformBindGroup(fragmentShader),
+      );
+    }
     pass.setVertexBuffer(0, vertexBuffer);
     pass.draw(vertices.length / 6);
+  }
+
+  private getOrCreateCustomUniformBindGroup(
+    fragmentShader: FragmentShader,
+  ): GPUBindGroup {
+    const uniforms = fragmentShader.getUniforms();
+    const data = packCustomUniforms(uniforms);
+    const floatCount = data.length;
+
+    const state = this.customUniformStates.get(fragmentShader);
+
+    if (state != null && state.floatCount === floatCount) {
+      this.state.device.queue.writeBuffer(state.buffer, 0, data);
+      return state.bindGroup;
+    }
+
+    if (state != null) {
+      state.buffer.destroy();
+    }
+
+    const buffer = this.state.device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const bindGroup = this.state.device.createBindGroup({
+      layout: this.customUniformBindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer,
+          },
+        },
+      ],
+    });
+
+    this.state.device.queue.writeBuffer(buffer, 0, data);
+    this.customUniformStates.set(fragmentShader, {
+      buffer,
+      bindGroup,
+      floatCount,
+    });
+
+    return bindGroup;
   }
 
   private updateGlobalTimestamp(timestampMs: number): void {
@@ -482,6 +573,7 @@ export class WebGPUCanvas2DContext {
       resolvedShader.source,
       entryPoint,
       resolvedShader.constants,
+      resolvedShader.usesCustomUniformGroup,
     );
     this.pipelineCache.set(key, pipeline);
     return pipeline;
@@ -605,12 +697,16 @@ function resolveRectFragmentShader(
   source: string;
   constants: Record<string, number> | undefined;
   cacheKey: string;
+  bindingKey: string;
+  usesCustomUniformGroup: boolean;
 } {
   if (fragmentShader == null) {
     return {
       source: DEFAULT_FRAGMENT_SHADER_SOURCE,
       constants: undefined,
       cacheKey: "default",
+      bindingKey: "none",
+      usesCustomUniformGroup: false,
     };
   }
 
@@ -619,6 +715,8 @@ function resolveRectFragmentShader(
       source: fragmentShader,
       constants: undefined,
       cacheKey: `source:${fragmentShader}`,
+      bindingKey: "none",
+      usesCustomUniformGroup: false,
     };
   }
 
@@ -627,6 +725,8 @@ function resolveRectFragmentShader(
       source: fragmentShader.source,
       constants: undefined,
       cacheKey: `source:${fragmentShader.source}`,
+      bindingKey: `shader:${fragmentShader.id}`,
+      usesCustomUniformGroup: true,
     };
   }
 
@@ -634,6 +734,8 @@ function resolveRectFragmentShader(
     source: fragmentShader.source,
     constants: fragmentShader.overrides,
     cacheKey: `source:${fragmentShader.source}::overrides:${serializeOverrides(fragmentShader.overrides)}`,
+    bindingKey: `shader:${fragmentShader.id}`,
+    usesCustomUniformGroup: true,
   };
 }
 
@@ -657,6 +759,82 @@ function normalizeOverrides(
   }
 
   return normalized;
+}
+
+function normalizeUniforms(
+  uniforms: FragmentShaderUniforms | undefined,
+): FragmentShaderUniforms | undefined {
+  if (uniforms == null) {
+    return undefined;
+  }
+
+  const normalized: FragmentShaderUniforms = {};
+
+  for (const [key, value] of Object.entries(uniforms)) {
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        throw new TypeError(
+          `FragmentShader uniform '${key}' must be a finite number.`,
+        );
+      }
+      normalized[key] = value;
+      continue;
+    }
+
+    if (value.length !== 4) {
+      throw new TypeError(
+        `FragmentShader uniform '${key}' vec4 value must have exactly 4 items.`,
+      );
+    }
+
+    for (const component of value) {
+      if (!Number.isFinite(component)) {
+        throw new TypeError(
+          `FragmentShader uniform '${key}' vec4 components must be finite numbers.`,
+        );
+      }
+    }
+
+    normalized[key] = [value[0], value[1], value[2], value[3]] as const;
+  }
+
+  return normalized;
+}
+
+function packCustomUniforms(
+  uniforms: FragmentShaderUniforms | undefined,
+): Float32Array {
+  if (uniforms == null) {
+    return new Float32Array(16);
+  }
+
+  const packed: number[] = [];
+
+  const padToVec4Boundary = (): void => {
+    while (packed.length % 4 !== 0) {
+      packed.push(0);
+    }
+  };
+
+  for (const value of Object.values(uniforms)) {
+    if (typeof value === "number") {
+      packed.push(value);
+      continue;
+    }
+
+    padToVec4Boundary();
+    packed.push(value[0], value[1], value[2], value[3]);
+  }
+
+  padToVec4Boundary();
+
+  if (packed.length < 16) {
+    while (packed.length < 16) {
+      packed.push(0);
+    }
+  }
+
+  return new Float32Array(packed);
 }
 
 function serializeOverrides(overrides: Record<string, number>): string {
@@ -724,4 +902,94 @@ export async function createCanvas2DContext(
   options: Canvas2DContextOptions = {},
 ): Promise<WebGPUCanvas2DContext> {
   return WebGPUCanvas2DContext.create(canvas, options);
+}
+
+export interface InitializeWebGPUOptions {
+  alphaMode?: GPUCanvasAlphaMode;
+  format?: GPUTextureFormat;
+  powerPreference?: GPUPowerPreference;
+}
+
+export interface InitializedWebGPU {
+  adapter: GPUAdapter;
+  device: GPUDevice;
+  canvas: HTMLCanvasElement;
+  context: GPUCanvasContext;
+  format: GPUTextureFormat;
+}
+
+export async function initializeWebGPU(
+  canvas: HTMLCanvasElement,
+  options: InitializeWebGPUOptions = {},
+): Promise<InitializedWebGPU> {
+  if (!("gpu" in navigator) || navigator.gpu == null) {
+    throw new WebGPUNotSupportedError();
+  }
+
+  const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+
+  if (context == null) {
+    throw new WebGPUInitializationError(
+      "Unable to acquire a WebGPU canvas context.",
+    );
+  }
+
+  try {
+    const adapterRequest: GPURequestAdapterOptions = {};
+
+    if (options.powerPreference != null) {
+      adapterRequest.powerPreference = options.powerPreference;
+    }
+
+    const adapter = await navigator.gpu.requestAdapter(adapterRequest);
+
+    if (adapter == null) {
+      throw new WebGPUInitializationError(
+        "No compatible WebGPU adapter was found.",
+      );
+    }
+
+    const device = await adapter.requestDevice();
+    const format = options.format ?? navigator.gpu.getPreferredCanvasFormat();
+
+    context.configure({
+      device,
+      format,
+      alphaMode: options.alphaMode ?? "premultiplied",
+    });
+
+    return {
+      adapter,
+      device,
+      canvas,
+      context,
+      format,
+    };
+  } catch (error) {
+    if (error instanceof WebGPUInitializationError) {
+      throw error;
+    }
+
+    throw new WebGPUInitializationError(
+      "Failed to initialize WebGPU for canvas.",
+      error,
+    );
+  }
+}
+
+export class WebGPUNotSupportedError extends Error {
+  constructor(message = "WebGPU is not supported in this browser or runtime.") {
+    super(message);
+    this.name = "WebGPUNotSupportedError";
+  }
+}
+
+export class WebGPUInitializationError extends Error {
+  readonly cause?: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "WebGPUInitializationError";
+    this.cause = cause;
+  }
 }

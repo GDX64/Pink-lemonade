@@ -7,13 +7,7 @@ export {
   type Canvas2DContextOptions,
   type ClearColor,
   type FragmentShaderOptions,
+  type FragmentShaderUniforms,
+  type FragmentShaderUniformValue,
   type RectOptions,
 } from "./canvas2d/context";
-
-export {
-  initializeWebGPU,
-  type InitializedWebGPU,
-  type InitializeWebGPUOptions,
-} from "./core/webgpu";
-
-export { WebGPUInitializationError, WebGPUNotSupportedError } from "./errors";
