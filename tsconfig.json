@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["@webgpu/types", "vitest/globals", "node"],
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist-ts",
+    "rootDir": ".",
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useDefineForClassFields": true,
+    "skipLibCheck": true,
+    "composite": true
+  },
+  "include": ["src", "test", "vite.config.ts", "vitest.config.ts"]
+}

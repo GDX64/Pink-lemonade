@@ -1,0 +1,42 @@
+{
+  "name": "pink-lemonade",
+  "version": "0.1.0",
+  "description": "Canvas2D-style API rendered with WebGPU.",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:browser": "vitest --config vitest.config.ts"
+  },
+  "keywords": [
+    "webgpu",
+    "canvas2d",
+    "graphics"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@vitest/browser": "^4.1.4",
+    "@vitest/browser-playwright": "^4.1.4",
+    "@webgpu/types": "^0.1.66",
+    "playwright": "^1.59.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
+  }
+}
