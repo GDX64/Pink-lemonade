@@ -159,7 +159,10 @@ export class WebGPUCanvas2DContext {
       ],
     });
     this.globalUniformBuffer = this.state.device.createBuffer({
-      size: this.globalUniformData.byteLength,
+      size: alignUniformBufferByteSize(
+        this.globalUniformData.byteLength,
+        this.state.device.limits.minUniformBufferOffsetAlignment,
+      ),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.globalBindGroup = this.state.device.createBindGroup({
@@ -513,7 +516,10 @@ export class WebGPUCanvas2DContext {
     }
 
     const buffer = this.state.device.createBuffer({
-      size: data.byteLength,
+      size: alignUniformBufferByteSize(
+        data.byteLength,
+        this.state.device.limits.minUniformBufferOffsetAlignment,
+      ),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const bindGroup = this.state.device.createBindGroup({
@@ -835,6 +841,20 @@ function packCustomUniforms(
   }
 
   return new Float32Array(packed);
+}
+
+function alignUniformBufferByteSize(
+  byteSize: number,
+  minUniformBufferOffsetAlignment: number,
+): number {
+  const alignment = Math.max(16, minUniformBufferOffsetAlignment);
+  const remainder = byteSize % alignment;
+
+  if (remainder === 0) {
+    return byteSize;
+  }
+
+  return byteSize + alignment - remainder;
 }
 
 function serializeOverrides(overrides: Record<string, number>): string {

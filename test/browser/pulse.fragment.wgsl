@@ -1,6 +1,3 @@
-override u_resolution_x: f32 = 400.0;
-override u_resolution_y: f32 = 400.0;
-
 struct PulseUniforms {
     speed: f32,
     intensity: f32,
@@ -8,6 +5,8 @@ struct PulseUniforms {
     turbulence: f32,
     colorShift: f32,
     baseColor: vec4<f32>,
+    u_resolution_x: f32,
+    u_resolution_y: f32,
     _pad0: vec3<f32>,
 };
 
@@ -22,7 +21,7 @@ fn tanhApprox(x: vec4<f32>) -> vec4<f32> {
 @fragment
 fn main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
     let t: f32 = globalUniforms.timestamp * 0.001 * pulseUniforms.speed;
-    let resolution = vec2<f32>(u_resolution_x, u_resolution_y);
+    let resolution = vec2<f32>(pulseUniforms.u_resolution_x, pulseUniforms.u_resolution_y);
     let I = vec2<f32>(fragCoord.x, resolution.y - fragCoord.y);
 
     var O = vec4<f32>(0.0);

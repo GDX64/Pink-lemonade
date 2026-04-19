@@ -22,7 +22,6 @@ describe("WebGPUCanvas2DContext", () => {
 
     const fragmentShader = FragmentShader.new({
       source: pulseFragmentShader,
-      overrides: { u_resolution_x: 400, u_resolution_y: 400 },
     });
     fragmentShader.setUniforms({
       speed: 0.1,
@@ -31,6 +30,8 @@ describe("WebGPUCanvas2DContext", () => {
       height: 1,
       turbulence: 1,
       baseColor: [7.0, 2.0, 3.0, 0.0],
+      u_resolution_x: 400,
+      u_resolution_y: 400,
     });
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
