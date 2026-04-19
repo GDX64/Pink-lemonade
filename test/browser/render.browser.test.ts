@@ -1,5 +1,6 @@
 import { describe, test } from "vitest";
 import { createCanvas2DContext, Rect, Scene } from "../../src";
+import pulseFragmentShader from "./pulse.fragment.wgsl?raw";
 import { detectWebGPUSupport } from "./support";
 
 describe("WebGPUCanvas2DContext", () => {
@@ -21,30 +22,23 @@ describe("WebGPUCanvas2DContext", () => {
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
 
-    const fragmentShader = `
-    @fragment
-    fn main() -> @location(0) vec4<f32> {
-      let pulse = fract(globalUniforms.timestamp / 1000.0);
-      return vec4<f32>(pulse, 1.0, 0.0, 1.0);
-    }
-    `;
-
     const rect = new Rect({
-      x: 50,
-      y: 50,
-      width: 100,
-      height: 100,
-      fragmentShader,
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 400,
+      fragmentShader: pulseFragmentShader,
       fragmentShaderEntryPoint: "main",
     });
 
     const scene = new Scene();
     scene.add(rect);
 
-    await context.loop(5_000, async () => {
+    await context.draw(scene);
+    context.loop(30_000, async () => {
       await context.draw(scene);
     });
 
-    context.destroy();
+    // context.destroy();
   });
 });
