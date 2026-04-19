@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { createCanvas2DContext, WebGPUInitializationError } from "../../src";
+import { createCanvas2DContext } from "../../src";
 import { detectWebGPUSupport } from "./support";
 
 describe("WebGPUCanvas2DContext", () => {
@@ -20,6 +20,9 @@ describe("WebGPUCanvas2DContext", () => {
     const context = await createCanvas2DContext(canvas);
 
     context.clear({ r: 1, g: 1, b: 1, a: 1 });
+    context.fillStyle = "red";
+    context.rect(32, 32, 16, 16);
+    context.fill();
 
     await context.flush();
 
