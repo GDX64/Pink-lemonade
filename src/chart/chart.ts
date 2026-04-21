@@ -53,7 +53,7 @@ export function drawChart(data: number[], canvas: HTMLCanvasElement): void {
 
 export function drawSlidingHistogram(
   data: { xValue: number; hist: Map<number, number>; deltaX: number }[],
-  canvas: HTMLCanvasElement,
+  canvas: OffscreenCanvas,
   binSize: number,
   blurRadius = 1,
 ): void {
@@ -101,7 +101,7 @@ export function drawSlidingHistogram(
   blurImage(canvas, blurRadius);
 }
 
-export function blurImage(canvas: HTMLCanvasElement, radius: number): void {
+export function blurImage(canvas: OffscreenCanvas, radius: number): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     throw new Error("Failed to get 2D context");
