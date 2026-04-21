@@ -27,7 +27,7 @@ fn fbm(p: vec2<f32>) -> f32 {
     var value = 0.0;
     var amplitude = 0.5;
 
-    for (var i = 0; i < 4; i = i + 1) {
+    for (var i = 0; i < 5; i = i + 1) {
         value = value + amplitude * noise2(p0);
         p0 = p0 * 2.03 + vec2<f32>(13.7, 7.9);
         amplitude = amplitude * 0.5;
@@ -129,22 +129,30 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // let warpLen = pow((1.0 - length(warp2)), 1.0);
     // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
     // return vec4<f32>(vec3<f32>(alphaBase), 1.0);
-    let out = bookOfShadersWarpingOutput(uv, t * 10.0);
+    // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
+    let out = my_noise(uv, t);
+    // return vec4<f32>(vec3<f32>(alphaBase), 1.0);
     return vec4<f32>(out.rgb * alphaBase, 1.0);
+    // return vec4<f32>(out.rgb, 1.0);
 }
 
 fn my_noise(uv: vec2<f32>, t: f32) -> vec3<f32> {
     let base = uv * 4.0;
-    let warp1 = vec2<f32>(
+    let warp1_3 = vec2<f32>(
         fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
-        fbm(base + vec2<f32>(8.3 - t * 0.9, 2.8 + t * 1.1))
+        fbm(base + vec2<f32>(8.3 - t * 0.9, 2.8 + t * 1.1)),
+        // fbm(base + vec2<f32>(5.1 + t * 0.5, 1.3 - t * 0.3))
     );
-    let warp2 = vec3<f32>(
-        fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3)),
-        fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
-        fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
-    );
-    return warp2;
+    let warp1 = warp1_3.xy;
+    var x = fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3) + t * 2);
+    // let warp2 = vec3<f32>(
+    //     fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3) + t * 2),
+    //     fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
+    //     fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
+    // );
+    // let warp2 = fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3));
+    x = clamp(x + 0.3, 0.0, 1.0);
+    return vec3<f32>(x, x, x);
 }
 
 fn blury_sample(uv: vec2<f32>) -> f32 {

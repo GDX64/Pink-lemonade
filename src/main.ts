@@ -21,7 +21,7 @@ canvas.height = canvas.getBoundingClientRect().height;
 
 const offCanvas = new OffscreenCanvas(canvas.width, canvas.height);
 const data = createNoiseData(10_000);
-const binSize = 1;
+const binSize = 5;
 const histData = createSlidingHistogram(data, 500, binSize);
 drawSlidingHistogram(histData, offCanvas, binSize);
 

@@ -87,7 +87,7 @@ export function drawSlidingHistogram(
   if (!ctx) {
     throw new Error("Failed to get 2D context");
   }
-  const scaledBinsize = scaleY(binSize) - scaleY(0);
+  const scaledBinsize = Math.abs(scaleY(binSize) - scaleY(0));
   for (const { xValue, hist, deltaX } of data) {
     const x = scaleX(xValue);
     const scaledDeltaX = scaleX(xValue + deltaX) - x;
@@ -108,8 +108,8 @@ function drawDot(
   scaledBinsize: number,
   intensity: number,
 ) {
-  const r = Math.max(scaledDeltaX, scaledBinsize) * 1;
-  const POWER = 3;
+  const r = Math.max(0, scaledBinsize) * 2;
+  const POWER = 2;
   const cx = x + scaledDeltaX / 2;
   const cy = y + scaledBinsize / 2;
   const clampedIntensity = Math.max(0, Math.min(1, intensity));
