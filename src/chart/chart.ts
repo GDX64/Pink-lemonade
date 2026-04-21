@@ -55,6 +55,7 @@ export function drawSlidingHistogram(
   data: { xValue: number; hist: Map<number, number>; deltaX: number }[],
   canvas: HTMLCanvasElement,
   binSize: number,
+  blurRadius = 1,
 ): void {
   let maxX = 0;
   let maxY = 0;
@@ -96,6 +97,35 @@ export function drawSlidingHistogram(
       ctx.fillRect(x, y, scaledDeltaX, scaledBinsize);
     }
   }
+
+  blurImage(canvas, blurRadius);
+}
+
+export function blurImage(canvas: HTMLCanvasElement, radius: number): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Failed to get 2D context");
+  }
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return;
+  }
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = canvas.width;
+  sourceCanvas.height = canvas.height;
+
+  const sourceCtx = sourceCanvas.getContext("2d");
+  if (!sourceCtx) {
+    throw new Error("Failed to get 2D context");
+  }
+
+  sourceCtx.drawImage(canvas, 0, 0);
+
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.filter = `blur(${radius}px)`;
+  ctx.drawImage(sourceCanvas, 0, 0);
+  ctx.restore();
 }
 
 export function createSlidingHistogram(
