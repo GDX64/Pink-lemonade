@@ -135,9 +135,35 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     );
 
     // The source texture carries signal in alpha only.
-    let alphaBase = textureSample(canvasTexture, canvasSampler, uv).a;
+    let alphaBase = blury_sample(uv);
     let warpLen = pow((1.0 - length(warp2)), 1.0);
     // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
-    // return vec4<f32>(vec3<f32>(warpedAlpha), 1.0);
-    return bookOfShadersWarpingOutput(uv, t * 10.0);
+    return vec4<f32>(vec3<f32>(alphaBase), 1.0);
+    // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
+    // return vec4<f32>(out.rgba);
+}
+
+fn blury_sample(uv: vec2<f32>) -> f32 {
+    const BLUR_PX: f32 = 0.0;
+    let texSize: vec2<f32> = vec2<f32>(textureDimensions(canvasTexture, 0));
+    let texel: vec2<f32> = vec2<f32>(1.0, 1.0) / texSize;
+    let o = texel * BLUR_PX;
+
+    let s00 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, -o.y)).a;
+    let s10 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(0.0, -o.y)).a;
+    let s20 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, -o.y)).a;
+
+    let s01 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, 0.0)).a;
+    let s11 = textureSample(canvasTexture, canvasSampler, uv).a;
+    let s21 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, 0.0)).a;
+
+    let s02 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, o.y)).a;
+    let s12 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(0.0, o.y)).a;
+    let s22 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, o.y)).a;
+
+    let sum = s00 * 1.0 + s10 * 2.0 + s20 * 1.0 +
+        s01 * 2.0 + s11 * 4.0 + s21 * 2.0 +
+        s02 * 1.0 + s12 * 2.0 + s22 * 1.0;
+
+    return sum / 16.0;
 }

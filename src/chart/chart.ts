@@ -94,7 +94,12 @@ export function drawSlidingHistogram(
     for (const [bin, count] of hist.entries()) {
       const y = scaleY(bin);
       ctx.fillStyle = `rgba(0, 0, 0, ${alphaScale(count)})`;
-      ctx.fillRect(x, y, scaledDeltaX, scaledBinsize);
+      // ctx.fillRect(x, y, scaledDeltaX, scaledBinsize);
+      const r = Math.max(scaledDeltaX, scaledBinsize) / 2;
+      ctx.beginPath();
+      ctx.arc(x + scaledDeltaX / 2, y + scaledBinsize / 2, r, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.fill();
     }
   }
 
