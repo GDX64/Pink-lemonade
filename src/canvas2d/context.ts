@@ -349,7 +349,10 @@ export class WebGPUCanvas2DContext {
 
   async draw(scene: Scene): Promise<void> {
     this.assertActive();
-    this.updateGlobalTimestamp(performance.now());
+    this.updateGlobalTimestamp(performance.now(), [
+      this.canvas.width,
+      this.canvas.height,
+    ]);
 
     const groups = this.groupRectanglesByColor(scene);
 
@@ -666,11 +669,15 @@ export class WebGPUCanvas2DContext {
     return bindGroup;
   }
 
-  private updateGlobalTimestamp(timestampMs: number): void {
+  private updateGlobalTimestamp(
+    timestampMs: number,
+    resolution: [number, number],
+  ): void {
     this.globalUniformData[0] = timestampMs;
+    // Keep std140-like alignment for WGSL uniforms: vec2 starts at 8-byte offset.
     this.globalUniformData[1] = 0;
-    this.globalUniformData[2] = 0;
-    this.globalUniformData[3] = 0;
+    this.globalUniformData[2] = resolution[0];
+    this.globalUniformData[3] = resolution[1];
     this.globalUniformData[4] = 0;
     this.globalUniformData[5] = 0;
     this.globalUniformData[6] = 0;
@@ -873,6 +880,7 @@ const DEFAULT_FRAGMENT_SHADER_SOURCE = `
 const FRAGMENT_GLOBALS_SHADER_SOURCE = `
   struct GlobalUniforms {
     timestamp: f32,
+    resolution: vec2<f32>,
     _pad0: vec3<f32>,
   };
 

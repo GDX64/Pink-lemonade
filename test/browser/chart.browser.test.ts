@@ -6,6 +6,7 @@ import {
 } from "../../src/chart/chart";
 import { describe, test } from "vitest";
 import { detectWebGPUSupport } from "./support";
+import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 
 describe("WebGPUCanvas2DContext - Chart Example", async () => {
   test("chart example", async () => {
@@ -31,16 +32,7 @@ describe("WebGPUCanvas2DContext - Chart Example", async () => {
 
     const ctx = await createCanvas2DContext(canvas);
     const fragmentShader = FragmentShader.new({
-      source: `
-        @group(1) @binding(1) var canvasSampler: sampler;
-        @group(1) @binding(2) var canvasTexture: texture_2d<f32>;
-
-        @fragment
-        fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-            let uv = vec2<f32>(pos.x / ${canvas.width}.0, pos.y / ${canvas.height}.0);
-            return textureSample(canvasTexture, canvasSampler, uv);
-        }
-        `,
+      source: fragmentShaderSource,
     });
 
     const texture = await ctx.createCanvasTexture(offCanvas);
@@ -58,5 +50,8 @@ describe("WebGPUCanvas2DContext - Chart Example", async () => {
     scene.add(rect);
 
     await ctx.draw(scene);
+    ctx.loop(30_000, async () => {
+      await ctx.draw(scene);
+    });
   });
 });
