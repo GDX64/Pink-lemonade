@@ -93,17 +93,38 @@ export function drawSlidingHistogram(
     const scaledDeltaX = scaleX(xValue + deltaX) - x;
     for (const [bin, count] of hist.entries()) {
       const y = scaleY(bin);
-      ctx.fillStyle = `rgba(0, 0, 0, ${alphaScale(count)})`;
-      // ctx.fillRect(x, y, scaledDeltaX, scaledBinsize);
-      const r = Math.max(scaledDeltaX, scaledBinsize) / 2;
-      ctx.beginPath();
-      ctx.arc(x + scaledDeltaX / 2, y + scaledBinsize / 2, r, 0, 2 * Math.PI);
-      ctx.closePath();
-      ctx.fill();
+      const intensity = Math.round(255 * alphaScale(count)).toString(16);
+      drawDot(ctx, x, scaledDeltaX, y, scaledBinsize, intensity);
     }
   }
 
   blurImage(canvas, blurRadius);
+}
+
+function drawDot(
+  ctx: OffscreenCanvasRenderingContext2D,
+  x: number,
+  scaledDeltaX: number,
+  y: number,
+  scaledBinsize: number,
+  intensity: string,
+) {
+  const r = Math.max(scaledDeltaX, scaledBinsize) / 2;
+  const cx = x + scaledDeltaX / 2;
+  const cy = y + scaledBinsize / 2;
+  const color = `#${intensity}${intensity}${intensity}${intensity}`;
+
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(r, 1));
+  gradient.addColorStop(0, color);
+  gradient.addColorStop(1, "#ffffff00");
+
+  ctx.save();
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 export function blurImage(canvas: OffscreenCanvas, radius: number): void {

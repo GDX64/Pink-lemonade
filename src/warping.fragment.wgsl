@@ -123,6 +123,16 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let uv: vec2<f32> = pos.xy / res;
     let t: f32 = globalUniforms.timestamp * 0.0001;
 
+    // The source texture carries signal in alpha only.
+    let alphaBase = textureSample(canvasTexture, canvasSampler, uv).a;
+    // let warpLen = pow((1.0 - length(warp2)), 1.0);
+    // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
+    return vec4<f32>(vec3<f32>(alphaBase), 1.0);
+    // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
+    // return vec4<f32>(out.rgba);
+}
+
+fn my_noise(uv: vec2<f32>, t: f32) -> vec3<f32> {
     let base = uv * 4.0;
     let warp1 = vec2<f32>(
         fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
@@ -133,14 +143,7 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
         fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
     );
-
-    // The source texture carries signal in alpha only.
-    let alphaBase = blury_sample(uv);
-    let warpLen = pow((1.0 - length(warp2)), 1.0);
-    // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
-    return vec4<f32>(vec3<f32>(alphaBase), 1.0);
-    // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
-    // return vec4<f32>(out.rgba);
+    return warp2;
 }
 
 fn blury_sample(uv: vec2<f32>) -> f32 {
