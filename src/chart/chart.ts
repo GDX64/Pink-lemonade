@@ -55,7 +55,6 @@ export function drawSlidingHistogram(
   data: { xValue: number; hist: Map<number, number>; deltaX: number }[],
   canvas: OffscreenCanvas,
   binSize: number,
-  blurRadius = 1,
 ): void {
   let maxX = 0;
   let maxY = 0;
@@ -96,8 +95,6 @@ export function drawSlidingHistogram(
       drawDot(ctx, x, scaledDeltaX, y, scaledBinsize, alphaScale(count));
     }
   }
-
-  blurImage(canvas, blurRadius);
 }
 
 function drawDot(

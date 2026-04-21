@@ -20,9 +20,12 @@ canvas.width = canvas.getBoundingClientRect().width;
 canvas.height = canvas.getBoundingClientRect().height;
 
 const offCanvas = new OffscreenCanvas(canvas.width, canvas.height);
-const data = createNoiseData(10_000);
-const binSize = 5;
-const histData = createSlidingHistogram(data, 500, binSize);
+const N = 10_000;
+const data = createNoiseData(N);
+const binSize = 10;
+const bins = canvas.width / 50;
+const each = Math.round(N / bins);
+const histData = createSlidingHistogram(data, each, binSize);
 drawSlidingHistogram(histData, offCanvas, binSize);
 
 const ctx = await createCanvas2DContext(canvas);
