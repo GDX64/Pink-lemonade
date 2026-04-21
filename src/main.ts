@@ -45,6 +45,6 @@ const rect = new Rect({
 scene.add(rect);
 
 await ctx.draw(scene);
-ctx.loop(30_000, async () => {
+ctx.loop(Infinity, async () => {
   await ctx.draw(scene);
 });

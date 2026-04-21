@@ -124,12 +124,13 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let t: f32 = globalUniforms.timestamp * 0.0001;
 
     // The source texture carries signal in alpha only.
-    let alphaBase = textureSample(canvasTexture, canvasSampler, uv).a;
+    var alphaBase = textureSample(canvasTexture, canvasSampler, uv).a;
+    alphaBase = max(alphaBase, 0.0);
     // let warpLen = pow((1.0 - length(warp2)), 1.0);
     // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
-    return vec4<f32>(vec3<f32>(alphaBase), 1.0);
-    // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
-    // return vec4<f32>(out.rgba);
+    // return vec4<f32>(vec3<f32>(alphaBase), 1.0);
+    let out = bookOfShadersWarpingOutput(uv, t * 10.0);
+    return vec4<f32>(out.rgb * alphaBase, 1.0);
 }
 
 fn my_noise(uv: vec2<f32>, t: f32) -> vec3<f32> {

@@ -1,6 +1,6 @@
 function gausianNoise(mean: number, stdDev: number): number {
-  let u1 = Math.random();
-  let u2 = Math.random();
+  let u1 = nextRandom();
+  let u2 = nextRandom();
   let z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
   return z0 * stdDev + mean;
 }
@@ -93,8 +93,7 @@ export function drawSlidingHistogram(
     const scaledDeltaX = scaleX(xValue + deltaX) - x;
     for (const [bin, count] of hist.entries()) {
       const y = scaleY(bin);
-      const intensity = Math.round(255 * alphaScale(count)).toString(16);
-      drawDot(ctx, x, scaledDeltaX, y, scaledBinsize, intensity);
+      drawDot(ctx, x, scaledDeltaX, y, scaledBinsize, alphaScale(count));
     }
   }
 
@@ -107,16 +106,21 @@ function drawDot(
   scaledDeltaX: number,
   y: number,
   scaledBinsize: number,
-  intensity: string,
+  intensity: number,
 ) {
-  const r = Math.max(scaledDeltaX, scaledBinsize) / 2;
+  const r = Math.max(scaledDeltaX, scaledBinsize) * 1;
+  const POWER = 3;
   const cx = x + scaledDeltaX / 2;
   const cy = y + scaledBinsize / 2;
-  const color = `#${intensity}${intensity}${intensity}${intensity}`;
+  const clampedIntensity = Math.max(0, Math.min(1, intensity));
 
   const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(r, 1));
-  gradient.addColorStop(0, color);
-  gradient.addColorStop(1, "#ffffff00");
+  const stops = 10;
+  for (let i = 0; i <= stops; i++) {
+    const t = i / stops;
+    const alpha = clampedIntensity * Math.pow(1 - t, POWER);
+    gradient.addColorStop(t, `rgba(0, 0, 0, ${alpha})`);
+  }
 
   ctx.save();
   ctx.fillStyle = gradient;
@@ -187,4 +191,17 @@ export function windowSlices(data: number[], each: number): number[][] {
     windows.push(data.slice(i, i + each));
   }
   return windows;
+}
+
+function* pseudoRandomGen(seed: number): Generator<number> {
+  let value = seed;
+  while (true) {
+    value = (value * 16807) % 2147483647;
+    yield value / 2147483647;
+  }
+}
+
+const gen = pseudoRandomGen(12345);
+function nextRandom(): number {
+  return gen.next().value;
 }
