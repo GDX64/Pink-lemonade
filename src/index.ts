@@ -1,4 +1,5 @@
 export {
+  type CanvasTexture,
   createCanvas2DContext,
   FragmentShader,
   Rect,

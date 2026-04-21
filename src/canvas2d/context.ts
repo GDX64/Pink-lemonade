@@ -23,6 +23,14 @@ export interface FragmentShaderOptions {
   uniforms?: FragmentShaderUniforms | undefined;
 }
 
+export interface CanvasTexture {
+  texture: GPUTexture;
+  view: GPUTextureView;
+  sampler: GPUSampler;
+  width: number;
+  height: number;
+}
+
 export type FragmentShaderUniformValue =
   | number
   | readonly [number, number, number, number];
@@ -59,6 +67,7 @@ export class FragmentShader {
   readonly source: string;
   readonly overrides: Record<string, number> | undefined;
   private uniforms: FragmentShaderUniforms | undefined;
+  private textures: Record<string, CanvasTexture> | undefined;
 
   private constructor(options: FragmentShaderOptions) {
     this.id = FragmentShader.nextId;
@@ -78,6 +87,22 @@ export class FragmentShader {
 
   getUniforms(): FragmentShaderUniforms | undefined {
     return this.uniforms;
+  }
+
+  setTexture(name: string, texture: CanvasTexture): void {
+    if (name.trim().length === 0) {
+      throw new TypeError("FragmentShader texture name must be non-empty.");
+    }
+
+    if (this.textures == null) {
+      this.textures = {};
+    }
+
+    this.textures[name] = texture;
+  }
+
+  getTextures(): Readonly<Record<string, CanvasTexture>> | undefined {
+    return this.textures;
   }
 }
 
@@ -140,9 +165,16 @@ export class WebGPUCanvas2DContext {
   private readonly globalBindGroupLayout: GPUBindGroupLayout;
   private readonly globalBindGroup: GPUBindGroup;
   private readonly customUniformBindGroupLayout: GPUBindGroupLayout;
+  private readonly fallbackCanvasTexture: CanvasTexture;
+  private readonly ownedCanvasTextures = new Set<GPUTexture>();
   private readonly customUniformStates = new Map<
     FragmentShader,
-    { buffer: GPUBuffer; bindGroup: GPUBindGroup; floatCount: number }
+    {
+      buffer: GPUBuffer;
+      bindGroup: GPUBindGroup;
+      floatCount: number;
+      texture: CanvasTexture;
+    }
   >();
 
   private constructor(state: InitializedWebGPU) {
@@ -186,9 +218,26 @@ export class WebGPUCanvas2DContext {
               type: "uniform",
             },
           },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: {
+              type: "filtering",
+            },
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: {
+              sampleType: "float",
+              viewDimension: "2d",
+              multisampled: false,
+            },
+          },
         ],
       },
     );
+    this.fallbackCanvasTexture = this.createFallbackCanvasTexture();
     this.pipelineCache.set(
       this.getPipelineCacheKey("default", "fs_main"),
       this.createPipeline(
@@ -211,6 +260,60 @@ export class WebGPUCanvas2DContext {
 
   get canvas(): HTMLCanvasElement {
     return this.state.canvas;
+  }
+
+  async createCanvasTexture(
+    canvas: HTMLCanvasElement | OffscreenCanvas,
+  ): Promise<CanvasTexture> {
+    this.assertActive();
+
+    if (canvas.width === 0 || canvas.height === 0) {
+      throw new TypeError(
+        "createCanvasTexture requires a canvas with non-zero width and height.",
+      );
+    }
+
+    const texture = this.state.device.createTexture({
+      size: {
+        width: canvas.width,
+        height: canvas.height,
+        depthOrArrayLayers: 1,
+      },
+      format: "rgba8unorm",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    this.state.device.queue.copyExternalImageToTexture(
+      { source: canvas },
+      { texture },
+      {
+        width: canvas.width,
+        height: canvas.height,
+        depthOrArrayLayers: 1,
+      },
+    );
+
+    const sampler = this.state.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      mipmapFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
+    const canvasTexture: CanvasTexture = {
+      texture,
+      view: texture.createView(),
+      sampler,
+      width: canvas.width,
+      height: canvas.height,
+    };
+
+    this.ownedCanvasTextures.add(texture);
+    return canvasTexture;
   }
 
   clear(color: Partial<ClearColor> = {}): void {
@@ -317,6 +420,11 @@ export class WebGPUCanvas2DContext {
 
     this.pendingClearValue = null;
     this.globalUniformBuffer.destroy();
+    this.fallbackCanvasTexture.texture.destroy();
+    for (const texture of this.ownedCanvasTextures) {
+      texture.destroy();
+    }
+    this.ownedCanvasTextures.clear();
     for (const state of this.customUniformStates.values()) {
       state.buffer.destroy();
     }
@@ -503,10 +611,15 @@ export class WebGPUCanvas2DContext {
     const uniforms = fragmentShader.getUniforms();
     const data = packCustomUniforms(uniforms);
     const floatCount = data.length;
+    const texture = this.resolveTextureBinding(fragmentShader);
 
     const state = this.customUniformStates.get(fragmentShader);
 
-    if (state != null && state.floatCount === floatCount) {
+    if (
+      state != null &&
+      state.floatCount === floatCount &&
+      state.texture === texture
+    ) {
       this.state.device.queue.writeBuffer(state.buffer, 0, data);
       return state.bindGroup;
     }
@@ -531,6 +644,14 @@ export class WebGPUCanvas2DContext {
             buffer,
           },
         },
+        {
+          binding: 1,
+          resource: texture.sampler,
+        },
+        {
+          binding: 2,
+          resource: texture.view,
+        },
       ],
     });
 
@@ -539,6 +660,7 @@ export class WebGPUCanvas2DContext {
       buffer,
       bindGroup,
       floatCount,
+      texture,
     });
 
     return bindGroup;
@@ -648,6 +770,67 @@ export class WebGPUCanvas2DContext {
         "Cannot use a destroyed WebGPU canvas context.",
       );
     }
+  }
+
+  private resolveTextureBinding(fragmentShader: FragmentShader): CanvasTexture {
+    const textures = fragmentShader.getTextures();
+
+    if (textures == null) {
+      return this.fallbackCanvasTexture;
+    }
+
+    const names = Object.keys(textures).sort();
+
+    if (names.length === 0) {
+      return this.fallbackCanvasTexture;
+    }
+
+    const firstName = names[0]!;
+    return textures[firstName] ?? this.fallbackCanvasTexture;
+  }
+
+  private createFallbackCanvasTexture(): CanvasTexture {
+    const texture = this.state.device.createTexture({
+      size: {
+        width: 1,
+        height: 1,
+        depthOrArrayLayers: 1,
+      },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+
+    this.state.device.queue.writeTexture(
+      {
+        texture,
+      },
+      new Uint8Array([255, 255, 255, 255]),
+      {
+        bytesPerRow: 4,
+        rowsPerImage: 1,
+      },
+      {
+        width: 1,
+        height: 1,
+        depthOrArrayLayers: 1,
+      },
+    );
+
+    const sampler = this.state.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      mipmapFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
+    return {
+      texture,
+      view: texture.createView(),
+      sampler,
+      width: 1,
+      height: 1,
+    };
   }
 }
 
