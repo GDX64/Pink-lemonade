@@ -127,14 +127,14 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // var alphaBase = textureSample(canvasTexture, canvasSampler, uv).a;
     var alphaBase = warppedSample(uv, t);
     alphaBase = max(alphaBase, 0.0);
-    alphaBase = remap(alphaBase, 0, 1, 0.0, 1);
     // let warpLen = pow((1.0 - length(warp2)), 1.0);
     // return vec4<f32>(warpLen, warpLen, warpLen, 1.0);
     // return vec4<f32>(vec3<f32>(alphaBase), 1.0);
     // let out = bookOfShadersWarpingOutput(uv, t * 10.0);
-    let out = my_noise(uv, t);
+    let x = alphaBase;
+    let out = mapColor(x);
     // return vec4<f32>(vec3<f32>(alphaBase), 1.0);
-    return vec4<f32>(out.rgb * alphaBase, 1.0);
+    return vec4<f32>(out.rgb, 1.0);
     // return vec4<f32>(out.rgb, 1.0);
 }
 
@@ -143,7 +143,25 @@ fn remap(value: f32, fromMin: f32, fromMax: f32, toMin: f32, toMax: f32) -> f32 
     return mix(toMin, toMax, t);
 }
 
-fn my_noise(uv: vec2<f32>, t: f32) -> vec3<f32> {
+fn mapColor(value: f32) -> vec3<f32> {
+    let x = clamp(value, 0.0, 1.0);
+    let c0 = vec3<f32>(0.03, 0.05, 0.20);
+    let c1 = vec3<f32>(0.10, 0.45, 0.75);
+    let c2 = vec3<f32>(0.95, 0.80, 0.35);
+    let c3 = vec3<f32>(0.98, 0.30, 0.15);
+
+    let t01 = smoothstep(0.00, 0.35, x);
+    let t12 = smoothstep(0.35, 0.70, x);
+    let t23 = smoothstep(0.70, 1.00, x);
+
+    let col01 = mix(c0, c1, t01);
+    let col12 = mix(c1, c2, t12);
+    let col23 = mix(c2, c3, t23);
+    let lowMid = mix(col01, col12, step(0.35, x));
+    return mix(lowMid, col23, step(0.70, x));
+}
+
+fn my_noise(uv: vec2<f32>, t: f32) -> f32 {
     let base = uv * 4.0;
     let warp1_3 = vec2<f32>(
         fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
@@ -158,8 +176,8 @@ fn my_noise(uv: vec2<f32>, t: f32) -> vec3<f32> {
     //     fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
     // );
     // let warp2 = fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3));
-    x = clamp(x + 0.3, 0.0, 1.0);
-    return vec3<f32>(x, x, x);
+    let n01 = clamp(remap(x, -0.35, 0.35, 0.0, 1.0), 0.0, 1.0);
+    return 1.0 - pow(1.0 - n01, 2.2);
 }
 
 fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
