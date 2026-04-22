@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
-    "test:browser": "vitest --config vitest.config.ts"
+    "test:browser": "vitest --config vitest.config.ts",
+    "deploy": "npm run build && npm publish --access public"
   },
   "keywords": [
     "webgpu",
