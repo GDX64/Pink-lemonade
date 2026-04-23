@@ -20,7 +20,6 @@ export {
   drawChart,
   drawGaussianKernelSeries,
   drawSlidingHistogram,
-  sampleGaussianKernelAtX,
   type DrawGaussianKernelSeriesOptions,
   type GaussianKernelSeriesPoint,
 } from "./chart/chart";
@@ -42,11 +41,11 @@ import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 
 export async function example() {
   const canvas = createCanvas();
-  const data = createNoiseData(10000);
-  const kernels = createGaussianKernelSeries(data, 30);
+  const data = createNoiseData(1000);
   const offCanvas = new OffscreenCanvas(canvas.width, canvas.height);
-  drawGaussianKernelSeries(kernels, offCanvas, {
+  drawGaussianKernelSeries(data, offCanvas, {
     mode: "heatmap",
+    kernelSigmaXPx: 20,
   });
   const ctx = await createCanvas2DContext(canvas);
   const fragmentShader = FragmentShader.new({

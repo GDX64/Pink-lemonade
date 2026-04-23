@@ -6,7 +6,7 @@ function gausianNoise(mean: number, stdDev: number): number {
 }
 
 export interface GaussianKernelSeriesPoint {
-  centerX: number;
+  x: number;
   y: number;
   sigmaX: number;
   normalization: number;
@@ -24,45 +24,59 @@ export interface DrawGaussianKernelSeriesOptions {
   heatmapBinsY?: number;
   heatmapOpacity?: number;
   heatmapSigmaYBins?: number;
+  kernelSigmaXPx?: number;
+  kernelSupportSigma?: number;
+}
+
+export function createGaussianKernel(
+  x: number,
+  y: number,
+  hx: number,
+): GaussianKernelSeriesPoint {
+  if (!Number.isFinite(hx) || hx <= 0) {
+    throw new RangeError("hx must be a finite number greater than 0");
+  }
+
+  const normalization = 1 / (hx * Math.sqrt(2 * Math.PI));
+  const supportRadius = hx * 5;
+
+  return {
+    x,
+    y,
+    sigmaX: hx,
+    normalization,
+    supportRadius,
+  };
 }
 
 export function createGaussianKernelSeries(
   data: number[],
   hx: number,
 ): GaussianKernelSeriesPoint[] {
-  if (!Number.isFinite(hx) || hx <= 0) {
-    throw new RangeError("hx must be a finite number greater than 0");
-  }
-
-  const normalization = 1 / (hx * Math.sqrt(2 * Math.PI));
-  const supportRadius = hx * 3;
-
-  return data.map((y, centerX) => ({
-    centerX,
-    y,
-    sigmaX: hx,
-    normalization,
-    supportRadius,
-  }));
+  return data.map((y, x) => createGaussianKernel(x, y, hx));
 }
 
-export function sampleGaussianKernelAtX(
+export function sampleGaussianKernelAtDistance(
   kernel: GaussianKernelSeriesPoint,
-  x: number,
+  px: number,
+  py: number,
 ): number {
-  const distance = x - kernel.centerX;
   const variance = kernel.sigmaX * kernel.sigmaX;
+  const dx = px - kernel.x;
+  const dy = py - kernel.y;
+  const distanceFromCenterPx = Math.sqrt(dx * dx + dy * dy);
   return (
-    kernel.normalization * Math.exp(-(distance * distance) / (2 * variance))
+    kernel.normalization *
+    Math.exp(-(distanceFromCenterPx * distanceFromCenterPx) / (2 * variance))
   );
 }
 
 export function drawGaussianKernelSeries(
-  kernels: GaussianKernelSeriesPoint[],
+  data: number[],
   canvas: HTMLCanvasElement | OffscreenCanvas,
   options: DrawGaussianKernelSeriesOptions = {},
 ): void {
-  if (!kernels.length) {
+  if (!data.length) {
     return;
   }
 
@@ -73,50 +87,61 @@ export function drawGaussianKernelSeries(
 
   const width = canvas.width;
   const height = canvas.height;
-  const backgroundFill = options.backgroundFill ?? "white";
-  const lineWidth = options.lineWidth ?? 1.5;
-  const strokeStyle = options.strokeStyle ?? "rgba(0, 0, 0, 0.45)";
+  const backgroundFill = options.backgroundFill ?? "black";
+  const sigmaXPx = Math.max(0.5, options.kernelSigmaXPx ?? 6);
+  const supportSigma = Math.max(2, options.kernelSupportSigma ?? 5);
+  const binsX = Math.max(1, Math.floor(options.heatmapBinsX ?? width));
+  const binsY = Math.max(1, Math.floor(options.heatmapBinsY ?? height));
+  const opacity = Math.max(0, Math.min(1, options.heatmapOpacity ?? 1));
+  const sigmaYPx = Math.max(0.5, options.heatmapSigmaYBins ?? 1.25);
 
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const kernel of kernels) {
-    minX = Math.min(minX, kernel.centerX - kernel.supportRadius);
-    maxX = Math.max(maxX, kernel.centerX + kernel.supportRadius);
-    minY = Math.min(minY, kernel.y);
-    maxY = Math.max(maxY, kernel.y);
-  }
+  const minValue = Math.min(...data);
+  const maxValue = Math.max(...data);
+  const valueSpan = Math.max(maxValue - minValue, Number.EPSILON);
+
+  const scaleX = (index: number): number => {
+    if (data.length === 1) {
+      return width / 2;
+    }
+    return (index / (data.length - 1)) * (width - 1);
+  };
+
+  const scaleY = (value: number): number => {
+    if (maxValue === minValue) {
+      return height / 2;
+    }
+    return height - 1 - ((value - minValue) / valueSpan) * (height - 1);
+  };
+
+  const kernels = data.map((value, index) => {
+    const xPx = scaleX(index);
+    const yPx = scaleY(value);
+    const kernel = createGaussianKernel(xPx, yPx, sigmaXPx);
+    return {
+      ...kernel,
+      supportRadius: kernel.sigmaX * supportSigma,
+    };
+  });
 
   ctx.save();
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "black";
+  ctx.fillStyle = backgroundFill;
   ctx.fillRect(0, 0, width, height);
-  ctx.lineWidth = lineWidth;
-  ctx.strokeStyle = strokeStyle;
 
   drawGaussianKernelHeatmap(ctx, kernels, width, height, {
-    minX,
-    maxX,
-    minY,
-    maxY,
-    binsX: Math.max(8, Math.floor(options.heatmapBinsX ?? width / 4)),
-    binsY: Math.max(8, Math.floor(options.heatmapBinsY ?? height / 4)),
-    opacity: Math.max(0, Math.min(1, options.heatmapOpacity ?? 0.9)),
-    sigmaYBins: Math.max(0.25, options.heatmapSigmaYBins ?? 1.25),
+    binsX,
+    binsY,
+    sigmaYPx,
+    opacity,
   });
   ctx.restore();
 }
 
 interface DrawGaussianKernelHeatmapBounds {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
   binsX: number;
   binsY: number;
+  sigmaYPx: number;
   opacity: number;
-  sigmaYBins: number;
 }
 
 function drawGaussianKernelHeatmap(
@@ -126,59 +151,31 @@ function drawGaussianKernelHeatmap(
   height: number,
   bounds: DrawGaussianKernelHeatmapBounds,
 ): void {
-  const { minX, maxX, minY, maxY, binsX, binsY, opacity, sigmaYBins } = bounds;
+  const { binsX, binsY, sigmaYPx, opacity } = bounds;
 
-  const spanX = Math.max(maxX - minX, Number.EPSILON);
-  const spanY = Math.max(maxY - minY, Number.EPSILON);
   const density = new Float32Array(binsX * binsY);
-  const yRadiusBins = Math.max(1, Math.ceil(sigmaYBins * 3));
-
-  function xBinToDataX(xBin: number): number {
-    if (binsX === 1) {
-      return minX;
-    }
-    return minX + (xBin / (binsX - 1)) * spanX;
-  }
-
-  function dataXToBin(x: number): number {
-    if (binsX === 1) {
-      return 0;
-    }
-    return Math.round(((x - minX) / spanX) * (binsX - 1));
-  }
-
-  function dataYToBin(y: number): number {
-    if (binsY === 1) {
-      return 0;
-    }
-    return Math.round(((y - minY) / spanY) * (binsY - 1));
-  }
+  const xScale = binsX > 1 ? (width - 1) / (binsX - 1) : 1;
+  const yScale = binsY > 1 ? (height - 1) / (binsY - 1) : 1;
 
   for (const kernel of kernels) {
-    const xStartBin = Math.max(
-      0,
-      dataXToBin(kernel.centerX - kernel.supportRadius),
-    );
-    const xEndBin = Math.min(
-      binsX - 1,
-      dataXToBin(kernel.centerX + kernel.supportRadius),
-    );
-    const yCenterBin = Math.max(0, Math.min(binsY - 1, dataYToBin(kernel.y)));
+    const xCenterBin = Math.round(kernel.x / xScale);
+    const yCenterBin = Math.round(kernel.y / yScale);
+    const xRadiusBins = Math.max(1, Math.ceil(kernel.supportRadius / xScale));
+    const yRadiusBins = xRadiusBins;
+
+    const xStartBin = Math.max(0, xCenterBin - xRadiusBins);
+    const xEndBin = Math.min(binsX - 1, xCenterBin + xRadiusBins);
 
     for (let xBin = xStartBin; xBin <= xEndBin; xBin++) {
-      const dataX = xBinToDataX(xBin);
-      const wx = sampleGaussianKernelAtX(kernel, dataX) / kernel.normalization;
-      if (wx <= 0) {
-        continue;
-      }
+      const pixelX = xBin * xScale;
 
       const yStart = Math.max(0, yCenterBin - yRadiusBins);
       const yEnd = Math.min(binsY - 1, yCenterBin + yRadiusBins);
       for (let yBin = yStart; yBin <= yEnd; yBin++) {
-        const dyBins = yBin - yCenterBin;
-        const wy = Math.exp(-(dyBins * dyBins) / (2 * sigmaYBins * sigmaYBins));
+        const pixelY = yBin * yScale;
+        const w = sampleGaussianKernelAtDistance(kernel, pixelX, pixelY);
         const densityIndex = yBin * binsX + xBin;
-        density[densityIndex] = (density[densityIndex] ?? 0) + wx * wy;
+        density[densityIndex] = (density[densityIndex] ?? 0) + w;
       }
     }
   }
@@ -201,7 +198,7 @@ function drawGaussianKernelHeatmap(
       }
 
       const t = Math.max(0, Math.min(1, value / maxDensity));
-      ctx.fillStyle = heatmapColor(t);
+      ctx.fillStyle = heatmapColor(t, opacity);
 
       const px = xBin * cellWidth;
       const py = height - (yBin + 1) * cellHeight;
@@ -210,9 +207,12 @@ function drawGaussianKernelHeatmap(
   }
 }
 
-function heatmapColor(t: number): string {
-  const color = Math.round(t * 255);
-  return `rgba(${color},${color},${color}, 1)`;
+function heatmapColor(t: number, opacity: number): string {
+  const color = Math.floor(t * 2 ** 16);
+  const r = (color >> 8) & 0xff;
+  const g = color & 0xff;
+  const b = 0;
+  return `rgba(${r},${g},${b}, ${opacity})`;
 }
 
 export function createNoiseData(N: number): number[] {

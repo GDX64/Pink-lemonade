@@ -189,7 +189,13 @@ fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
         fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
         // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
     );
-    return textureSample(canvasTexture, canvasSampler, uv + warp2.xy * 0.1).r;
+    let s = textureSample(canvasTexture, canvasSampler, uv + warp2.xy * 0.0);
+    let r = i32(s.r * 255.0);
+    let g = i32(s.g * 255.0);
+    // let b = i32(s.b * 255.0);
+    let val = (r << 8) + g;
+    // return s.g;
+    return f32(val) / 65535.0;
 }
 
 fn blury_sample(uv: vec2<f32>) -> f32 {
