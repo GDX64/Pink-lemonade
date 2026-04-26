@@ -178,47 +178,65 @@ fn my_noise(uv: vec2<f32>, t: f32) -> f32 {
     return 1.0 - pow(1.0 - n01, 2.2);
 }
 
-fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
-    let base = uv * 4.0;
-    let warp1 = vec2<f32>(
-        fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
-        fbm(base + vec2<f32>(8.3 - t * 0.9, 2.8 + t * 1.1))
-    );
-    let warp2 = vec2<f32>(
-        fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3)),
-        fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
-        // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
-    );
-    let s = textureSample(canvasTexture, canvasSampler, uv + warp2.xy * 0.1);
-    let r = i32(s.r * 255.0);
-    let g = i32(s.g * 255.0);
-    let b = i32(s.b * 255.0);
-    let val = (r << 16) + (g << 8) + b;
-    // return s.g;
+fn decodePackedRgb01(s: vec4<f32>) -> f32 {
+    let r = u32(round(clamp(s.r, 0.0, 1.0) * 255.0));
+    let g = u32(round(clamp(s.g, 0.0, 1.0) * 255.0));
+    let b = u32(round(clamp(s.b, 0.0, 1.0) * 255.0));
+    let val = (r << 16u) | (g << 8u) | b;
     return f32(val) / 16777215.0;
 }
 
-fn blury_sample(uv: vec2<f32>) -> f32 {
-    const BLUR_PX: f32 = 0.0;
-    let texSize: vec2<f32> = vec2<f32>(textureDimensions(canvasTexture, 0));
-    let texel: vec2<f32> = vec2<f32>(1.0, 1.0) / texSize;
-    let o = texel * BLUR_PX;
+fn catmullRomWeights(t: f32) -> vec4<f32> {
+    let t2 = t * t;
+    let t3 = t2 * t;
 
-    let s00 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, -o.y)).a;
-    let s10 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(0.0, -o.y)).a;
-    let s20 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, -o.y)).a;
-
-    let s01 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, 0.0)).a;
-    let s11 = textureSample(canvasTexture, canvasSampler, uv).a;
-    let s21 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, 0.0)).a;
-
-    let s02 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(-o.x, o.y)).a;
-    let s12 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(0.0, o.y)).a;
-    let s22 = textureSample(canvasTexture, canvasSampler, uv + vec2<f32>(o.x, o.y)).a;
-
-    let sum = s00 * 1.0 + s10 * 2.0 + s20 * 1.0 +
-        s01 * 2.0 + s11 * 4.0 + s21 * 2.0 +
-        s02 * 1.0 + s12 * 2.0 + s22 * 1.0;
-
-    return sum / 16.0;
+    let w0 = -0.5 * t + t2 - 0.5 * t3;
+    let w1 = 1.0 - 2.5 * t2 + 1.5 * t3;
+    let w2 = 0.5 * t + 2.0 * t2 - 1.5 * t3;
+    let w3 = -0.5 * t2 + 0.5 * t3;
+    return vec4<f32>(w0, w1, w2, w3);
 }
+
+fn bicubicSamplePackedScalar(uv: vec2<f32>) -> f32 {
+    let texSizeU = textureDimensions(canvasTexture, 0);
+    let texSizeI = vec2<i32>(texSizeU);
+    let texSize = vec2<f32>(texSizeU);
+
+    let pos = uv * texSize - vec2<f32>(0.5, 0.5);
+    let base = vec2<i32>(floor(pos));
+    let f = fract(pos);
+
+    let wxV = catmullRomWeights(f.x);
+    let wyV = catmullRomWeights(f.y);
+    let wx = array<f32, 4>(wxV.x, wxV.y, wxV.z, wxV.w);
+    let wy = array<f32, 4>(wyV.x, wyV.y, wyV.z, wyV.w);
+
+    var acc = 0.0;
+    for (var jy = 0; jy < 4; jy = jy + 1) {
+        let y = clamp(base.y + jy - 1, 0, texSizeI.y - 1);
+        for (var ix = 0; ix < 4; ix = ix + 1) {
+            let x = clamp(base.x + ix - 1, 0, texSizeI.x - 1);
+            let s = textureLoad(canvasTexture, vec2<i32>(x, y), 0);
+            let v = decodePackedRgb01(s);
+            acc = acc + wx[ix] * wy[jy] * v;
+        }
+    }
+
+    return clamp(acc, 0.0, 1.0);
+}
+
+fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
+    // let base = uv * 4.0;
+    // let warp1 = vec2<f32>(
+    //     fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
+    //     fbm(base + vec2<f32>(8.3 - t * 0.9, 2.8 + t * 1.1))
+    // );
+    // let warp2 = vec2<f32>(
+    //     fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3)),
+    //     fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
+    //     // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
+    // );
+    // let warpedUv = uv + warp2.xy * 0.1;
+    return bicubicSamplePackedScalar(uv);
+}
+

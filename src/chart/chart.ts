@@ -199,7 +199,7 @@ function drawGaussianKernelHeatmap(
       }
 
       const t = Math.max(0, Math.min(1, value / maxDensity));
-      const color = Math.floor(t * 2 ** 24);
+      const color = Math.floor(t * (2 ** 24 - 1));
       const r = (color >> 16) & 0xff;
       const g = (color >> 8) & 0xff;
       const b = color & 0xff;

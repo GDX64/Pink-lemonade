@@ -43,7 +43,7 @@ export async function example() {
   const canvas = createCanvas();
   const data = createNoiseData(10_000);
   const donwScaling = 8;
-  const kernelSize = 20;
+  const kernelSize = 10;
   const offCanvas = new OffscreenCanvas(
     canvas.width / donwScaling,
     canvas.height / donwScaling,
