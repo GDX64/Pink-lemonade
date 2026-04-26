@@ -42,7 +42,7 @@ import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 export async function example() {
   const canvas = createCanvas();
   const overlayCanvas = createCanvas();
-  overlayCanvas.style.opacity = "0.1";
+  overlayCanvas.style.opacity = "0.2";
   const data = createNoiseData(10_000);
   drawChart(data, overlayCanvas);
   const donwScaling = 8;

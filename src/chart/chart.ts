@@ -256,7 +256,7 @@ export function createNoiseData(N: number): [number, number][] {
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev);
     timeAcc += Math.abs(
-      gausianNoise(mean, stdDev) * Math.sin((i / N) * Math.PI * 2 * 2),
+      gausianNoise(mean, stdDev) * Math.sin((i / N) * Math.PI * 2 * 3),
     );
     data.push([timeAcc, acc]);
   }
@@ -281,12 +281,54 @@ export function drawChart(
   const minData = Math.min(...data.map(([, y]) => y));
   const minX = Math.min(...data.map(([x]) => x));
   const maxX = Math.max(...data.map(([x]) => x));
+  const xSpan = Math.max(maxX - minX, Number.EPSILON);
+  const ySpan = Math.max(maxData - minData, Number.EPSILON);
 
   function scaleX(value: number): number {
-    return ((value - minX) / (maxX - minX)) * width;
+    if (maxX === minX) {
+      return width / 2;
+    }
+    return ((value - minX) / xSpan) * width;
   }
   function scaleY(value: number): number {
-    return height - ((value - minData) / (maxData - minData)) * height;
+    if (maxData === minData) {
+      return height / 2;
+    }
+    return height - ((value - minData) / ySpan) * height;
+  }
+
+  const targetBinPx = 16;
+  const binCount = Math.max(1, Math.floor(width / targetBinPx));
+  const counts = new Uint32Array(binCount);
+  for (const [x] of data) {
+    const normalized = (x - minX) / xSpan;
+    const clamped = Math.max(0, Math.min(1, normalized));
+    const binIndex = Math.min(binCount - 1, Math.floor(clamped * binCount));
+    counts[binIndex] = (counts[binIndex] ?? 0) + 1;
+  }
+
+  let maxCount = 0;
+  for (let i = 0; i < counts.length; i++) {
+    maxCount = Math.max(maxCount, counts[i] ?? 0);
+  }
+
+  if (maxCount > 0) {
+    const barWidth = width / binCount;
+    const histogramHeight = Math.max(24, height * 0.1);
+    ctx.save();
+    ctx.fillStyle = "rgb(255, 61, 61)";
+    for (let i = 0; i < binCount; i++) {
+      const count = counts[i] ?? 0;
+      if (count <= 0) {
+        continue;
+      }
+
+      const barHeight = (count / maxCount) * histogramHeight;
+      const xStart = i * barWidth;
+      const yStart = height - barHeight;
+      ctx.fillRect(xStart, yStart, Math.ceil(barWidth), barHeight);
+    }
+    ctx.restore();
   }
 
   ctx.rect(0, 0, width, height);
