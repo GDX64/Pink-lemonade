@@ -297,9 +297,9 @@ export class WebGPUCanvas2DContext {
     );
 
     const sampler = this.state.device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
+      magFilter: "nearest",
+      minFilter: "nearest",
+      mipmapFilter: "nearest",
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });

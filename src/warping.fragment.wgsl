@@ -225,6 +225,51 @@ fn bicubicSamplePackedScalar(uv: vec2<f32>) -> f32 {
     return clamp(acc, 0.0, 1.0);
 }
 
+// Fast bicubic approximation using 4 bilinear taps.
+fn fastBicubicSamplePackedScalar(uv: vec2<f32>) -> f32 {
+    let texSize = vec2<f32>(textureDimensions(canvasTexture, 0));
+    let texel = vec2<f32>(1.0, 1.0) / texSize;
+
+    let p = uv * texSize - vec2<f32>(0.5, 0.5);
+    let f = fract(p);
+    let f2 = f * f;
+    let f3 = f2 * f;
+
+    // Catmull-Rom pairwise weights, grouped into two bilinear taps per axis.
+    let w0 = -0.5 * f + f2 - 0.5 * f3;
+    let w1 = 1.0 - 2.5 * f2 + 1.5 * f3;
+    let w2 = 0.5 * f + 2.0 * f2 - 1.5 * f3;
+    let w3 = -0.5 * f2 + 0.5 * f3;
+
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    let eps = vec2<f32>(1e-6, 1e-6);
+
+    let h0 = (w1 / (g0 + eps)) - 0.5;
+    let h1 = (w3 / (g1 + eps)) + 1.5;
+
+    let base = (floor(p) + vec2<f32>(0.5, 0.5)) * texel;
+    let uv00 = base + vec2<f32>(h0.x, h0.y) * texel;
+    let uv10 = base + vec2<f32>(h1.x, h0.y) * texel;
+    let uv01 = base + vec2<f32>(h0.x, h1.y) * texel;
+    let uv11 = base + vec2<f32>(h1.x, h1.y) * texel;
+
+    let s00 = decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv00));
+    let s10 = decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv10));
+    let s01 = decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv01));
+    let s11 = decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv11));
+
+    let gx0 = g0.x;
+    let gx1 = g1.x;
+    let gy0 = g0.y;
+    let gy1 = g1.y;
+
+    let top = s00 * gx0 + s10 * gx1;
+    let bottom = s01 * gx0 + s11 * gx1;
+    let out = top * gy0 + bottom * gy1;
+    return clamp(out, 0.0, 1.0);
+}
+
 fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
     // let base = uv * 4.0;
     // let warp1 = vec2<f32>(
@@ -237,6 +282,9 @@ fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
     //     // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
     // );
     // let warpedUv = uv + warp2.xy * 0.1;
+    _ = t;
+    // return fastBicubicSamplePackedScalar(uv);
     return bicubicSamplePackedScalar(uv);
+    // return decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv));
 }
 
