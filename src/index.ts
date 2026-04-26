@@ -31,9 +31,9 @@ import {
   Scene,
 } from "./canvas2d/context";
 import {
-  createGaussianKernelSeries,
   createNoiseData,
   createSlidingHistogram,
+  drawChart,
   drawGaussianKernelSeries,
   drawSlidingHistogram,
 } from "./chart/chart";
@@ -41,7 +41,10 @@ import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 
 export async function example() {
   const canvas = createCanvas();
-  const data = createNoiseData(100_000);
+  const overlayCanvas = createCanvas();
+  overlayCanvas.style.opacity = "0.1";
+  const data = createNoiseData(10_000);
+  drawChart(data, overlayCanvas);
   const donwScaling = 8;
   const kernelSize = 16;
   const offCanvas = new OffscreenCanvas(

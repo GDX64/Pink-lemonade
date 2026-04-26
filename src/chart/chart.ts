@@ -225,7 +225,7 @@ function drawGaussianKernelHeatmap(
       const a = Math.floor(opacity * 255);
 
       const px = xBin * cellWidth;
-      const py = height - (yBin + 1) * cellHeight;
+      const py = yBin * cellHeight;
       const xStart = Math.floor(px);
       const xEnd = Math.floor(px + cellWidth);
       const yStart = Math.floor(py);
@@ -255,13 +255,18 @@ export function createNoiseData(N: number): [number, number][] {
   const data: [number, number][] = [[timeAcc, acc]];
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev);
-    timeAcc += Math.abs(gausianNoise(mean, stdDev));
+    timeAcc += Math.abs(
+      gausianNoise(mean, stdDev) * Math.sin((i / N) * Math.PI * 2 * 2),
+    );
     data.push([timeAcc, acc]);
   }
   return data;
 }
 
-export function drawChart(data: number[], canvas: HTMLCanvasElement): void {
+export function drawChart(
+  data: [number, number][],
+  canvas: HTMLCanvasElement,
+): void {
   if (!data.length) {
     return;
   }
@@ -272,25 +277,25 @@ export function drawChart(data: number[], canvas: HTMLCanvasElement): void {
 
   const width = canvas.width;
   const height = canvas.height;
-  const maxData = Math.max(...data);
-  const minData = Math.min(...data);
+  const maxData = Math.max(...data.map(([, y]) => y));
+  const minData = Math.min(...data.map(([, y]) => y));
+  const minX = Math.min(...data.map(([x]) => x));
+  const maxX = Math.max(...data.map(([x]) => x));
 
   function scaleX(value: number): number {
-    return (value / (data.length - 1)) * width;
+    return ((value - minX) / (maxX - minX)) * width;
   }
   function scaleY(value: number): number {
     return height - ((value - minData) / (maxData - minData)) * height;
   }
 
   ctx.rect(0, 0, width, height);
-  ctx.fillStyle = "white";
-  ctx.fill();
-  ctx.strokeStyle = "black";
+  ctx.strokeStyle = "#a4ff3d";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(scaleX(0), scaleY(data[0]!));
+  ctx.moveTo(scaleX(data[0]![0]), scaleY(data[0]![1]));
   for (let i = 1; i < data.length; i++) {
-    ctx.lineTo(scaleX(i), scaleY(data[i]!));
+    ctx.lineTo(scaleX(data[i]![0]), scaleY(data[i]![1]));
   }
   ctx.stroke();
 }
