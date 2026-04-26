@@ -43,10 +43,10 @@ export async function example() {
   const canvas = createCanvas();
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
-  const data = createNoiseData(10_000);
+  const data = createNoiseData(100_000);
   drawChart(data, overlayCanvas);
   const donwScaling = 8;
-  const kernelSize = 16;
+  const kernelSize = 8;
   const offCanvas = new OffscreenCanvas(
     canvas.width / donwScaling,
     canvas.height / donwScaling,

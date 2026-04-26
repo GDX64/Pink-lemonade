@@ -104,10 +104,9 @@ export function drawGaussianKernelSeries(
   const height = canvas.height;
   const sigmaXPx = Math.max(0.5, options.kernelSigmaXPx ?? 6);
   const supportSigma = Math.max(2, options.kernelSupportSigma ?? 5);
-  const binsX = Math.max(1, Math.floor(options.heatmapBinsX ?? width));
-  const binsY = Math.max(1, Math.floor(options.heatmapBinsY ?? height));
+  const binsX = width;
+  const binsY = height;
   const opacity = Math.max(0, Math.min(1, options.heatmapOpacity ?? 1));
-  const sigmaYPx = Math.max(0.5, options.heatmapSigmaYBins ?? 1.25);
 
   let minXValue = Infinity;
   let maxXValue = -Infinity;
@@ -146,31 +145,6 @@ export function drawGaussianKernelSeries(
       supportRadius: kernel.sigmaX * supportSigma,
     };
   });
-
-  drawGaussianKernelHeatmap(ctx, kernels, width, height, {
-    binsX,
-    binsY,
-    sigmaYPx,
-    opacity,
-  });
-  ctx.restore();
-}
-
-interface DrawGaussianKernelHeatmapBounds {
-  binsX: number;
-  binsY: number;
-  sigmaYPx: number;
-  opacity: number;
-}
-
-function drawGaussianKernelHeatmap(
-  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
-  kernels: GaussianKernelSeriesPoint[],
-  width: number,
-  height: number,
-  bounds: DrawGaussianKernelHeatmapBounds,
-): void {
-  const { binsX, binsY, sigmaYPx, opacity } = bounds;
 
   const density = new Float32Array(binsX * binsY);
   const xScale = binsX > 1 ? (width - 1) / (binsX - 1) : 1;
@@ -245,6 +219,7 @@ function drawGaussianKernelHeatmap(
     }
   }
   ctx.putImageData(imageData, 0, 0);
+  ctx.restore();
 }
 
 export function createNoiseData(N: number): [number, number][] {
@@ -256,7 +231,8 @@ export function createNoiseData(N: number): [number, number][] {
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev);
     timeAcc += Math.abs(
-      gausianNoise(mean, stdDev) * Math.sin((i / N) * Math.PI * 2 * 3),
+      gausianNoise(mean, stdDev) *
+        Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4),
     );
     data.push([timeAcc, acc]);
   }
@@ -297,6 +273,10 @@ export function drawChart(
     return height - ((value - minData) / ySpan) * height;
   }
 
+  ctx.rect(0, 0, width, height);
+  ctx.fill();
+  ctx.strokeStyle = "#a4ff3d";
+
   const targetBinPx = 16;
   const binCount = Math.max(1, Math.floor(width / targetBinPx));
   const counts = new Uint32Array(binCount);
@@ -331,8 +311,6 @@ export function drawChart(
     ctx.restore();
   }
 
-  ctx.rect(0, 0, width, height);
-  ctx.strokeStyle = "#a4ff3d";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(scaleX(data[0]![0]), scaleY(data[0]![1]));
