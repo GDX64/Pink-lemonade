@@ -42,8 +42,8 @@ import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 export async function example() {
   const canvas = createCanvas();
   const data = createNoiseData(100_000);
-  const donwScaling = 16;
-  const kernelSize = 10;
+  const donwScaling = 8;
+  const kernelSize = 16;
   const offCanvas = new OffscreenCanvas(
     canvas.width / donwScaling,
     canvas.height / donwScaling,

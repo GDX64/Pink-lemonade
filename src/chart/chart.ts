@@ -28,6 +28,20 @@ export interface DrawGaussianKernelSeriesOptions {
   kernelSupportSigma?: number;
 }
 
+export type XYDataPoint = [number, number];
+
+function toXYDataPoints(data: number[] | XYDataPoint[]): XYDataPoint[] {
+  if (!data.length) {
+    return [];
+  }
+
+  if (Array.isArray(data[0])) {
+    return data as XYDataPoint[];
+  }
+
+  return (data as number[]).map((y, index) => [index, y]);
+}
+
 export function createGaussianKernel(
   x: number,
   y: number,
@@ -50,10 +64,10 @@ export function createGaussianKernel(
 }
 
 export function createGaussianKernelSeries(
-  data: number[],
+  data: number[] | XYDataPoint[],
   hx: number,
 ): GaussianKernelSeriesPoint[] {
-  return data.map((y, x) => createGaussianKernel(x, y, hx));
+  return toXYDataPoints(data).map(([x, y]) => createGaussianKernel(x, y, hx));
 }
 
 export function sampleGaussianKernelAtDistance(
@@ -72,11 +86,12 @@ export function sampleGaussianKernelAtDistance(
 }
 
 export function drawGaussianKernelSeries(
-  data: number[],
+  data: number[] | XYDataPoint[],
   canvas: HTMLCanvasElement | OffscreenCanvas,
   options: DrawGaussianKernelSeriesOptions = {},
 ): void {
-  if (!data.length) {
+  const points = toXYDataPoints(data);
+  if (!points.length) {
     return;
   }
 
@@ -87,7 +102,6 @@ export function drawGaussianKernelSeries(
 
   const width = canvas.width;
   const height = canvas.height;
-  const backgroundFill = options.backgroundFill ?? "black";
   const sigmaXPx = Math.max(0.5, options.kernelSigmaXPx ?? 6);
   const supportSigma = Math.max(2, options.kernelSupportSigma ?? 5);
   const binsX = Math.max(1, Math.floor(options.heatmapBinsX ?? width));
@@ -95,38 +109,43 @@ export function drawGaussianKernelSeries(
   const opacity = Math.max(0, Math.min(1, options.heatmapOpacity ?? 1));
   const sigmaYPx = Math.max(0.5, options.heatmapSigmaYBins ?? 1.25);
 
-  const minValue = Math.min(...data);
-  const maxValue = Math.max(...data);
-  const valueSpan = Math.max(maxValue - minValue, Number.EPSILON);
+  let minXValue = Infinity;
+  let maxXValue = -Infinity;
+  let minYValue = Infinity;
+  let maxYValue = -Infinity;
+  for (const [x, y] of points) {
+    minXValue = Math.min(minXValue, x);
+    maxXValue = Math.max(maxXValue, x);
+    minYValue = Math.min(minYValue, y);
+    maxYValue = Math.max(maxYValue, y);
+  }
 
-  const scaleX = (index: number): number => {
-    if (data.length === 1) {
+  const xSpan = Math.max(maxXValue - minXValue, Number.EPSILON);
+  const ySpan = Math.max(maxYValue - minYValue, Number.EPSILON);
+
+  const scaleX = (value: number): number => {
+    if (maxXValue === minXValue) {
       return width / 2;
     }
-    return (index / (data.length - 1)) * (width - 1);
+    return ((value - minXValue) / xSpan) * (width - 1);
   };
 
   const scaleY = (value: number): number => {
-    if (maxValue === minValue) {
+    if (maxYValue === minYValue) {
       return height / 2;
     }
-    return height - 1 - ((value - minValue) / valueSpan) * (height - 1);
+    return height - 1 - ((value - minYValue) / ySpan) * (height - 1);
   };
 
-  const kernels = data.map((value, index) => {
-    const xPx = scaleX(index);
-    const yPx = scaleY(value);
+  const kernels = points.map(([xValue, yValue]) => {
+    const xPx = scaleX(xValue);
+    const yPx = scaleY(yValue);
     const kernel = createGaussianKernel(xPx, yPx, sigmaXPx);
     return {
       ...kernel,
       supportRadius: kernel.sigmaX * supportSigma,
     };
   });
-
-  ctx.save();
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = backgroundFill;
-  ctx.fillRect(0, 0, width, height);
 
   drawGaussianKernelHeatmap(ctx, kernels, width, height, {
     binsX,
@@ -228,14 +247,16 @@ function drawGaussianKernelHeatmap(
   ctx.putImageData(imageData, 0, 0);
 }
 
-export function createNoiseData(N: number): number[] {
+export function createNoiseData(N: number): [number, number][] {
   const mean = 0;
   const stdDev = 1;
   let acc = gausianNoise(mean, stdDev);
-  const data = [acc];
+  let timeAcc = 0;
+  const data: [number, number][] = [[timeAcc, acc]];
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev);
-    data.push(acc);
+    timeAcc += Math.abs(gausianNoise(mean, stdDev));
+    data.push([timeAcc, acc]);
   }
   return data;
 }
@@ -279,29 +300,42 @@ export function drawSlidingHistogram(
   canvas: OffscreenCanvas,
   binSize: number,
 ): void {
-  let maxX = 0;
+  if (!data.length) {
+    return;
+  }
+
+  let maxX = -Infinity;
   let maxY = 0;
-  let minX = 0;
+  let minX = Infinity;
   let minY = Infinity;
   let maxCount = 0;
-  for (const { xValue, hist } of data) {
-    maxX = Math.max(maxX, xValue);
+  for (const { xValue, hist, deltaX } of data) {
+    minX = Math.min(minX, xValue);
+    maxX = Math.max(maxX, xValue + deltaX);
     for (const [bin, count] of hist.entries()) {
       maxCount = Math.max(maxCount, count);
       maxY = Math.max(maxY, bin);
       minY = Math.min(minY, bin);
     }
   }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxCount <= 0) {
+    return;
+  }
+
   const width = canvas.width;
   const height = canvas.height;
+  const xSpan = Math.max(maxX - minX, Number.EPSILON);
+  const ySpan = Math.max(maxY - minY, Number.EPSILON);
+
   function scaleX(value: number): number {
-    return (value / maxX) * width;
+    return ((value - minX) / xSpan) * width;
   }
   function scaleY(value: number): number {
-    return height - ((value - minY) / (maxY - minY)) * height;
+    return height - ((value - minY) / ySpan) * height;
   }
   function alphaScale(count: number): number {
-    return count / maxCount;
+    return maxCount > 0 ? count / maxCount : 0;
   }
 
   //draw as rectangles
@@ -379,18 +413,22 @@ export function blurImage(canvas: OffscreenCanvas, radius: number): void {
 }
 
 export function createSlidingHistogram(
-  data: number[],
+  data: number[] | XYDataPoint[],
   each: number,
   binSize: number,
 ) {
-  const windows = windowSlices(data, each);
+  const points = toXYDataPoints(data);
+  const windows = windowSlices(points, each);
   return windows.map((window, index) => {
-    const hist = createHistogram(window, binSize);
+    const values = window.map(([, value]) => value);
+    const hist = createHistogram(values, binSize);
+    const xStart = window[0]?.[0] ?? index * each;
+    const xEnd = window[window.length - 1]?.[0] ?? xStart;
     const data: { xValue: number; hist: Map<number, number>; deltaX: number } =
       {
-        xValue: index * each,
+        xValue: xStart,
         hist: hist,
-        deltaX: each,
+        deltaX: Math.max(xEnd - xStart, Number.EPSILON),
       };
     return data;
   });
@@ -405,8 +443,8 @@ function createHistogram(data: number[], binSize: number): Map<number, number> {
   return histogram;
 }
 
-export function windowSlices(data: number[], each: number): number[][] {
-  const windows: number[][] = [];
+export function windowSlices<T>(data: T[], each: number): T[][] {
+  const windows: T[][] = [];
   for (let i = 0; i < data.length; i += each) {
     windows.push(data.slice(i, i + each));
   }
