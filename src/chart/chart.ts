@@ -188,6 +188,7 @@ function drawGaussianKernelHeatmap(
     return;
   }
 
+  const imageData = new ImageData(width, height);
   const cellWidth = width / binsX;
   const cellHeight = height / binsY;
   for (let yBin = 0; yBin < binsY; yBin++) {
@@ -198,21 +199,33 @@ function drawGaussianKernelHeatmap(
       }
 
       const t = Math.max(0, Math.min(1, value / maxDensity));
-      ctx.fillStyle = heatmapColor(t, opacity);
+      const color = Math.floor(t * 2 ** 24);
+      const r = (color >> 16) & 0xff;
+      const g = (color >> 8) & 0xff;
+      const b = color & 0xff;
+      const a = Math.floor(opacity * 255);
 
       const px = xBin * cellWidth;
       const py = height - (yBin + 1) * cellHeight;
-      ctx.fillRect(px, py, cellWidth + 0.5, cellHeight + 0.5);
+      const xStart = Math.floor(px);
+      const xEnd = Math.floor(px + cellWidth);
+      const yStart = Math.floor(py);
+      const yEnd = Math.floor(py + cellHeight);
+
+      for (let yy = yStart; yy < yEnd; yy++) {
+        for (let xx = xStart; xx < xEnd; xx++) {
+          if (xx >= 0 && xx < width && yy >= 0 && yy < height) {
+            const index = (yy * width + xx) * 4;
+            imageData.data[index] = r;
+            imageData.data[index + 1] = g;
+            imageData.data[index + 2] = b;
+            imageData.data[index + 3] = a;
+          }
+        }
+      }
     }
   }
-}
-
-function heatmapColor(t: number, opacity: number): string {
-  const color = Math.floor(t * 2 ** 24);
-  const r = (color >> 16) & 0xff;
-  const g = (color >> 8) & 0xff;
-  const b = color & 0xff;
-  return `rgba(${r},${g},${b}, ${opacity})`;
+  ctx.putImageData(imageData, 0, 0);
 }
 
 export function createNoiseData(N: number): number[] {
