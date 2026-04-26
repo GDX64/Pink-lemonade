@@ -208,10 +208,10 @@ function drawGaussianKernelHeatmap(
 }
 
 function heatmapColor(t: number, opacity: number): string {
-  const color = Math.floor(t * 2 ** 16);
-  const r = (color >> 8) & 0xff;
-  const g = color & 0xff;
-  const b = 0;
+  const color = Math.floor(t * 2 ** 24);
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
   return `rgba(${r},${g},${b}, ${opacity})`;
 }
 

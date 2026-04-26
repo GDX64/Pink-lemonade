@@ -42,10 +42,15 @@ import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 export async function example() {
   const canvas = createCanvas();
   const data = createNoiseData(1000);
-  const offCanvas = new OffscreenCanvas(canvas.width, canvas.height);
+  const donwScaling = 16;
+  const kernelSize = 20;
+  const offCanvas = new OffscreenCanvas(
+    canvas.width / donwScaling,
+    canvas.height / donwScaling,
+  );
   drawGaussianKernelSeries(data, offCanvas, {
     mode: "heatmap",
-    kernelSigmaXPx: 20,
+    kernelSigmaXPx: kernelSize / donwScaling,
   });
   const ctx = await createCanvas2DContext(canvas);
   const fragmentShader = FragmentShader.new({
