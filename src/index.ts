@@ -19,6 +19,7 @@ export {
   createSlidingHistogram,
   drawChart,
   drawGaussianKernelSeries,
+  drawSplatKernelSeries,
   drawSlidingHistogram,
   type DrawGaussianKernelSeriesOptions,
   type GaussianKernelSeriesPoint,
@@ -36,6 +37,7 @@ import {
   drawChart,
   drawGaussianKernelSeries,
   drawSlidingHistogram,
+  drawSplatKernelSeries,
 } from "./chart/chart";
 import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 
@@ -44,17 +46,13 @@ export async function example() {
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
   const data = createNoiseData(100_000);
-  drawChart(data, overlayCanvas);
-  const donwScaling = 8;
-  const kernelSize = 8;
+  // drawChart(data, overlayCanvas);
+  const donwScaling = 16;
   const offCanvas = new OffscreenCanvas(
     canvas.width / donwScaling,
     canvas.height / donwScaling,
   );
-  drawGaussianKernelSeries(data, offCanvas, {
-    mode: "heatmap",
-    kernelSigmaXPx: kernelSize / donwScaling,
-  });
+  drawSplatKernelSeries(data, offCanvas);
   const ctx = await createCanvas2DContext(canvas);
   const fragmentShader = FragmentShader.new({
     source: fragmentShaderSource,

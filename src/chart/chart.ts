@@ -222,6 +222,137 @@ export function drawGaussianKernelSeries(
   ctx.restore();
 }
 
+export function drawSplatKernelSeries(
+  data: XYDataPoint[],
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+): void {
+  const points = toXYDataPoints(data);
+  if (!points.length) {
+    return;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Failed to get 2D context");
+  }
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const binsX = width;
+  const binsY = height;
+  const opacity = 1;
+
+  let minXValue = Infinity;
+  let maxXValue = -Infinity;
+  let minYValue = Infinity;
+  let maxYValue = -Infinity;
+  for (const [x, y] of points) {
+    minXValue = Math.min(minXValue, x);
+    maxXValue = Math.max(maxXValue, x);
+    minYValue = Math.min(minYValue, y);
+    maxYValue = Math.max(maxYValue, y);
+  }
+
+  const xSpan = Math.max(maxXValue - minXValue, Number.EPSILON);
+  const ySpan = Math.max(maxYValue - minYValue, Number.EPSILON);
+
+  const scaleX = (value: number): number => {
+    if (maxXValue === minXValue) {
+      return width / 2;
+    }
+    return ((value - minXValue) / xSpan) * (width - 1);
+  };
+
+  const scaleY = (value: number): number => {
+    if (maxYValue === minYValue) {
+      return height / 2;
+    }
+    return height - 1 - ((value - minYValue) / ySpan) * (height - 1);
+  };
+
+  const density = new Float32Array(binsX * binsY);
+  const splatRadius = 1.5;
+  for (const [xValue, yValue] of points) {
+    const x = scaleX(xValue);
+    const y = scaleY(yValue);
+    const centerX = Math.round(x);
+    const centerY = Math.round(y);
+
+    const weightsX = [0, 0, 0];
+    const weightsY = [0, 0, 0];
+    for (let offset = -1; offset <= 1; offset++) {
+      const index = offset + 1;
+      weightsX[index] =
+        Math.max(0, 1 - Math.abs(x - (centerX + offset)) / splatRadius) ?? 0;
+      weightsY[index] =
+        Math.max(0, 1 - Math.abs(y - (centerY + offset)) / splatRadius) ?? 0;
+    }
+
+    let totalWeight = 0;
+    for (let oy = 0; oy < 3; oy++) {
+      for (let ox = 0; ox < 3; ox++) {
+        totalWeight += (weightsX[ox] ?? 0) * (weightsY[oy] ?? 0);
+      }
+    }
+    if (totalWeight <= 0) {
+      continue;
+    }
+
+    for (let offsetY = -1; offsetY <= 1; offsetY++) {
+      const yBin = centerY + offsetY;
+      if (yBin < 0 || yBin >= binsY) {
+        continue;
+      }
+
+      for (let offsetX = -1; offsetX <= 1; offsetX++) {
+        const xBin = centerX + offsetX;
+        if (xBin < 0 || xBin >= binsX) {
+          continue;
+        }
+
+        const weight =
+          ((weightsX[offsetX + 1] ?? 0) * (weightsY[offsetY + 1] ?? 0)) /
+          totalWeight;
+        const index = yBin * binsX + xBin;
+        density[index] = (density[index] ?? 0) + weight;
+      }
+    }
+  }
+
+  let maxDensity = 0;
+  for (let i = 0; i < density.length; i++) {
+    maxDensity = Math.max(maxDensity, density[i] ?? 0);
+  }
+  if (maxDensity <= 0) {
+    return;
+  }
+
+  const imageData = new ImageData(width, height);
+  for (let yBin = 0; yBin < binsY; yBin++) {
+    for (let xBin = 0; xBin < binsX; xBin++) {
+      const value = density[yBin * binsX + xBin] ?? 0;
+      if (value <= 0) {
+        continue;
+      }
+
+      const t = Math.max(0, Math.min(1, value / maxDensity));
+      const color = Math.floor(t * (2 ** 24 - 1));
+      const r = (color >> 16) & 0xff;
+      const g = (color >> 8) & 0xff;
+      const b = color & 0xff;
+      const a = Math.floor(opacity * 255);
+
+      const index = (yBin * width + xBin) * 4;
+      imageData.data[index] = r;
+      imageData.data[index + 1] = g;
+      imageData.data[index + 2] = b;
+      imageData.data[index + 3] = a;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
 export function createNoiseData(N: number): [number, number][] {
   const mean = 0;
   const stdDev = 1;
