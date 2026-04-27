@@ -216,8 +216,7 @@ fn bicubicSamplePackedScalar(uv: vec2<f32>) -> f32 {
         let y = clamp(base.y + jy - 1, 0, texSizeI.y - 1);
         for (var ix = 0; ix < 4; ix = ix + 1) {
             let x = clamp(base.x + ix - 1, 0, texSizeI.x - 1);
-            let s = textureLoad(canvasTexture, vec2<i32>(x, y), 0);
-            let v = decodePackedRgb01(s);
+            let v = textureLoad(canvasTexture, vec2<i32>(x, y), 0).r;
             acc = acc + wx[ix] * wy[jy] * v;
         }
     }

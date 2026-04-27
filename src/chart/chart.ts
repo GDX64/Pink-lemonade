@@ -224,23 +224,17 @@ export function drawGaussianKernelSeries(
 
 export function drawSplatKernelSeries(
   data: XYDataPoint[],
-  canvas: HTMLCanvasElement | OffscreenCanvas,
-): void {
+  args: { width: number; height: number },
+): Float32Array {
   const points = toXYDataPoints(data);
   if (!points.length) {
-    return;
+    throw new Error("Data must contain at least one point");
   }
+  const width = args.width;
+  const height = args.height;
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("Failed to get 2D context");
-  }
-
-  const width = canvas.width;
-  const height = canvas.height;
   const binsX = width;
   const binsY = height;
-  const opacity = 1;
 
   let minXValue = Infinity;
   let maxXValue = -Infinity;
@@ -324,10 +318,9 @@ export function drawSplatKernelSeries(
     maxDensity = Math.max(maxDensity, density[i] ?? 0);
   }
   if (maxDensity <= 0) {
-    return;
+    throw new Error("Max density must be greater than 0");
   }
 
-  const imageData = new ImageData(width, height);
   for (let yBin = 0; yBin < binsY; yBin++) {
     for (let xBin = 0; xBin < binsX; xBin++) {
       const value = density[yBin * binsX + xBin] ?? 0;
@@ -336,21 +329,11 @@ export function drawSplatKernelSeries(
       }
 
       const t = Math.max(0, Math.min(1, value / maxDensity));
-      const color = Math.floor(t * (2 ** 24 - 1));
-      const r = (color >> 16) & 0xff;
-      const g = (color >> 8) & 0xff;
-      const b = color & 0xff;
-      const a = Math.floor(opacity * 255);
-
-      const index = (yBin * width + xBin) * 4;
-      imageData.data[index] = r;
-      imageData.data[index + 1] = g;
-      imageData.data[index + 2] = b;
-      imageData.data[index + 3] = a;
+      density[yBin * binsX + xBin] = t;
     }
   }
 
-  ctx.putImageData(imageData, 0, 0);
+  return density;
 }
 
 export function createNoiseData(N: number): [number, number][] {

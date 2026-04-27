@@ -46,19 +46,21 @@ export async function example() {
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
   const data = createNoiseData(100_000);
-  // drawChart(data, overlayCanvas);
+  drawChart(data, overlayCanvas);
   const donwScaling = 16;
-  const offCanvas = new OffscreenCanvas(
-    canvas.width / donwScaling,
-    canvas.height / donwScaling,
-  );
-  drawSplatKernelSeries(data, offCanvas);
+  const width = Math.floor(canvas.width / donwScaling);
+  const height = Math.floor(canvas.height / donwScaling);
+  const density = drawSplatKernelSeries(data, { width, height });
   const ctx = await createCanvas2DContext(canvas);
   const fragmentShader = FragmentShader.new({
     source: fragmentShaderSource,
   });
 
-  const texture = await ctx.createCanvasTexture(offCanvas);
+  const texture = await ctx.createCanvasTexture({
+    data: density,
+    width,
+    height,
+  });
   fragmentShader.setTexture("canvasTexture", texture);
 
   const scene = new Scene();
@@ -73,9 +75,9 @@ export async function example() {
   scene.add(rect);
 
   await ctx.draw(scene);
-  ctx.loop(Infinity, async () => {
-    await ctx.draw(scene);
-  });
+  // ctx.loop(Infinity, async () => {
+  //   await ctx.draw(scene);
+  // });
 
   return { ctx };
 }

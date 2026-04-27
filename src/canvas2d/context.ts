@@ -222,14 +222,14 @@ export class WebGPUCanvas2DContext {
             binding: 1,
             visibility: GPUShaderStage.FRAGMENT,
             sampler: {
-              type: "filtering",
+              type: "non-filtering",
             },
           },
           {
             binding: 2,
             visibility: GPUShaderStage.FRAGMENT,
             texture: {
-              sampleType: "float",
+              sampleType: "unfilterable-float",
               viewDimension: "2d",
               multisampled: false,
             },
@@ -262,39 +262,67 @@ export class WebGPUCanvas2DContext {
     return this.state.canvas;
   }
 
-  async createCanvasTexture(
-    canvas: HTMLCanvasElement | OffscreenCanvas,
-  ): Promise<CanvasTexture> {
+  async createCanvasTexture(args: {
+    width: number;
+    height: number;
+    data: HTMLCanvasElement | OffscreenCanvas | Float32Array;
+  }): Promise<CanvasTexture> {
     this.assertActive();
 
-    if (canvas.width === 0 || canvas.height === 0) {
+    if (args.width === 0 || args.height === 0) {
       throw new TypeError(
         "createCanvasTexture requires a canvas with non-zero width and height.",
       );
     }
 
-    const texture = this.state.device.createTexture({
-      size: {
-        width: canvas.width,
-        height: canvas.height,
-        depthOrArrayLayers: 1,
-      },
-      format: "rgba8unorm",
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    let texture: GPUTexture;
 
-    this.state.device.queue.copyExternalImageToTexture(
-      { source: canvas },
-      { texture },
-      {
-        width: canvas.width,
-        height: canvas.height,
-        depthOrArrayLayers: 1,
-      },
-    );
+    if (args.data instanceof Float32Array) {
+      texture = this.state.device.createTexture({
+        size: {
+          width: args.width,
+          height: args.height,
+          depthOrArrayLayers: 1,
+        },
+        format: "r32float",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this.state.device.queue.writeTexture(
+        {
+          texture,
+        },
+        args.data,
+        {
+          bytesPerRow: 4 * args.width,
+        },
+        { width: args.width, height: args.height, depthOrArrayLayers: 1 },
+      );
+    } else {
+      texture = this.state.device.createTexture({
+        size: {
+          width: args.width,
+          height: args.height,
+          depthOrArrayLayers: 1,
+        },
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this.state.device.queue.copyExternalImageToTexture(
+        { source: args.data },
+        { texture },
+        {
+          width: args.width,
+          height: args.height,
+          depthOrArrayLayers: 1,
+        },
+      );
+    }
 
     const sampler = this.state.device.createSampler({
       magFilter: "nearest",
@@ -308,8 +336,8 @@ export class WebGPUCanvas2DContext {
       texture,
       view: texture.createView(),
       sampler,
-      width: canvas.width,
-      height: canvas.height,
+      width: args.width,
+      height: args.height,
     };
 
     this.ownedCanvasTextures.add(texture);
@@ -824,9 +852,9 @@ export class WebGPUCanvas2DContext {
     );
 
     const sampler = this.state.device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
+      magFilter: "nearest",
+      minFilter: "nearest",
+      mipmapFilter: "nearest",
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge",
     });
