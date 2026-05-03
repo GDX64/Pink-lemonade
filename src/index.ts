@@ -1,3 +1,4 @@
 import { example } from "./examples/compute-shader";
+import { cpuExample } from "./examples/oldExamples";
 
-export { example };
+export { cpuExample as example };

@@ -344,6 +344,52 @@ export class WebGPUCanvas2DContext {
     return canvasTexture;
   }
 
+  updateCanvasTexture(
+    texture: CanvasTexture,
+    data: HTMLCanvasElement | OffscreenCanvas | Float32Array,
+  ): void {
+    this.assertActive();
+
+    if (data instanceof Float32Array) {
+      const expectedLength = texture.width * texture.height;
+      if (data.length !== expectedLength) {
+        throw new TypeError(
+          `Float32Array length mismatch. Expected ${expectedLength}, received ${data.length}.`,
+        );
+      }
+
+      this.state.device.queue.writeTexture(
+        {
+          texture: texture.texture,
+        },
+        data,
+        {
+          bytesPerRow: 4 * texture.width,
+        },
+        {
+          width: texture.width,
+          height: texture.height,
+          depthOrArrayLayers: 1,
+        },
+      );
+      return;
+    }
+
+    this.state.device.queue.copyExternalImageToTexture(
+      {
+        source: data,
+      },
+      {
+        texture: texture.texture,
+      },
+      {
+        width: texture.width,
+        height: texture.height,
+        depthOrArrayLayers: 1,
+      },
+    );
+  }
+
   clear(color: Partial<ClearColor> = {}): void {
     this.assertActive();
 

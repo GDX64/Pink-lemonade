@@ -28,6 +28,11 @@ export interface DrawGaussianKernelSeriesOptions {
   kernelSupportSigma?: number;
 }
 
+export interface DrawChartOptions {
+  viewMinX?: number;
+  viewMaxX?: number;
+}
+
 export type XYDataPoint = [number, number];
 
 function toXYDataPoints(data: number[] | XYDataPoint[]): XYDataPoint[] {
@@ -224,7 +229,7 @@ export function drawGaussianKernelSeries(
 
 export function drawSplatKernelSeries(
   data: XYDataPoint[],
-  args: { width: number; height: number },
+  args: { width: number; height: number; viewMinX?: number; viewMaxX?: number },
 ): Float32Array {
   const points = toXYDataPoints(data);
   if (!points.length) {
@@ -236,15 +241,28 @@ export function drawSplatKernelSeries(
   const binsX = width;
   const binsY = height;
 
-  let minXValue = Infinity;
-  let maxXValue = -Infinity;
+  let dataMinX = Infinity;
+  let dataMaxX = -Infinity;
   let minYValue = Infinity;
   let maxYValue = -Infinity;
   for (const [x, y] of points) {
-    minXValue = Math.min(minXValue, x);
-    maxXValue = Math.max(maxXValue, x);
+    dataMinX = Math.min(dataMinX, x);
+    dataMaxX = Math.max(dataMaxX, x);
     minYValue = Math.min(minYValue, y);
     maxYValue = Math.max(maxYValue, y);
+  }
+
+  const unclampedViewMinX = args.viewMinX ?? dataMinX;
+  const unclampedViewMaxX = args.viewMaxX ?? dataMaxX;
+  const sortedViewMinX = Math.min(unclampedViewMinX, unclampedViewMaxX);
+  const sortedViewMaxX = Math.max(unclampedViewMinX, unclampedViewMaxX);
+  const minXValue = Math.max(dataMinX, sortedViewMinX);
+  const maxXValue = Math.min(dataMaxX, sortedViewMaxX);
+  const visiblePoints = points.filter(
+    ([x]) => x >= minXValue && x <= maxXValue,
+  );
+  if (!visiblePoints.length) {
+    return new Float32Array(binsX * binsY);
   }
 
   const xSpan = Math.max(maxXValue - minXValue, Number.EPSILON);
@@ -266,7 +284,7 @@ export function drawSplatKernelSeries(
 
   const density = new Float32Array(binsX * binsY);
   const splatRadius = 1.5;
-  for (const [xValue, yValue] of points) {
+  for (const [xValue, yValue] of visiblePoints) {
     const x = scaleX(xValue);
     const y = scaleY(yValue);
     const centerX = Math.round(x);
@@ -356,6 +374,7 @@ export function createNoiseData(N: number): [number, number][] {
 export function drawChart(
   data: [number, number][],
   canvas: HTMLCanvasElement,
+  options: DrawChartOptions = {},
 ): void {
   if (!data.length) {
     return;
@@ -377,14 +396,20 @@ export function drawChart(
     minData = Math.min(minData, y);
     maxData = Math.max(maxData, y);
   }
-  const xSpan = Math.max(maxX - minX, Number.EPSILON);
   const ySpan = Math.max(maxData - minData, Number.EPSILON);
+  const unclampedViewMinX = options.viewMinX ?? minX;
+  const unclampedViewMaxX = options.viewMaxX ?? maxX;
+  const sortedViewMinX = Math.min(unclampedViewMinX, unclampedViewMaxX);
+  const sortedViewMaxX = Math.max(unclampedViewMinX, unclampedViewMaxX);
+  const viewMinX = Math.max(minX, sortedViewMinX);
+  const viewMaxX = Math.min(maxX, sortedViewMaxX);
+  const viewXSpan = Math.max(viewMaxX - viewMinX, Number.EPSILON);
 
   function scaleX(value: number): number {
-    if (maxX === minX) {
+    if (viewMaxX === viewMinX) {
       return width / 2;
     }
-    return ((value - minX) / xSpan) * width;
+    return ((value - viewMinX) / viewXSpan) * width;
   }
   function scaleY(value: number): number {
     if (maxData === minData) {
@@ -393,15 +418,19 @@ export function drawChart(
     return height - ((value - minData) / ySpan) * height;
   }
 
-  ctx.rect(0, 0, width, height);
-  ctx.fill();
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "#a4ff3d";
 
   const targetBinPx = 16;
   const binCount = Math.max(1, Math.floor(width / targetBinPx));
   const counts = new Uint32Array(binCount);
   for (const [x] of data) {
-    const normalized = (x - minX) / xSpan;
+    if (x < viewMinX || x > viewMaxX) {
+      continue;
+    }
+    const normalized = (x - viewMinX) / viewXSpan;
     const clamped = Math.max(0, Math.min(1, normalized));
     const binIndex = Math.min(binCount - 1, Math.floor(clamped * binCount));
     counts[binIndex] = (counts[binIndex] ?? 0) + 1;
@@ -433,9 +462,24 @@ export function drawChart(
 
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(scaleX(data[0]![0]), scaleY(data[0]![1]));
-  for (let i = 1; i < data.length; i++) {
-    ctx.lineTo(scaleX(data[i]![0]), scaleY(data[i]![1]));
+  let hasVisiblePoint = false;
+  for (let i = 0; i < data.length; i++) {
+    const [x, y] = data[i]!;
+    if (x < viewMinX || x > viewMaxX) {
+      continue;
+    }
+
+    if (!hasVisiblePoint) {
+      ctx.moveTo(scaleX(x), scaleY(y));
+      hasVisiblePoint = true;
+      continue;
+    }
+
+    ctx.lineTo(scaleX(x), scaleY(y));
+  }
+
+  if (!hasVisiblePoint) {
+    return;
   }
   ctx.stroke();
 }
