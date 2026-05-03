@@ -7,6 +7,7 @@ import {
 
 import { createNoiseData, drawSplatKernelSeries } from "../chart/chart";
 import fragmentShaderSource from "./warping.fragment.wgsl?raw";
+import noiseShader from "./noise.fragment.wgsl?raw";
 
 export async function cpuExample() {
   const canvas = createCanvas();
@@ -19,6 +20,12 @@ export async function cpuExample() {
   const donwScaling = 32;
   const width = Math.floor(canvas.width / donwScaling);
   const height = Math.floor(canvas.height / donwScaling);
+
+  const postProcessFragmentShader = FragmentShader.new({
+    source: noiseShader,
+  });
+
+  ctx.addPostProcess(postProcessFragmentShader);
 
   const fragmentShader = FragmentShader.new({
     source: fragmentShaderSource,

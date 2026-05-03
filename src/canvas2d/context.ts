@@ -159,15 +159,28 @@ export class WebGPUCanvas2DContext {
   private destroyed = false;
   private readonly state: InitializedWebGPU;
   private pendingClearValue: GPUColor | null = null;
+  private readonly postProcessShaders: FragmentShader[] = [];
   private readonly pipelineCache = new Map<string, GPURenderPipeline>();
   private readonly globalUniformBuffer: GPUBuffer;
   private readonly globalUniformData = new Float32Array(8);
   private readonly globalBindGroupLayout: GPUBindGroupLayout;
   private readonly globalBindGroup: GPUBindGroup;
   private readonly customUniformBindGroupLayout: GPUBindGroupLayout;
+  private readonly postProcessUniformBindGroupLayout: GPUBindGroupLayout;
   private readonly fallbackCanvasTexture: CanvasTexture;
   private readonly ownedCanvasTextures = new Set<GPUTexture>();
+  private postProcessTargetA: CanvasTexture | undefined;
+  private postProcessTargetB: CanvasTexture | undefined;
   private readonly customUniformStates = new Map<
+    FragmentShader,
+    {
+      buffer: GPUBuffer;
+      bindGroup: GPUBindGroup;
+      floatCount: number;
+      texture: CanvasTexture;
+    }
+  >();
+  private readonly postProcessUniformStates = new Map<
     FragmentShader,
     {
       buffer: GPUBuffer;
@@ -237,6 +250,34 @@ export class WebGPUCanvas2DContext {
         ],
       },
     );
+    this.postProcessUniformBindGroupLayout =
+      this.state.device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: {
+              type: "uniform",
+            },
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: {
+              type: "filtering",
+            },
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: {
+              sampleType: "float",
+              viewDimension: "2d",
+              multisampled: false,
+            },
+          },
+        ],
+      });
     this.fallbackCanvasTexture = this.createFallbackCanvasTexture();
     this.pipelineCache.set(
       this.getPipelineCacheKey("default", "fs_main"),
@@ -245,7 +286,7 @@ export class WebGPUCanvas2DContext {
         DEFAULT_FRAGMENT_SHADER_SOURCE,
         "fs_main",
         undefined,
-        false,
+        undefined,
       ),
     );
   }
@@ -401,6 +442,11 @@ export class WebGPUCanvas2DContext {
     };
   }
 
+  addPostProcess(fragmentShader: FragmentShader): void {
+    this.assertActive();
+    this.postProcessShaders.push(fragmentShader);
+  }
+
   async loop(time: number, cb: () => Promise<void>): Promise<void> {
     const start = Date.now();
 
@@ -429,6 +475,7 @@ export class WebGPUCanvas2DContext {
     ]);
 
     const groups = this.groupRectanglesByColor(scene);
+    const hasPostProcess = this.postProcessShaders.length > 0;
 
     if (this.pendingClearValue == null && groups.length === 0) {
       return this.state.device.queue.onSubmittedWorkDone();
@@ -439,12 +486,23 @@ export class WebGPUCanvas2DContext {
     const currentTextureView = this.state.context
       .getCurrentTexture()
       .createView();
+    let sceneTargetView = currentTextureView;
+    let sceneSourceTexture: CanvasTexture | undefined;
+
+    if (hasPostProcess) {
+      const [targetA] = this.getOrCreatePostProcessTargets(
+        this.canvas.width,
+        this.canvas.height,
+      );
+      sceneTargetView = targetA.view;
+      sceneSourceTexture = targetA;
+    }
 
     if (this.pendingClearValue != null) {
       const clearPass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: currentTextureView,
+            view: sceneTargetView,
             clearValue: this.pendingClearValue,
             loadOp: "clear",
             storeOp: "store",
@@ -460,7 +518,7 @@ export class WebGPUCanvas2DContext {
       const pass = encoder.beginRenderPass({
         colorAttachments: [
           {
-            view: currentTextureView,
+            view: sceneTargetView,
             clearValue: DEFAULT_CLEAR,
             loadOp: "load",
             storeOp: "store",
@@ -482,6 +540,48 @@ export class WebGPUCanvas2DContext {
       pass.end();
     }
 
+    if (hasPostProcess && sceneSourceTexture != null) {
+      const [, targetB] = this.getOrCreatePostProcessTargets(
+        this.canvas.width,
+        this.canvas.height,
+      );
+      let sourceTexture = sceneSourceTexture;
+
+      for (let i = 0; i < this.postProcessShaders.length; i++) {
+        const shader = this.postProcessShaders[i]!;
+        const isLast = i === this.postProcessShaders.length - 1;
+        const outputView = isLast
+          ? currentTextureView
+          : sourceTexture === sceneSourceTexture
+            ? targetB.view
+            : sceneSourceTexture.view;
+
+        shader.setTexture("canvasTexture", sourceTexture);
+        const postProcessPass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: outputView,
+              clearValue: DEFAULT_CLEAR,
+              loadOp: "clear",
+              storeOp: "store",
+            },
+          ],
+        });
+
+        this.encodePostProcessFullscreen(
+          postProcessPass,
+          shader,
+          transientBuffers,
+        );
+        postProcessPass.end();
+
+        if (!isLast) {
+          sourceTexture =
+            outputView === targetB.view ? targetB : sceneSourceTexture;
+        }
+      }
+    }
+
     this.state.device.queue.submit([encoder.finish()]);
     await this.state.device.queue.onSubmittedWorkDone();
 
@@ -498,6 +598,10 @@ export class WebGPUCanvas2DContext {
     this.pendingClearValue = null;
     this.globalUniformBuffer.destroy();
     this.fallbackCanvasTexture.texture.destroy();
+    this.destroyCanvasTexture(this.postProcessTargetA);
+    this.destroyCanvasTexture(this.postProcessTargetB);
+    this.postProcessTargetA = undefined;
+    this.postProcessTargetB = undefined;
     for (const texture of this.ownedCanvasTextures) {
       texture.destroy();
     }
@@ -506,6 +610,10 @@ export class WebGPUCanvas2DContext {
       state.buffer.destroy();
     }
     this.customUniformStates.clear();
+    for (const state of this.postProcessUniformStates.values()) {
+      state.buffer.destroy();
+    }
+    this.postProcessUniformStates.clear();
     this.destroyed = true;
   }
 
@@ -572,7 +680,7 @@ export class WebGPUCanvas2DContext {
     fragmentShaderSource: string,
     fragmentEntryPoint: string,
     fragmentConstants: Record<string, number> | undefined,
-    useCustomUniformGroup: boolean,
+    customUniformLayout: GPUBindGroupLayout | undefined,
   ): GPURenderPipeline {
     const shaderModule = this.state.device.createShaderModule({
       code: `
@@ -599,9 +707,10 @@ export class WebGPUCanvas2DContext {
     });
 
     const pipelineLayout = this.state.device.createPipelineLayout({
-      bindGroupLayouts: useCustomUniformGroup
-        ? [this.globalBindGroupLayout, this.customUniformBindGroupLayout]
-        : [this.globalBindGroupLayout],
+      bindGroupLayouts:
+        customUniformLayout == null
+          ? [this.globalBindGroupLayout]
+          : [this.globalBindGroupLayout, customUniformLayout],
     });
 
     const fragmentStage: GPUFragmentState = {
@@ -741,6 +850,67 @@ export class WebGPUCanvas2DContext {
     return bindGroup;
   }
 
+  private getOrCreatePostProcessUniformBindGroup(
+    fragmentShader: FragmentShader,
+  ): GPUBindGroup {
+    const uniforms = fragmentShader.getUniforms();
+    const data = packCustomUniforms(uniforms);
+    const floatCount = data.length;
+    const texture = this.resolveTextureBinding(fragmentShader);
+
+    const state = this.postProcessUniformStates.get(fragmentShader);
+
+    if (
+      state != null &&
+      state.floatCount === floatCount &&
+      state.texture === texture
+    ) {
+      this.state.device.queue.writeBuffer(state.buffer, 0, data);
+      return state.bindGroup;
+    }
+
+    if (state != null) {
+      state.buffer.destroy();
+    }
+
+    const buffer = this.state.device.createBuffer({
+      size: alignUniformBufferByteSize(
+        data.byteLength,
+        this.state.device.limits.minUniformBufferOffsetAlignment,
+      ),
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const bindGroup = this.state.device.createBindGroup({
+      layout: this.postProcessUniformBindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer,
+          },
+        },
+        {
+          binding: 1,
+          resource: texture.sampler,
+        },
+        {
+          binding: 2,
+          resource: texture.view,
+        },
+      ],
+    });
+
+    this.state.device.queue.writeBuffer(buffer, 0, data);
+    this.postProcessUniformStates.set(fragmentShader, {
+      buffer,
+      bindGroup,
+      floatCount,
+      texture,
+    });
+
+    return bindGroup;
+  }
+
   private updateGlobalTimestamp(
     timestampMs: number,
     resolution: [number, number],
@@ -780,7 +950,35 @@ export class WebGPUCanvas2DContext {
       resolvedShader.source,
       entryPoint,
       resolvedShader.constants,
-      resolvedShader.usesCustomUniformGroup,
+      resolvedShader.usesCustomUniformGroup
+        ? this.customUniformBindGroupLayout
+        : undefined,
+    );
+    this.pipelineCache.set(key, pipeline);
+    return pipeline;
+  }
+
+  private getOrCreatePostProcessPipeline(
+    fragmentShader: FragmentShader,
+    fragmentShaderEntryPoint: string,
+  ): GPURenderPipeline {
+    const resolvedShader = resolveRectFragmentShader(fragmentShader);
+    const key = this.getPipelineCacheKey(
+      `${resolvedShader.cacheKey}::post-process`,
+      fragmentShaderEntryPoint,
+    );
+    const cached = this.pipelineCache.get(key);
+
+    if (cached != null) {
+      return cached;
+    }
+
+    const pipeline = this.createPipeline(
+      "triangle-list",
+      resolvedShader.source,
+      fragmentShaderEntryPoint,
+      resolvedShader.constants,
+      this.postProcessUniformBindGroupLayout,
     );
     this.pipelineCache.set(key, pipeline);
     return pipeline;
@@ -841,6 +1039,41 @@ export class WebGPUCanvas2DContext {
     }
 
     return data;
+  }
+
+  private encodePostProcessFullscreen(
+    pass: GPURenderPassEncoder,
+    shader: FragmentShader,
+    transientBuffers: GPUBuffer[],
+  ): void {
+    const vertices = this.buildRectVertices(
+      [
+        {
+          x: 0,
+          y: 0,
+          width: this.canvas.width,
+          height: this.canvas.height,
+        },
+      ],
+      { r: 1, g: 1, b: 1, a: 1 },
+    );
+
+    if (vertices.length === 0) {
+      return;
+    }
+
+    const vertexBuffer = this.state.device.createBuffer({
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this.state.device.queue.writeBuffer(vertexBuffer, 0, vertices);
+    transientBuffers.push(vertexBuffer);
+
+    pass.setPipeline(this.getOrCreatePostProcessPipeline(shader, "main"));
+    pass.setBindGroup(0, this.globalBindGroup);
+    pass.setBindGroup(1, this.getOrCreatePostProcessUniformBindGroup(shader));
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.draw(vertices.length / 6);
   }
 
   private assertActive(): void {
@@ -910,6 +1143,84 @@ export class WebGPUCanvas2DContext {
       width: 1,
       height: 1,
     };
+  }
+
+  private getOrCreatePostProcessTargets(
+    width: number,
+    height: number,
+  ): [CanvasTexture, CanvasTexture] {
+    const needsRecreate =
+      this.postProcessTargetA == null ||
+      this.postProcessTargetB == null ||
+      this.postProcessTargetA.width !== width ||
+      this.postProcessTargetA.height !== height ||
+      this.postProcessTargetB.width !== width ||
+      this.postProcessTargetB.height !== height;
+
+    if (needsRecreate) {
+      this.destroyCanvasTexture(this.postProcessTargetA);
+      this.destroyCanvasTexture(this.postProcessTargetB);
+      this.postProcessTargetA = this.createRenderTargetCanvasTexture(
+        width,
+        height,
+      );
+      this.postProcessTargetB = this.createRenderTargetCanvasTexture(
+        width,
+        height,
+      );
+    }
+
+    if (this.postProcessTargetA == null || this.postProcessTargetB == null) {
+      throw new WebGPUInitializationError(
+        "Failed to initialize post-process render targets.",
+      );
+    }
+
+    return [this.postProcessTargetA, this.postProcessTargetB];
+  }
+
+  private createRenderTargetCanvasTexture(
+    width: number,
+    height: number,
+  ): CanvasTexture {
+    const texture = this.state.device.createTexture({
+      size: {
+        width,
+        height,
+        depthOrArrayLayers: 1,
+      },
+      format: this.state.format,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.COPY_DST,
+    });
+
+    const sampler = this.state.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      mipmapFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge",
+    });
+
+    this.ownedCanvasTextures.add(texture);
+    return {
+      texture,
+      view: texture.createView(),
+      sampler,
+      width,
+      height,
+    };
+  }
+
+  private destroyCanvasTexture(texture: CanvasTexture | undefined): void {
+    if (texture == null) {
+      return;
+    }
+
+    texture.texture.destroy();
+    this.ownedCanvasTextures.delete(texture.texture);
   }
 }
 
