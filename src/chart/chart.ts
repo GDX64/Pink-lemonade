@@ -367,10 +367,16 @@ export function drawChart(
 
   const width = canvas.width;
   const height = canvas.height;
-  const maxData = Math.max(...data.map(([, y]) => y));
-  const minData = Math.min(...data.map(([, y]) => y));
-  const minX = Math.min(...data.map(([x]) => x));
-  const maxX = Math.max(...data.map(([x]) => x));
+  let maxData = -Infinity;
+  let minData = Infinity;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const [x, y] of data) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minData = Math.min(minData, y);
+    maxData = Math.max(maxData, y);
+  }
   const xSpan = Math.max(maxX - minX, Number.EPSILON);
   const ySpan = Math.max(maxData - minData, Number.EPSILON);
 

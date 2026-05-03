@@ -210,7 +210,7 @@ fn warppedSample(uv: vec2<f32>, t: f32) -> f32 {
     // let warpedUv = uv + warp2.xy * 0.05;
     _ = t;
     // return fastBicubicSamplePackedScalar(uv);
-    return bicubicSamplePackedScalar(uv);
-    // return decodePackedRgb01(textureSample(canvasTexture, canvasSampler, uv));
+    // return bicubicSamplePackedScalar(uv);
+    return textureSample(canvasTexture, canvasSampler, uv).r;
 }
 

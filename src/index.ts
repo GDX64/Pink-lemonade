@@ -45,7 +45,7 @@ export async function example() {
   const canvas = createCanvas();
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(1000_000);
   drawChart(data, overlayCanvas);
   const donwScaling = 16;
   const width = Math.floor(canvas.width / donwScaling);
@@ -54,6 +54,10 @@ export async function example() {
   const ctx = await createCanvas2DContext(canvas);
   const fragmentShader = FragmentShader.new({
     source: fragmentShaderSource,
+  });
+
+  window.addEventListener("click", () => {
+    drawSplatKernelSeries(data, { width, height });
   });
 
   const texture = await ctx.createCanvasTexture({
