@@ -92,12 +92,12 @@ fn warppedSample(uv: vec2<f32>, t: f32) -> vec4<f32> {
         fbm(base + vec2<f32>(1.7 + t * 1.2, 9.2 - t * 0.7)),
         fbm(base + vec2<f32>(8.3 - t * 0.9, 2.8 + t * 1.1))
     );
-    // let warp2 = vec2<f32>(
-    //     fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3)),
-    //     fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
-    //     // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
-    // );
-    let warpedUv = uv + warp1.xy * 0.1;
+    let warp2 = vec2<f32>(
+        fbm(base + 2.5 * warp1 + vec2<f32>(5.1, 1.3)),
+        fbm(base + 2.5 * warp1 + vec2<f32>(2.4, 7.6)),
+        // fbm(base + 2.5 * warp1 + vec2<f32>(3.7, 4.2))
+    );
+    let warpedUv = uv + warp2.xy * 0.1;
     _ = t;
     return textureSample(canvasTexture, canvasSampler, warpedUv);
 }
