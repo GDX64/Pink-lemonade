@@ -548,8 +548,6 @@ export class WebGPUCanvas2DContext {
           return output;
         }
 
-        ${FRAGMENT_GLOBALS_SHADER_SOURCE}
-
         ${fragmentShaderSource}
       `,
     });
@@ -903,17 +901,6 @@ const DEFAULT_FRAGMENT_SHADER_SOURCE = `
   fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return input.color;
   }
-`;
-
-const FRAGMENT_GLOBALS_SHADER_SOURCE = `
-  struct GlobalUniforms {
-    timestamp: f32,
-    resolution: vec2<f32>,
-    _pad0: vec3<f32>,
-  };
-
-  @group(0) @binding(0)
-  var<uniform> globalUniforms: GlobalUniforms;
 `;
 
 function resolveRectFragmentShader(
