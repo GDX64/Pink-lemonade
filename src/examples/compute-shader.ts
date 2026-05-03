@@ -52,7 +52,7 @@ export async function example() {
 
   const noiseView = noiseTexture.createView();
 
-  const data = createNoiseData(1_000_000);
+  const data = createNoiseData(100_000);
   data.sort((a, b) => a[0]! - b[0]!);
   const f32Data = new Float32Array(data.flat());
   let minX = Infinity;
@@ -67,6 +67,10 @@ export async function example() {
     minY = Math.min(minY, y);
     maxY = Math.max(maxY, y);
   }
+  const dataMinX = minX;
+  const dataMaxX = maxX;
+  const dataMinY = minY;
+  const dataMaxY = maxY;
 
   const pointCount = f32Data.length / 2;
   const pointBuffer = device.createBuffer({
@@ -107,10 +111,6 @@ export async function example() {
   const paramsBytes = 12 * Uint32Array.BYTES_PER_ELEMENT;
   const paramsData = new ArrayBuffer(paramsBytes);
   const paramsView = new DataView(paramsData);
-  paramsView.setFloat32(0, minX, true);
-  paramsView.setFloat32(4, minY, true);
-  paramsView.setFloat32(8, scaleX, true);
-  paramsView.setFloat32(12, scaleY, true);
   paramsView.setUint32(16, pointCount, true);
   paramsView.setUint32(20, textureWidth, true);
   paramsView.setUint32(24, textureHeight, true);
@@ -123,7 +123,40 @@ export async function example() {
     size: paramsBytes,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(paramsBuffer, 0, paramsData);
+
+  let zoom = 1;
+  let centerX = (dataMinX + dataMaxX) * 0.5;
+  let centerY = (dataMinY + dataMaxY) * 0.5;
+
+  const fullRangeX = Math.max(1e-6, dataMaxX - dataMinX);
+  const fullRangeY = Math.max(1e-6, dataMaxY - dataMinY);
+
+  const clampCenterToData = () => {
+    const viewRangeX = fullRangeX / zoom;
+    const viewRangeY = fullRangeY / zoom;
+    const halfX = viewRangeX * 0.5;
+    const halfY = viewRangeY * 0.5;
+
+    centerX = clamp(centerX, dataMinX + halfX, dataMaxX - halfX);
+    centerY = clamp(centerY, dataMinY + halfY, dataMaxY - halfY);
+  };
+
+  const writeComputeParams = () => {
+    const viewRangeX = fullRangeX / zoom;
+    const viewRangeY = fullRangeY / zoom;
+    const viewMinX = centerX - viewRangeX * 0.5;
+    const viewMinY = centerY - viewRangeY * 0.5;
+    const viewScaleX = (textureWidth - 1) / Math.max(1e-6, viewRangeX);
+    const viewScaleY = (textureHeight - 1) / Math.max(1e-6, viewRangeY);
+
+    paramsView.setFloat32(0, viewMinX, true);
+    paramsView.setFloat32(4, viewMinY, true);
+    paramsView.setFloat32(8, viewScaleX, true);
+    paramsView.setFloat32(12, viewScaleY, true);
+    device.queue.writeBuffer(paramsBuffer, 0, paramsData);
+  };
+
+  writeComputeParams();
 
   const computeShader = device.createShaderModule({
     code: `
@@ -151,10 +184,6 @@ export async function example() {
       @group(0) @binding(2)
       var<uniform> params: Params;
 
-      fn scaledX(p: vec2f) -> f32 {
-        return (p.x - params.minX) * params.scaleX;
-      }
-
       fn lowerBoundX(target_value: f32) -> u32 {
         var left = 0u;
         var right = params.pointCount;
@@ -165,7 +194,7 @@ export async function example() {
           }
 
           let mid = left + (right - left) / 2u;
-          if (scaledX(points[mid]) < target_value) {
+          if (points[mid].x < target_value) {
             left = mid + 1u;
           } else {
             right = mid;
@@ -181,8 +210,9 @@ export async function example() {
           return;
         }
 
-        let xMin = f32(gid.x);
-        let xMax = xMin + 1.0;
+        let invScaleX = 1.0 / params.scaleX;
+        let xMin = params.minX + f32(gid.x) * invScaleX;
+        let xMax = xMin + invScaleX;
         let start = lowerBoundX(xMin);
         let end = select(lowerBoundX(xMax), params.pointCount, gid.x + 1u >= params.texWidth);
 
@@ -338,17 +368,104 @@ export async function example() {
     ],
   });
 
+  const eventUv = (event: PointerEvent | WheelEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const u = (event.clientX - rect.left) / rect.width;
+    const v = 1 - (event.clientY - rect.top) / rect.height;
+    return { u, v };
+  };
+
+  canvas.style.touchAction = "none";
+  let isPanning = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+
+  canvas.addEventListener("pointerdown", (event) => {
+    isPanning = true;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    canvas.setPointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (!isPanning) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const dxUv = (event.clientX - lastPointerX) / rect.width;
+    const dyUv = -(event.clientY - lastPointerY) / rect.height;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+
+    const viewRangeX = fullRangeX / zoom;
+    const viewRangeY = fullRangeY / zoom;
+    centerX -= dxUv * viewRangeX;
+    // centerY -= dyUv * viewRangeY;
+    clampCenterToData();
+    writeComputeParams();
+    heatmapDirty = true;
+    render();
+  });
+
+  canvas.addEventListener("pointerup", (event) => {
+    isPanning = false;
+    canvas.releasePointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener("pointercancel", (event) => {
+    isPanning = false;
+    canvas.releasePointerCapture(event.pointerId);
+  });
+
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+
+      const { u, v } = eventUv(event);
+      const zoomFactor = Math.exp(-event.deltaY * 0.0015);
+      const newZoom = clamp(zoom * zoomFactor, 1, 64);
+
+      if (newZoom === zoom) {
+        return;
+      }
+
+      const currentRangeX = fullRangeX / zoom;
+      const currentRangeY = fullRangeY / zoom;
+      const worldX = centerX + (u - 0.5) * currentRangeX;
+      const worldY = centerY + (v - 0.5) * currentRangeY;
+
+      zoom = newZoom;
+
+      const nextRangeX = fullRangeX / zoom;
+      const nextRangeY = fullRangeY / zoom;
+      centerX = worldX - (u - 0.5) * nextRangeX;
+      centerY = worldY - (v - 0.5) * nextRangeY;
+      clampCenterToData();
+      writeComputeParams();
+      heatmapDirty = true;
+      render();
+    },
+    { passive: false },
+  );
+
+  let heatmapDirty = true;
+
   const render = () => {
     const encoder = device.createCommandEncoder();
 
-    const computePass = encoder.beginComputePass();
-    computePass.setPipeline(computePipeline);
-    computePass.setBindGroup(0, computeBindGroup);
-    computePass.dispatchWorkgroups(
-      Math.ceil(textureWidth / 8),
-      Math.ceil(textureHeight / 8),
-    );
-    computePass.end();
+    if (heatmapDirty) {
+      const computePass = encoder.beginComputePass();
+      computePass.setPipeline(computePipeline);
+      computePass.setBindGroup(0, computeBindGroup);
+      computePass.dispatchWorkgroups(
+        Math.ceil(textureWidth / 8),
+        Math.ceil(textureHeight / 8),
+      );
+      computePass.end();
+      heatmapDirty = false;
+    }
 
     const pass = encoder.beginRenderPass({
       colorAttachments: [
@@ -418,4 +535,8 @@ function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
     canvas.width = width;
     canvas.height = height;
   }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
