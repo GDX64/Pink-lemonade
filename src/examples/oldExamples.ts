@@ -5,7 +5,11 @@ import {
   Scene,
 } from "../canvas2d/context";
 
-import { createNoiseData, drawSplatKernelSeries } from "../chart/chart";
+import {
+  createNoiseData,
+  drawChart,
+  drawSplatKernelSeries,
+} from "../chart/chart";
 import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 import noiseShader from "./noise.fragment.wgsl?raw";
 
@@ -25,13 +29,17 @@ export async function cpuExample() {
     source: noiseShader,
   });
 
-  ctx.addPostProcess(postProcessFragmentShader);
+  // ctx.addPostProcess(postProcessFragmentShader);
 
   const fragmentShader = FragmentShader.new({
     source: fragmentShaderSource,
   });
 
   async function render() {
+    drawChart(data, overlayCanvas, {
+      viewMinX: viewManager.getViewMinX(),
+      viewMaxX: viewManager.getViewMaxX(),
+    });
     const density = drawSplatKernelSeries(data, {
       width,
       height,

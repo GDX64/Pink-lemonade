@@ -31,7 +31,7 @@ fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 
 fn mapColor(value: f32) -> vec3<f32> {
     let x = clamp(value, 0.0, 1.0);
-    let c0 = vec3<f32>(0.03, 0.05, 0.20);
+    let c0 = vec3<f32>(0.00, 0.00, 0.00);
     let c1 = vec3<f32>(0.10, 0.45, 0.75);
     let c2 = vec3<f32>(0.95, 0.80, 0.35);
     let c3 = vec3<f32>(0.98, 0.30, 0.15);
