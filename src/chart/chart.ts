@@ -31,6 +31,7 @@ export interface DrawGaussianKernelSeriesOptions {
 export interface DrawChartOptions {
   viewMinX?: number;
   viewMaxX?: number;
+  drawBars?: boolean;
 }
 
 export type XYDataPoint = [number, number];
@@ -441,7 +442,7 @@ export function drawChart(
     maxCount = Math.max(maxCount, counts[i] ?? 0);
   }
 
-  if (maxCount > 0) {
+  if (maxCount > 0 && options.drawBars) {
     const barWidth = width / binCount;
     const histogramHeight = Math.max(24, height * 0.1);
     ctx.save();
