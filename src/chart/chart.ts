@@ -29,8 +29,8 @@ export interface DrawGaussianKernelSeriesOptions {
 }
 
 export interface DrawChartOptions {
-  viewMinX?: number;
-  viewMaxX?: number;
+  viewMinX: number;
+  viewMaxX: number;
   drawBars?: boolean;
 }
 
@@ -229,12 +229,14 @@ export function drawGaussianKernelSeries(
 }
 
 export function drawSplatKernelSeries(
-  data: XYDataPoint[],
+  data: Float64Array,
   args: { width: number; height: number; viewMinX?: number; viewMaxX?: number },
-): Float32Array {
-  const points = toXYDataPoints(data);
-  if (!points.length) {
+) {
+  if (!data.length) {
     throw new Error("Data must contain at least one point");
+  }
+  if (data.length % 2 !== 0) {
+    throw new Error("Data must contain x, y pairs");
   }
   const width = args.width;
   const height = args.height;
@@ -242,28 +244,32 @@ export function drawSplatKernelSeries(
   const binsX = width;
   const binsY = height;
 
+  const unclampedViewMinX = args.viewMinX ?? -Infinity;
+  const unclampedViewMaxX = args.viewMaxX ?? Infinity;
+  const sortedViewMinX = Math.min(unclampedViewMinX, unclampedViewMaxX);
+  const sortedViewMaxX = Math.max(unclampedViewMinX, unclampedViewMaxX);
+
   let dataMinX = Infinity;
   let dataMaxX = -Infinity;
   let minYValue = Infinity;
   let maxYValue = -Infinity;
-  for (const [x, y] of points) {
+  const len = data.length;
+  for (let i = 0; i < len; i += 2) {
+    const x = data[i]!;
+    if (x < sortedViewMinX || x > sortedViewMaxX) {
+      continue;
+    }
+    const y = data[i + 1]!;
     dataMinX = Math.min(dataMinX, x);
     dataMaxX = Math.max(dataMaxX, x);
     minYValue = Math.min(minYValue, y);
     maxYValue = Math.max(maxYValue, y);
   }
 
-  const unclampedViewMinX = args.viewMinX ?? dataMinX;
-  const unclampedViewMaxX = args.viewMaxX ?? dataMaxX;
-  const sortedViewMinX = Math.min(unclampedViewMinX, unclampedViewMaxX);
-  const sortedViewMaxX = Math.max(unclampedViewMinX, unclampedViewMaxX);
   const minXValue = Math.max(dataMinX, sortedViewMinX);
   const maxXValue = Math.min(dataMaxX, sortedViewMaxX);
-  const visiblePoints = points.filter(
-    ([x]) => x >= minXValue && x <= maxXValue,
-  );
-  if (!visiblePoints.length) {
-    return new Float32Array(binsX * binsY);
+  if (maxXValue < minXValue) {
+    throw new Error("No data points are within the specified view range");
   }
 
   const xSpan = Math.max(maxXValue - minXValue, Number.EPSILON);
@@ -285,14 +291,21 @@ export function drawSplatKernelSeries(
 
   const density = new Float32Array(binsX * binsY);
   const splatRadius = 1.5;
-  for (const [xValue, yValue] of visiblePoints) {
+  let hasVisiblePoints = false;
+  const weightsX = [0, 0, 0];
+  const weightsY = [0, 0, 0];
+  for (let i = 0; i < len; i += 2) {
+    const xValue = data[i]!;
+    if (xValue < minXValue || xValue > maxXValue) {
+      continue;
+    }
+    hasVisiblePoints = true;
+    const yValue = data[i + 1]!;
     const x = scaleX(xValue);
     const y = scaleY(yValue);
     const centerX = Math.round(x);
     const centerY = Math.round(y);
 
-    const weightsX = [0, 0, 0];
-    const weightsY = [0, 0, 0];
     for (let offset = -1; offset <= 1; offset++) {
       const index = offset + 1;
       weightsX[index] =
@@ -332,6 +345,10 @@ export function drawSplatKernelSeries(
     }
   }
 
+  if (!hasVisiblePoints) {
+    throw new Error("No data points are within the specified view range");
+  }
+
   let maxDensity = 0;
   for (let i = 0; i < density.length; i++) {
     maxDensity = Math.max(maxDensity, density[i] ?? 0);
@@ -352,7 +369,7 @@ export function drawSplatKernelSeries(
     }
   }
 
-  return density;
+  return { density, scaleX, scaleY };
 }
 
 export function createNoiseData(N: number): [number, number][] {
@@ -373,12 +390,15 @@ export function createNoiseData(N: number): [number, number][] {
 }
 
 export function drawChart(
-  data: [number, number][],
+  data: Float64Array,
   canvas: HTMLCanvasElement,
-  options: DrawChartOptions = {},
+  options: DrawChartOptions,
 ): void {
   if (!data.length) {
     return;
+  }
+  if (data.length % 2 !== 0) {
+    throw new Error("Data must contain x, y pairs");
   }
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -391,12 +411,23 @@ export function drawChart(
   let minData = Infinity;
   let minX = Infinity;
   let maxX = -Infinity;
-  for (const [x, y] of data) {
+  const len = data.length;
+  for (let i = 0; i < len; i += 2) {
+    const x = data[i]!;
+    if (x > options.viewMaxX || x < options.viewMinX) {
+      continue;
+    }
+    const y = data[i + 1]!;
     minX = Math.min(minX, x);
     maxX = Math.max(maxX, x);
     minData = Math.min(minData, y);
     maxData = Math.max(maxData, y);
   }
+
+  if (maxX < minX) {
+    return;
+  }
+
   const ySpan = Math.max(maxData - minData, Number.EPSILON);
   const unclampedViewMinX = options.viewMinX ?? minX;
   const unclampedViewMaxX = options.viewMaxX ?? maxX;
@@ -407,15 +438,9 @@ export function drawChart(
   const viewXSpan = Math.max(viewMaxX - viewMinX, Number.EPSILON);
 
   function scaleX(value: number): number {
-    if (viewMaxX === viewMinX) {
-      return width / 2;
-    }
     return ((value - viewMinX) / viewXSpan) * width;
   }
   function scaleY(value: number): number {
-    if (maxData === minData) {
-      return height / 2;
-    }
     return height - ((value - minData) / ySpan) * height;
   }
 
@@ -427,7 +452,8 @@ export function drawChart(
   const targetBinPx = 16;
   const binCount = Math.max(1, Math.floor(width / targetBinPx));
   const counts = new Uint32Array(binCount);
-  for (const [x] of data) {
+  for (let i = 0; i < len; i += 2) {
+    const x = data[i]!;
     if (x < viewMinX || x > viewMaxX) {
       continue;
     }
@@ -464,8 +490,9 @@ export function drawChart(
   ctx.lineWidth = 1;
   ctx.beginPath();
   let hasVisiblePoint = false;
-  for (let i = 0; i < data.length; i++) {
-    const [x, y] = data[i]!;
+  for (let i = 0; i < len; i += 2) {
+    const x = data[i]!;
+    const y = data[i + 1]!;
     if (x < viewMinX || x > viewMaxX) {
       continue;
     }

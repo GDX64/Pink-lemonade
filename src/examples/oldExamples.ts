@@ -18,6 +18,7 @@ export async function cpuExample() {
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
   const data = createNoiseData(100_000);
+  const f32Data = new Float64Array(data.flat());
   const viewManager = new ViewManager(data);
 
   const ctx = await createCanvas2DContext(canvas);
@@ -35,25 +36,14 @@ export async function cpuExample() {
     source: fragmentShaderSource,
   });
 
-  const avgPoints: [number, number][] = [];
-  for (let i = 0; i < data.length; i += 10) {
-    let accY = 0;
-    let accX = 0;
-    for (let j = 0; j < 10 && i + j < data.length; j++) {
-      accX += data[i + j]![0];
-      accY += data[i + j]![1];
-    }
-    avgPoints.push([accX / 10, accY / 10]);
-  }
-
   async function render() {
-    drawChart(avgPoints, overlayCanvas, {
+    const { density } = drawSplatKernelSeries(f32Data, {
+      width,
+      height,
       viewMinX: viewManager.getViewMinX(),
       viewMaxX: viewManager.getViewMaxX(),
     });
-    const density = drawSplatKernelSeries(data, {
-      width,
-      height,
+    drawChart(f32Data, overlayCanvas, {
       viewMinX: viewManager.getViewMinX(),
       viewMaxX: viewManager.getViewMaxX(),
     });
@@ -64,7 +54,7 @@ export async function cpuExample() {
 
   viewManager.bindCanvas(overlayCanvas);
 
-  const density = drawSplatKernelSeries(data, { width, height });
+  const { density } = drawSplatKernelSeries(f32Data, { width, height });
 
   const texture = await ctx.createCanvasTexture({
     data: density,
