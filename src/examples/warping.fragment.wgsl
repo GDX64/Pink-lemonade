@@ -14,7 +14,6 @@ var<uniform> globalUniforms: GlobalUniforms;
 fn main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let res: vec2<f32> = globalUniforms.resolution;
     let uv: vec2<f32> = pos.xy / res;
-    let t: f32 = globalUniforms.timestamp * 0.0001;
 
     // The source texture carries signal in alpha only.
     // return textureSample(canvasTexture, canvasSampler, uv);

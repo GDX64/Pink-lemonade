@@ -61,24 +61,15 @@ export function drawSplatKernelSeries(
   const ySpan = Math.max(maxYValue - minYValue, Number.EPSILON);
 
   const scaleX = (value: number): number => {
-    if (maxXValue === minXValue) {
-      return width / 2;
-    }
-    return ((value - minXValue) / xSpan) * (width - 1);
+    return ((value - minXValue) / xSpan) * binsX;
   };
 
   const scaleY = (value: number): number => {
-    if (maxYValue === minYValue) {
-      return height / 2;
-    }
-    return height - ((value - minYValue) / ySpan) * height;
+    return binsY - ((value - minYValue) / ySpan) * binsY;
   };
 
   const density = new Float32Array(binsX * binsY);
-  const splatRadius = 1.5;
   let hasVisiblePoints = false;
-  const weightsX = [0, 0, 0];
-  const weightsY = [0, 0, 0];
   for (let i = 0; i < len; i += 2) {
     const xValue = data[i]!;
     if (xValue < minXValue || xValue > maxXValue) {
@@ -88,45 +79,44 @@ export function drawSplatKernelSeries(
     const yValue = data[i + 1]!;
     const x = scaleX(xValue);
     const y = scaleY(yValue);
-    const centerX = Math.round(x);
-    const centerY = Math.round(y);
-
-    for (let offset = -1; offset <= 1; offset++) {
-      const index = offset + 1;
-      weightsX[index] =
-        Math.max(0, 1 - Math.abs(x - (centerX + offset)) / splatRadius) ?? 0;
-      weightsY[index] =
-        Math.max(0, 1 - Math.abs(y - (centerY + offset)) / splatRadius) ?? 0;
+    const xFloor = Math.floor(x - 0.5);
+    const yFloor = Math.floor(y - 0.5);
+    const dx = x - 0.5 - xFloor;
+    const dy = y - 0.5 - yFloor;
+    const w00 = (1 - dx) * (1 - dy);
+    const w10 = dx * (1 - dy);
+    const w01 = (1 - dx) * dy;
+    const w11 = dx * dy;
+    const index00 = yFloor * binsX + xFloor;
+    const index10 = yFloor * binsX + (xFloor + 1);
+    const index01 = (yFloor + 1) * binsX + xFloor;
+    const index11 = (yFloor + 1) * binsX + (xFloor + 1);
+    if (xFloor >= 0 && xFloor < binsX && yFloor >= 0 && yFloor < binsY) {
+      density[index00]! += w00;
     }
-
-    let totalWeight = 0;
-    for (let oy = 0; oy < 3; oy++) {
-      for (let ox = 0; ox < 3; ox++) {
-        totalWeight += (weightsX[ox] ?? 0) * (weightsY[oy] ?? 0);
-      }
+    if (
+      xFloor + 1 >= 0 &&
+      xFloor + 1 < binsX &&
+      yFloor >= 0 &&
+      yFloor < binsY
+    ) {
+      density[index10]! += w10;
     }
-    if (totalWeight <= 0) {
-      continue;
+    if (
+      xFloor >= 0 &&
+      xFloor < binsX &&
+      yFloor + 1 >= 0 &&
+      yFloor + 1 < binsY
+    ) {
+      density[index01]! += w01;
     }
-
-    for (let offsetY = -1; offsetY <= 1; offsetY++) {
-      const yBin = centerY + offsetY;
-      if (yBin < 0 || yBin >= binsY) {
-        continue;
-      }
-
-      for (let offsetX = -1; offsetX <= 1; offsetX++) {
-        const xBin = centerX + offsetX;
-        if (xBin < 0 || xBin >= binsX) {
-          continue;
-        }
-
-        const weight =
-          ((weightsX[offsetX + 1] ?? 0) * (weightsY[offsetY + 1] ?? 0)) /
-          totalWeight;
-        const index = yBin * binsX + xBin;
-        density[index] = (density[index] ?? 0) + weight;
-      }
+    if (
+      xFloor + 1 >= 0 &&
+      xFloor + 1 < binsX &&
+      yFloor + 1 >= 0 &&
+      yFloor + 1 < binsY
+    ) {
+      density[index11]! += w11;
     }
   }
 
@@ -225,7 +215,7 @@ export function drawChart(
   function scaleX(value: number): number {
     return ((value - viewMinX) / viewXSpan) * width;
   }
-  const YPad = 20;
+  const YPad = 0;
   const effectiveHeight = height - YPad * 2;
   function scaleY(value: number): number {
     return height - ((value - minData) / ySpan) * effectiveHeight - YPad;

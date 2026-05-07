@@ -58,8 +58,8 @@ export async function cpuExample() {
 
   const texture = await ctx.createCanvasTexture({
     data: density,
-    width,
-    height,
+    width: width,
+    height: height,
   });
 
   fragmentShader.setTexture("canvasTexture", texture);
