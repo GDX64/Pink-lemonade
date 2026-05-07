@@ -4,9 +4,14 @@ struct GlobalUniforms {
     _pad0: vec3<f32>,
 }; 
 
+struct Options {
+    interpolate: f32,
+}
+
 @group(0) @binding(0)
 var<uniform> globalUniforms: GlobalUniforms;
 
+@group(1) @binding(0) var<uniform> options: Options;
 @group(1) @binding(1) var canvasSampler: sampler;
 @group(1) @binding(2) var canvasTexture: texture_2d<f32>;
 
@@ -52,6 +57,35 @@ fn decodePackedRgb01(s: vec4<f32>) -> f32 {
     let b = u32(round(clamp(s.b, 0.0, 1.0) * 255.0));
     let val = (r << 16u) | (g << 8u) | b;
     return f32(val) / 16777215.0;
+}
+
+fn bilinearInterpolate(v00: f32, v10: f32, v01: f32, v11: f32, f: vec2<f32>) -> f32 {
+    let top = mix(v00, v10, f.x);
+    let bottom = mix(v01, v11, f.x);
+    return mix(top, bottom, f.y);
+}
+
+fn bilinearSampleScalar(uv: vec2<f32>) -> f32 {
+    let texSizeU = textureDimensions(canvasTexture, 0);
+    let texSizeI = vec2<i32>(texSizeU);
+    let texSize = vec2<f32>(texSizeU);
+
+    // Convert UV into texel space where integer indices refer to texel centers.
+    let pos = uv * texSize - vec2<f32>(0.5, 0.5);
+    let base = vec2<i32>(floor(pos));
+    let f = fract(pos);
+
+    let x0 = clamp(base.x, 0, texSizeI.x - 1);
+    let x1 = clamp(base.x + 1, 0, texSizeI.x - 1);
+    let y0 = clamp(base.y, 0, texSizeI.y - 1);
+    let y1 = clamp(base.y + 1, 0, texSizeI.y - 1);
+
+    let v00 = textureLoad(canvasTexture, vec2<i32>(x0, y0), 0).r;
+    let v10 = textureLoad(canvasTexture, vec2<i32>(x1, y0), 0).r;
+    let v01 = textureLoad(canvasTexture, vec2<i32>(x0, y1), 0).r;
+    let v11 = textureLoad(canvasTexture, vec2<i32>(x1, y1), 0).r;
+
+    return bilinearInterpolate(v00, v10, v01, v11, f);
 }
 
 fn catmullRomWeights(t: f32) -> vec4<f32> {
@@ -138,7 +172,12 @@ fn fastBicubicSamplePackedScalar(uv: vec2<f32>) -> f32 {
 }
 
 fn sample(uv: vec2<f32>) -> f32 {
-    return bicubicSamplePackedScalar(uv);
-    // return textureSample(canvasTexture, canvasSampler, uv).r;
+    if options.interpolate == 1 {
+        return bicubicSamplePackedScalar(uv);
+    }
+    if options.interpolate == 2 {
+        return bilinearSampleScalar(uv);
+    }
+    return textureSample(canvasTexture, canvasSampler, uv).r;
 }
 

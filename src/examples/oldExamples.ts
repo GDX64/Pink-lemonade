@@ -10,6 +10,7 @@ import {
   drawChart,
   drawSplatKernelSeries,
 } from "../chart/chart";
+import GUI from "lil-gui";
 import noiseShader from "./noise.fragment.wgsl?raw";
 import fragmentShaderSource from "./warping.fragment.wgsl?raw";
 
@@ -17,6 +18,7 @@ export async function cpuExample() {
   const canvas = createCanvas();
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
+  overlayCanvas.style.pointerEvents = "none";
   const data = createNoiseData(100_000);
   const f32Data = new Float64Array(data.flat());
   const viewManager = new ViewManager(data);
@@ -36,6 +38,31 @@ export async function cpuExample() {
     source: fragmentShaderSource,
   });
 
+  const controls = {
+    interpolation: "bicubic",
+    showLineChart: true,
+  };
+
+  fragmentShader.setUniforms({
+    interpolate: 1,
+  });
+
+  const gui = new GUI({ title: "Render Controls" });
+  gui
+    .add(controls, "interpolation", ["bicubic", "hardware", "bilinear"])
+    .name("Interpolation")
+    .onChange((value: "bicubic" | "hardware" | "bilinear") => {
+      fragmentShader.setUniforms({
+        interpolate: value === "bicubic" ? 1 : value === "bilinear" ? 2 : 0,
+      });
+    });
+  gui
+    .add(controls, "showLineChart")
+    .name("Show line chart")
+    .onChange((value: boolean) => {
+      overlayCanvas.style.display = value ? "block" : "none";
+    });
+
   async function render() {
     const { density } = drawSplatKernelSeries(f32Data, {
       width,
@@ -43,16 +70,18 @@ export async function cpuExample() {
       viewMinX: viewManager.getViewMinX(),
       viewMaxX: viewManager.getViewMaxX(),
     });
-    drawChart(f32Data, overlayCanvas, {
-      viewMinX: viewManager.getViewMinX(),
-      viewMaxX: viewManager.getViewMaxX(),
-    });
+    if (controls.showLineChart) {
+      drawChart(f32Data, overlayCanvas, {
+        viewMinX: viewManager.getViewMinX(),
+        viewMaxX: viewManager.getViewMaxX(),
+      });
+    }
 
     ctx.updateCanvasTexture(texture, density);
     await ctx.draw(scene);
   }
 
-  viewManager.bindCanvas(overlayCanvas);
+  viewManager.bindCanvas(canvas);
 
   const { density } = drawSplatKernelSeries(f32Data, { width, height });
 

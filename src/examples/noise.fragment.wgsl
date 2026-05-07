@@ -2,7 +2,7 @@ struct GlobalUniforms {
     timestamp: f32,
     resolution: vec2<f32>,
     _pad0: vec3<f32>,
-}; 
+};
 
 @group(0) @binding(0)
 var<uniform> globalUniforms: GlobalUniforms;
