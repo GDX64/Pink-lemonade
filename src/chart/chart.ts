@@ -429,8 +429,8 @@ export function drawChart(
   }
 
   const ySpan = Math.max(maxData - minData, Number.EPSILON);
-  const unclampedViewMinX = options.viewMinX ?? minX;
-  const unclampedViewMaxX = options.viewMaxX ?? maxX;
+  const unclampedViewMinX = options.viewMinX;
+  const unclampedViewMaxX = options.viewMaxX;
   const sortedViewMinX = Math.min(unclampedViewMinX, unclampedViewMaxX);
   const sortedViewMaxX = Math.max(unclampedViewMinX, unclampedViewMaxX);
   const viewMinX = Math.max(minX, sortedViewMinX);
@@ -440,8 +440,10 @@ export function drawChart(
   function scaleX(value: number): number {
     return ((value - viewMinX) / viewXSpan) * width;
   }
+  const YPad = 20;
+  const effectiveHeight = height - YPad * 2;
   function scaleY(value: number): number {
-    return height - ((value - minData) / ySpan) * height;
+    return height - ((value - minData) / ySpan) * effectiveHeight - YPad;
   }
 
   ctx.clearRect(0, 0, width, height);
