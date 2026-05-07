@@ -71,7 +71,7 @@ export function drawSplatKernelSeries(
     if (maxYValue === minYValue) {
       return height / 2;
     }
-    return height - 1 - ((value - minYValue) / ySpan) * (height - 1);
+    return height - ((value - minYValue) / ySpan) * height;
   };
 
   const density = new Float32Array(binsX * binsY);
