@@ -42,7 +42,7 @@ export async function cpuExample() {
   const controls = {
     interpolation: "bicubic",
     showLineChart: true,
-    splatKernel: "bilinear" as SplatKernel,
+    splatKernel: "triangular" as SplatKernel,
   };
 
   fragmentShader.setUniforms({

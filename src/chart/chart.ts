@@ -1,4 +1,4 @@
-function gausianNoise(mean: number, stdDev: number): number {
+export function gausianNoise(mean: number, stdDev: number): number {
   let u1 = nextRandom();
   let u2 = nextRandom();
   let z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
