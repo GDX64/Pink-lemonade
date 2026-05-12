@@ -22,47 +22,42 @@ var heatOut: texture_storage_2d<r32float, write>;
 @group(0) @binding(2)
 var<uniform> params: Params;
 
-fn lowerBoundX(target_value: f32) -> u32 {
-    var left = 0u;
-    var right = params.pointCount;
+// One slot per thread — each thread accumulates its partial count for this pixel.
+var<workgroup> localCounts: array<u32, 64>;
 
-    loop {
-        if left >= right {
-            break;
-        }
+// Dispatch as (texWidth, texHeight, 1).
+// Each workgroup owns one output pixel; its 64 threads split the point scan.
+@compute @workgroup_size(64)
+fn buildHeatmap(
+    @builtin(workgroup_id) wid: vec3u,
+    @builtin(local_invocation_id) lid: vec3u,
+) {
+    let pixelX = wid.x;
+    let pixelY = wid.y;
 
-        let mid = left + (right - left) / 2u;
-        if points[mid].x < target_value {
-            left = mid + 1u;
-        } else {
-            right = mid;
-        }
-    }
-
-    return left;
-}
-
-@compute @workgroup_size(8, 8)
-fn buildHeatmap(@builtin(global_invocation_id) gid: vec3u) {
-    if gid.x >= params.texWidth || gid.y >= params.texHeight {
-        return;
-    }
-
-    let invScaleX = 1.0 / params.scaleX;
-    let xMin = params.minX + f32(gid.x) * invScaleX;
-    let xMax = xMin + invScaleX;
-    let start = lowerBoundX(xMin);
-    let end = select(lowerBoundX(xMax), params.pointCount, gid.x + 1u >= params.texWidth);
-
-    var count = 0u;
-    for (var i = start; i < end; i = i + 1u) {
+    // Each thread scans points[lid.x, lid.x+64, lid.x+128, ...].
+    var myCount = 0u;
+    var i = lid.x;
+    while i < params.pointCount {
         let p = points[i];
-        let y = u32(clamp((p.y - params.minY) * params.scaleY, 0.0, f32(params.texHeight - 1u)));
-        if y == gid.y {
-            count = count + 1u;
+        let px = u32(clamp((p.x - params.minX) * params.scaleX, 0.0, f32(params.texWidth  - 1u)));
+        let py = u32(clamp((p.y - params.minY) * params.scaleY, 0.0, f32(params.texHeight - 1u)));
+        if px == pixelX && py == pixelY {
+            myCount += 1u;
         }
+        i += 64u;
     }
 
-    let intensity = clamp((f32(count) - params.minCount) * params.invCountRange, 0.0, 1.0);
-    textureStore(heatOut, vec2i(gid.xy), vec4f(intensity, 0.0, 0.0, 1.0));
+    localCounts[lid.x] = myCount;
+    workgroupBarrier();
+
+    // Thread 0 reduces and writes the final pixel value.
+    if lid.x == 0u {
+        var total = 0u;
+        for (var j = 0u; j < 64u; j++) {
+            total += localCounts[j];
+        }
+        let intensity = clamp((f32(total) - params.minCount) * params.invCountRange, 0.0, 1.0);
+        textureStore(heatOut, vec2i(i32(pixelX), i32(pixelY)), vec4f(intensity, 0.0, 0.0, 1.0));
+    }
 }

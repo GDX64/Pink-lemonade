@@ -327,10 +327,7 @@ export async function example() {
       const computePass = encoder.beginComputePass();
       computePass.setPipeline(computePipeline);
       computePass.setBindGroup(0, computeBindGroup);
-      computePass.dispatchWorkgroups(
-        Math.ceil(textureWidth / 8),
-        Math.ceil(textureHeight / 8),
-      );
+      computePass.dispatchWorkgroups(textureWidth, textureHeight);
       computePass.end();
       heatmapDirty = false;
     }
