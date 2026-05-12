@@ -13,9 +13,37 @@ export interface DrawChartOptions {
 
 export type XYDataPoint = [number, number];
 
+export type SplatKernel = "bilinear" | "quadratic" | "cubic";
+
+function splatWeights(t: number, kernel: SplatKernel): number[] {
+  if (kernel === "bilinear") {
+    return [1 - t, t];
+  }
+  if (kernel === "quadratic") {
+    const u = t - 0.5;
+    return [
+      0.5 * (0.5 - u) * (0.5 - u),
+      0.75 - u * u,
+      0.5 * (0.5 + u) * (0.5 + u),
+    ];
+  }
+  return [
+    ((1 - t) * (1 - t) * (1 - t)) / 6,
+    (3 * t * t * t - 6 * t * t + 4) / 6,
+    (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6,
+    (t * t * t) / 6,
+  ];
+}
+
 export function drawSplatKernelSeries(
   data: Float64Array,
-  args: { width: number; height: number; viewMinX?: number; viewMaxX?: number },
+  args: {
+    width: number;
+    height: number;
+    viewMinX?: number;
+    viewMaxX?: number;
+    kernel?: SplatKernel;
+  },
 ) {
   if (!data.length) {
     throw new Error("Data must contain at least one point");
@@ -68,6 +96,7 @@ export function drawSplatKernelSeries(
     return binsY - ((value - minYValue) / ySpan) * binsY;
   };
 
+  const kernel = args.kernel ?? "bilinear";
   const density = new Float32Array(binsX * binsY);
   let hasVisiblePoints = false;
   for (let i = 0; i < len; i += 2) {
@@ -79,44 +108,20 @@ export function drawSplatKernelSeries(
     const yValue = data[i + 1]!;
     const x = scaleX(xValue);
     const y = scaleY(yValue);
-    const xFloor = Math.floor(x - 0.5);
-    const yFloor = Math.floor(y - 0.5);
-    const dx = x - 0.5 - xFloor;
-    const dy = y - 0.5 - yFloor;
-    const w00 = (1 - dx) * (1 - dy);
-    const w10 = dx * (1 - dy);
-    const w01 = (1 - dx) * dy;
-    const w11 = dx * dy;
-    const index00 = yFloor * binsX + xFloor;
-    const index10 = yFloor * binsX + (xFloor + 1);
-    const index01 = (yFloor + 1) * binsX + xFloor;
-    const index11 = (yFloor + 1) * binsX + (xFloor + 1);
-    if (xFloor >= 0 && xFloor < binsX && yFloor >= 0 && yFloor < binsY) {
-      density[index00]! += w00;
-    }
-    if (
-      xFloor + 1 >= 0 &&
-      xFloor + 1 < binsX &&
-      yFloor >= 0 &&
-      yFloor < binsY
-    ) {
-      density[index10]! += w10;
-    }
-    if (
-      xFloor >= 0 &&
-      xFloor < binsX &&
-      yFloor + 1 >= 0 &&
-      yFloor + 1 < binsY
-    ) {
-      density[index01]! += w01;
-    }
-    if (
-      xFloor + 1 >= 0 &&
-      xFloor + 1 < binsX &&
-      yFloor + 1 >= 0 &&
-      yFloor + 1 < binsY
-    ) {
-      density[index11]! += w11;
+    const xBase = Math.floor(x - 0.5);
+    const yBase = Math.floor(y - 0.5);
+    const wx = splatWeights(x - 0.5 - xBase, kernel);
+    const wy = splatWeights(y - 0.5 - yBase, kernel);
+    const xOffset = kernel === "bilinear" ? 0 : -1;
+    const yOffset = kernel === "bilinear" ? 0 : -1;
+    for (let oi = 0; oi < wx.length; oi++) {
+      const bx = xBase + xOffset + oi;
+      if (bx < 0 || bx >= binsX) continue;
+      for (let oj = 0; oj < wy.length; oj++) {
+        const by = yBase + yOffset + oj;
+        if (by < 0 || by >= binsY) continue;
+        density[by * binsX + bx]! += wx[oi]! * wy[oj]!;
+      }
     }
   }
 

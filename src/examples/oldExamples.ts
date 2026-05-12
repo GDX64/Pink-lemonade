@@ -9,6 +9,7 @@ import {
   createNoiseData,
   drawChart,
   drawSplatKernelSeries,
+  type SplatKernel,
 } from "../chart/chart";
 import GUI from "lil-gui";
 import noiseShader from "./noise.fragment.wgsl?raw";
@@ -41,6 +42,7 @@ export async function cpuExample() {
   const controls = {
     interpolation: "bicubic",
     showLineChart: true,
+    splatKernel: "bilinear" as SplatKernel,
   };
 
   fragmentShader.setUniforms({
@@ -57,6 +59,9 @@ export async function cpuExample() {
       });
     });
   gui
+    .add(controls, "splatKernel", ["bilinear", "quadratic", "cubic"] as SplatKernel[])
+    .name("Splat kernel");
+  gui
     .add(controls, "showLineChart")
     .name("Show line chart")
     .onChange((value: boolean) => {
@@ -69,6 +74,7 @@ export async function cpuExample() {
       height,
       viewMinX: viewManager.getViewMinX(),
       viewMaxX: viewManager.getViewMaxX(),
+      kernel: controls.splatKernel,
     });
     if (controls.showLineChart) {
       drawChart(f32Data, overlayCanvas, {
