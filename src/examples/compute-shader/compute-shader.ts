@@ -1,4 +1,6 @@
-import { createNoiseData } from "../chart/chart";
+import { createNoiseData } from "../../chart/chart";
+import computeShaderSource from "./heatmap.compute.wgsl?raw";
+import renderShaderSource from "./heatmap.render.wgsl?raw";
 
 export async function example() {
   const canvas = createCanvas();
@@ -52,7 +54,7 @@ export async function example() {
 
   const noiseView = noiseTexture.createView();
 
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(10_000);
   data.sort((a, b) => a[0]! - b[0]!);
   const f32Data = new Float32Array(data.flat());
   let minX = Infinity;
@@ -159,76 +161,7 @@ export async function example() {
   writeComputeParams();
 
   const computeShader = device.createShaderModule({
-    code: `
-      struct Params {
-        minX: f32,
-        minY: f32,
-        scaleX: f32,
-        scaleY: f32,
-        pointCount: u32,
-        texWidth: u32,
-        texHeight: u32,
-        minCount: f32,
-        invCountRange: f32,
-        _pad0: u32,
-        _pad1: u32,
-        _pad2: u32,
-      };
-
-      @group(0) @binding(0)
-      var<storage, read> points: array<vec2f>;
-
-      @group(0) @binding(1)
-      var heatOut: texture_storage_2d<r32float, write>;
-
-      @group(0) @binding(2)
-      var<uniform> params: Params;
-
-      fn lowerBoundX(target_value: f32) -> u32 {
-        var left = 0u;
-        var right = params.pointCount;
-
-        loop {
-          if (left >= right) {
-            break;
-          }
-
-          let mid = left + (right - left) / 2u;
-          if (points[mid].x < target_value) {
-            left = mid + 1u;
-          } else {
-            right = mid;
-          }
-        }
-
-        return left;
-      }
-
-      @compute @workgroup_size(8, 8)
-      fn buildHeatmap(@builtin(global_invocation_id) gid: vec3u) {
-        if (gid.x >= params.texWidth || gid.y >= params.texHeight) {
-          return;
-        }
-
-        let invScaleX = 1.0 / params.scaleX;
-        let xMin = params.minX + f32(gid.x) * invScaleX;
-        let xMax = xMin + invScaleX;
-        let start = lowerBoundX(xMin);
-        let end = select(lowerBoundX(xMax), params.pointCount, gid.x + 1u >= params.texWidth);
-
-        var count = 0u;
-        for (var i = start; i < end; i = i + 1u) {
-          let p = points[i];
-          let y = u32(clamp((p.y - params.minY) * params.scaleY, 0.0, f32(params.texHeight - 1u)));
-          if (y == gid.y) {
-            count = count + 1u;
-          }
-        }
-
-        let intensity = clamp((f32(count) - params.minCount) * params.invCountRange, 0.0, 1.0);
-        textureStore(heatOut, vec2i(gid.xy), vec4f(intensity, 0.0, 0.0, 1.0));
-      }
-    `,
+    code: computeShaderSource,
   });
 
   const computePipeline = device.createComputePipeline({
@@ -262,72 +195,7 @@ export async function example() {
   });
 
   const shader = device.createShaderModule({
-    code: `
-      struct VertexOut {
-        @builtin(position) position: vec4f,
-        @location(0) uv: vec2f,
-      };
-
-      @group(0) @binding(0)
-      var noiseTex: texture_2d<f32>;
-
-      fn heatmap(tRaw: f32) -> vec3f {
-        let t = clamp(tRaw, 0.0, 1.0);
-        if (t < 0.33) {
-          return mix(vec3f(0.02, 0.02, 0.08), vec3f(0.0, 0.65, 1.0), t / 0.33);
-        }
-        if (t < 0.66) {
-          return mix(vec3f(0.0, 0.65, 1.0), vec3f(1.0, 0.9, 0.0), (t - 0.33) / 0.33);
-        }
-        return mix(vec3f(1.0, 0.9, 0.0), vec3f(1.0, 0.1, 0.02), (t - 0.66) / 0.34);
-      }
-
-      fn cubicWeights(t: f32) -> array<f32, 4> {
-        let t2 = t * t;
-        let t3 = t2 * t;
-        let w0 = -0.5 * t3 + t2 - 0.5 * t;
-        let w1 = 1.5 * t3 - 2.5 * t2 + 1.0;
-        let w2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
-        let w3 = 0.5 * t3 - 0.5 * t2;
-        return array<f32, 4>(w0, w1, w2, w3);
-      }
-
-      fn sampleBicubic(tex: texture_2d<f32>, uv: vec2f) -> f32 {
-        let size = vec2i(textureDimensions(tex));
-        let coord = uv * vec2f(size) - vec2f(0.5, 0.5);
-        let base = vec2i(floor(coord));
-        let frac = fract(coord);
-
-        let wx = cubicWeights(frac.x);
-        let wy = cubicWeights(frac.y);
-
-        var accum = 0.0;
-        for (var j = 0u; j < 4u; j = j + 1u) {
-          for (var i = 0u; i < 4u; i = i + 1u) {
-            let sx = clamp(base.x + i32(i) - 1, 0, size.x - 1);
-            let sy = clamp(base.y + i32(j) - 1, 0, size.y - 1);
-            let sample = textureLoad(tex, vec2i(sx, sy), 0).x;
-            accum = accum + sample * wx[i] * wy[j];
-          }
-        }
-
-        return clamp(accum, 0.0, 1.0);
-      }
-
-      @vertex
-      fn vsMain(@location(0) position: vec2f) -> VertexOut {
-        var out: VertexOut;
-        out.position = vec4f(position, 0.0, 1.0);
-        out.uv = position * 0.5 + vec2f(0.5, 0.5);
-        return out;
-      }
-
-      @fragment
-      fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
-        let n = sampleBicubic(noiseTex, uv);
-        return vec4f(heatmap(n), 1.0);
-      }
-    `,
+    code: renderShaderSource,
   });
 
   const pipeline = device.createRenderPipeline({
