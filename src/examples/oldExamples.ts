@@ -20,12 +20,12 @@ export async function cpuExample() {
   const overlayCanvas = createCanvas();
   overlayCanvas.style.opacity = "0.2";
   overlayCanvas.style.pointerEvents = "none";
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(10_000);
   const f32Data = new Float64Array(data.flat());
   const viewManager = new ViewManager(data);
 
   const ctx = await createCanvas2DContext(canvas);
-  const donwScaling = 32;
+  const donwScaling = 16;
   const width = Math.floor(canvas.width / donwScaling);
   const height = Math.floor(canvas.height / donwScaling);
 
@@ -59,7 +59,12 @@ export async function cpuExample() {
       });
     });
   gui
-    .add(controls, "splatKernel", ["bilinear", "quadratic", "cubic"] as SplatKernel[])
+    .add(controls, "splatKernel", [
+      "bilinear",
+      "quadratic",
+      "cubic",
+      "triangular",
+    ] as SplatKernel[])
     .name("Splat kernel");
   gui
     .add(controls, "showLineChart")

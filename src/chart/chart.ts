@@ -13,26 +13,44 @@ export interface DrawChartOptions {
 
 export type XYDataPoint = [number, number];
 
-export type SplatKernel = "bilinear" | "quadratic" | "cubic";
+export type SplatKernel = "bilinear" | "quadratic" | "cubic" | "triangular";
 
-function splatWeights(t: number, kernel: SplatKernel): number[] {
+function splatWeights(
+  t: number,
+  kernel: SplatKernel,
+): { weights: number[]; offset: number } {
   if (kernel === "bilinear") {
-    return [1 - t, t];
+    return { weights: [1 - t, t], offset: 0 };
   }
   if (kernel === "quadratic") {
     const u = t - 0.5;
-    return [
-      0.5 * (0.5 - u) * (0.5 - u),
-      0.75 - u * u,
-      0.5 * (0.5 + u) * (0.5 + u),
-    ];
+    return {
+      weights: [
+        0.5 * (0.5 - u) * (0.5 - u),
+        0.75 - u * u,
+        0.5 * (0.5 + u) * (0.5 + u),
+      ],
+      offset: -1,
+    };
   }
-  return [
-    ((1 - t) * (1 - t) * (1 - t)) / 6,
-    (3 * t * t * t - 6 * t * t + 4) / 6,
-    (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6,
-    (t * t * t) / 6,
-  ];
+  if (kernel === "cubic") {
+    return {
+      weights: [
+        ((1 - t) * (1 - t) * (1 - t)) / 6,
+        (3 * t * t * t - 6 * t * t + 4) / 6,
+        (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6,
+        (t * t * t) / 6,
+      ],
+      offset: -1,
+    };
+  }
+  // triangular: tent function spanning 64 bins, normalized so weights sum to 1
+  const R = 4;
+  const weights: number[] = [];
+  for (let k = -(R - 1); k <= R; k++) {
+    weights.push(Math.max(0, (R - Math.abs(t - k)) / (R * R)));
+  }
+  return { weights, offset: -(R - 1) };
 }
 
 export function drawSplatKernelSeries(
@@ -110,10 +128,14 @@ export function drawSplatKernelSeries(
     const y = scaleY(yValue);
     const xBase = Math.floor(x - 0.5);
     const yBase = Math.floor(y - 0.5);
-    const wx = splatWeights(x - 0.5 - xBase, kernel);
-    const wy = splatWeights(y - 0.5 - yBase, kernel);
-    const xOffset = kernel === "bilinear" ? 0 : -1;
-    const yOffset = kernel === "bilinear" ? 0 : -1;
+    const { weights: wx, offset: xOffset } = splatWeights(
+      x - 0.5 - xBase,
+      kernel,
+    );
+    const { weights: wy, offset: yOffset } = splatWeights(
+      y - 0.5 - yBase,
+      kernel,
+    );
     for (let oi = 0; oi < wx.length; oi++) {
       const bx = xBase + xOffset + oi;
       if (bx < 0 || bx >= binsX) continue;
