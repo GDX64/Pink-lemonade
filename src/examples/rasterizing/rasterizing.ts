@@ -171,21 +171,31 @@ function createAccumulationPipeline(device: GPUDevice) {
 
       @group(0) @binding(0) var<uniform> u: Uniforms;
 
+      struct VertexOut {
+        @builtin(position) pos: vec4f,
+        @location(0) offset: vec2f,
+      };
+
       @vertex
       fn vs_main(
         @location(0) quadOffset: vec2f,
         @location(1) point: vec2f,
-      ) -> @builtin(position) vec4f {
+      ) -> VertexOut {
         let nx = (point.x - u.minX) / (u.maxX - u.minX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
         const R = 50.0;
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
-        return vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0);
+        return VertexOut(
+          vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
+          quadOffset,
+        );
       }
 
       @fragment
-      fn fs_main() -> @location(0) f32 {
-        return 1.0;
+      fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
+        // offset is in [-1, 1]; its length is 0 at center, sqrt(2) at corners
+        let d = length(offset);
+        return max(1.0 - d, 0.0);
       }
     `,
   });
