@@ -4,9 +4,9 @@ export function example() {
   const canvas = createCanvas();
   const ctx = canvas.getContext("2d")!;
 
-  const values = [...Array(1_000)].map(() => gausianNoise(0, 1));
+  const values = [...Array(1000)].map(() => gausianNoise(0, 1));
 
-  const params = { bins: 4, shifts: 2 };
+  const params = { bins: 8, shifts: 15 };
 
   draw(canvas, ctx, values, params);
 
@@ -51,20 +51,20 @@ function computeShiftedHistograms(
       if (idx >= 0 && idx < bins) counts[idx]! += 1;
     }
 
-    for (let bin = 0; bin < counts.length; bin++) {
-      const count = counts[bin]!;
-      for (let shift = 0; shift < shifts; shift++) {
-        const accBin = bin * shifts + shift;
-        const currentShift = (s + shift) % shifts;
-        const weight = currentShift / shifts;
-        acc[accBin]! += count * weight;
+    // Coarse bin b of shift s covers fine sub-bins [b*shifts - s, b*shifts - s + shifts).
+    // Each fine sub-bin i gets the count of whichever coarse bin covers it.
+    for (let b = 0; b < bins; b++) {
+      for (let k = 0; k < shifts; k++) {
+        const accBin = b * shifts - s + k;
+        if (accBin >= 0 && accBin < acc.length) acc[accBin]! += counts[b]!;
       }
     }
 
     histograms.push({ origin, binWidth: h, counts });
   }
 
-  console.log({ acc });
+  // Average over the shifts
+  for (let i = 0; i < acc.length; i++) acc[i]! /= shifts;
 
   return { min, max, range, histograms, acc, delta };
 }
