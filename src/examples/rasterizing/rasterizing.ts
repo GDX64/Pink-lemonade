@@ -1,20 +1,16 @@
 import { createNoiseData } from "../../chart/chart";
 
-const DOWNSCALE = 16;
+const DOWNSCALE = 4;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
   const data = createNoiseData(100_000);
 
-  let minX = data[0]![0];
-  let maxX = data[0]![0];
-  let minY = data[0]![1];
-  let maxY = data[0]![1];
-  for (const [x, y] of data) {
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
+  let dataMinX = data[0]![0];
+  let dataMaxX = data[0]![0];
+  for (const [x] of data) {
+    dataMinX = Math.min(dataMinX, x);
+    dataMaxX = Math.max(dataMaxX, x);
   }
 
   const gpu = await initWebGPU(canvas);
@@ -26,7 +22,6 @@ export async function rasterizingExample() {
     data,
   );
 
-  // Holds a single u32: the max accumulation count across all pixels
   const statsBuffer = gpu.device.createBuffer({
     size: 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -53,37 +48,43 @@ export async function rasterizingExample() {
     statsBuffer,
   );
 
+  const viewManager = new ViewManager(data);
+  viewManager.bindCanvas(canvas);
+
   const fpsEl = createFpsDisplay();
   let lastTime = performance.now();
+  let fpsAccTime = 0;
   let frameCount = 0;
 
   function render() {
     const now = performance.now();
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
     frameCount++;
-    const elapsed = now - lastTime;
-    if (elapsed >= 500) {
-      fpsEl.textContent = `${((frameCount / elapsed) * 1000).toFixed(1)} fps`;
+    fpsAccTime += dt;
+    if (fpsAccTime >= 0.5) {
+      fpsEl.textContent = `${(frameCount / fpsAccTime).toFixed(1)} fps`;
       frameCount = 0;
-      lastTime = now;
+      fpsAccTime = 0;
     }
+
+    viewManager.tick(dt);
 
     updateUniform(
       gpu.device,
       uniformBuffer,
-      minX,
-      maxX,
-      minY,
-      maxY,
+      viewManager.getViewMinX(),
+      viewManager.getViewMaxX(),
+      viewManager.getViewMinY(),
+      viewManager.getViewMaxY(),
       hdrW,
       hdrH,
     );
 
-    // Reset max to 0 before reduction
     gpu.device.queue.writeBuffer(statsBuffer, 0, new Uint32Array([0]));
 
     const encoder = gpu.device.createCommandEncoder();
 
-    // Pass 1: accumulate points into the low-res r32float HDR texture
     const accPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -101,14 +102,12 @@ export async function rasterizingExample() {
     accPass.draw(6, data.length);
     accPass.end();
 
-    // Pass 2: reduce low-res HDR texture to find max accumulation value
     const reductionPass = encoder.beginComputePass();
     reductionPass.setPipeline(reductionPipeline);
     reductionPass.setBindGroup(0, reductionBindGroup);
     reductionPass.dispatchWorkgroups(Math.ceil(hdrW / 8), Math.ceil(hdrH / 8));
     reductionPass.end();
 
-    // Pass 3: bicubic upsample + tonemap to full canvas resolution
     const tonemapPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -148,7 +147,6 @@ export async function rasterizingExample() {
       hdrTexture,
       statsBuffer,
     );
-    render();
   });
 }
 
@@ -177,7 +175,7 @@ function createAccumulationPipeline(device: GPUDevice) {
   const module = device.createShaderModule({
     code: /* wgsl */ `
       struct Uniforms {
-        minX: f32, maxX: f32,
+        viewMinX: f32, viewMaxX: f32,
         minY: f32, maxY: f32,
         screenWidth: f32, screenHeight: f32,
       };
@@ -194,9 +192,14 @@ function createAccumulationPipeline(device: GPUDevice) {
         @location(0) quadOffset: vec2f,
         @location(1) point: vec2f,
       ) -> VertexOut {
-        let nx = (point.x - u.minX) / (u.maxX - u.minX) * 2.0 - 1.0;
+        // Cull points outside the X view range (move to degenerate clip position)
+        if (point.x < u.viewMinX || point.x > u.viewMaxX) {
+          return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0));
+        }
+
+        let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = 6.0;
+        const R = 30.0;
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -288,7 +291,6 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         return vec4f(positions[vi], 0.0, 1.0);
       }
 
-      // Mitchell-Netravali cubic kernel (B=1/3, C=1/3)
       fn cubic_weight(x: f32) -> f32 {
         let ax = abs(x);
         let ax2 = ax * ax;
@@ -310,7 +312,6 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       fn bicubic_sample(uv: vec2f) -> f32 {
         let size = vec2f(textureDimensions(hdr));
-        // pixel-space coordinate of the sample center
         let p = uv * size - 0.5;
         let p0 = floor(p);
         let frac = p - p0;
@@ -328,6 +329,30 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         return max(result, 0.0);
       }
 
+      fn mapColor(value: f32) -> vec3f {
+        let x = clamp(value, 0.0, 1.0);
+        // Classic heatmap: black -> blue -> cyan -> green -> yellow -> red -> white
+        let c0 = vec3f(0.0, 0.0, 0.0);
+        let c1 = vec3f(0.0, 0.0, 1.0);
+        let c2 = vec3f(0.0, 1.0, 1.0);
+        let c3 = vec3f(0.0, 1.0, 0.0);
+        let c4 = vec3f(1.0, 1.0, 0.0);
+        let c5 = vec3f(1.0, 0.0, 0.0);
+        let c6 = vec3f(1.0, 1.0, 1.0);
+        let s = x * 6.0;
+        let i = floor(s);
+        let f = s - i;
+        var a: vec3f;
+        var b: vec3f;
+        if (i < 1.0)      { a = c0; b = c1; }
+        else if (i < 2.0) { a = c1; b = c2; }
+        else if (i < 3.0) { a = c2; b = c3; }
+        else if (i < 4.0) { a = c3; b = c4; }
+        else if (i < 5.0) { a = c4; b = c5; }
+        else               { a = c5; b = c6; }
+        return mix(a, b, f);
+      }
+
       @fragment
       fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         let outSize = vec2f(textureDimensions(hdr) * ${DOWNSCALE}u);
@@ -337,26 +362,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
 
-        // Classic heatmap: black -> blue -> cyan -> green -> yellow -> red -> white
-        var color: vec3f;
-        if (t < 1.0 / 6.0) {
-          color = mix(vec3f(0.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), t * 6.0);
-        } else if (t < 2.0 / 6.0) {
-          color = mix(vec3f(0.0, 0.0, 1.0), vec3f(0.0, 1.0, 1.0), (t - 1.0 / 6.0) * 6.0);
-        } else if (t < 3.0 / 6.0) {
-          color = mix(vec3f(0.0, 1.0, 1.0), vec3f(0.0, 1.0, 0.0), (t - 2.0 / 6.0) * 6.0);
-        } else if (t < 4.0 / 6.0) {
-          color = mix(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 1.0, 0.0), (t - 3.0 / 6.0) * 6.0);
-        } else if (t < 5.0 / 6.0) {
-          color = mix(vec3f(1.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), (t - 4.0 / 6.0) * 6.0);
-        } else {
-          color = mix(vec3f(1.0, 0.0, 0.0), vec3f(1.0, 1.0, 1.0), (t - 5.0 / 6.0) * 6.0);
-        }
-
-        // Gamma correction (linear -> sRGB)
-        // let gamma = pow(color, vec3f(1.0 / 2.2));
-        let gamma = color;
-        return vec4f(gamma, 1.0);
+        return vec4f(mapColor(t), 1.0);
       }
     `,
   });
@@ -423,14 +429,15 @@ function uploadData(device: GPUDevice, data: [number, number][]) {
   });
   device.queue.writeBuffer(instanceBuffer, 0, points);
 
+  // 8 floats: viewMinX, viewMaxX, minY, maxY, screenWidth, screenHeight, (2 padding)
   const uniformBuffer = device.createBuffer({
-    size: 6 * 4,
+    size: 8 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(
     uniformBuffer,
     0,
-    new Float32Array([0, 1, 0, 1, 1, 1]),
+    new Float32Array([0, 1, 0, 1, 1, 1, 0, 0]),
   );
 
   return { quadBuffer, instanceBuffer, uniformBuffer };
@@ -439,8 +446,8 @@ function uploadData(device: GPUDevice, data: [number, number][]) {
 function updateUniform(
   device: GPUDevice,
   uniformBuffer: GPUBuffer,
-  minX: number,
-  maxX: number,
+  viewMinX: number,
+  viewMaxX: number,
   minY: number,
   maxY: number,
   width: number,
@@ -449,7 +456,7 @@ function updateUniform(
   device.queue.writeBuffer(
     uniformBuffer,
     0,
-    new Float32Array([minX, maxX, minY, maxY, width, height]),
+    new Float32Array([viewMinX, viewMaxX, minY, maxY, width, height, 0, 0]),
   );
 }
 
@@ -470,5 +477,157 @@ function createCanvas() {
   canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
   canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
   return canvas;
+}
+
+class ViewManager {
+  private readonly data: [number, number][];
+  private readonly dataMinX: number;
+  private readonly dataMaxX: number;
+  private readonly dataMinY: number;
+  private readonly dataMaxY: number;
+  private readonly fullRangeX: number;
+  private readonly minViewRangeX: number;
+  private currentViewMinX: number;
+  private currentViewMaxX: number;
+  private targetViewMinX: number;
+  private targetViewMaxX: number;
+  private currentViewMinY: number;
+  private currentViewMaxY: number;
+  private isPanning = false;
+  private lastPointerX = 0;
+  private readonly interpolationRate = 12;
+
+  constructor(data: [number, number][]) {
+    this.data = data;
+    let minX = Infinity,
+      maxX = -Infinity;
+    let minY = Infinity,
+      maxY = -Infinity;
+    for (const [x, y] of data) {
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    this.dataMinX = minX;
+    this.dataMaxX = maxX;
+    this.dataMinY = minY;
+    this.dataMaxY = maxY;
+    this.fullRangeX = Math.max(this.dataMaxX - this.dataMinX, 1e-6);
+    this.minViewRangeX = Math.max(this.fullRangeX / 512, 1e-6);
+    this.currentViewMinX = this.dataMinX;
+    this.currentViewMaxX = this.dataMaxX;
+    this.targetViewMinX = this.dataMinX;
+    this.targetViewMaxX = this.dataMaxX;
+    this.currentViewMinY = minY;
+    this.currentViewMaxY = maxY;
+  }
+
+  private computeVisibleYRange(): [number, number] {
+    let minY = Infinity,
+      maxY = -Infinity;
+    for (const [x, y] of this.data) {
+      if (x < this.currentViewMinX || x > this.currentViewMaxX) continue;
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    if (!isFinite(minY)) return [this.dataMinY, this.dataMaxY];
+    return [minY, maxY];
+  }
+
+  tick(dtSeconds: number): void {
+    const alpha = 1 - Math.exp(-this.interpolationRate * dtSeconds);
+    this.currentViewMinX +=
+      (this.targetViewMinX - this.currentViewMinX) * alpha;
+    this.currentViewMaxX +=
+      (this.targetViewMaxX - this.currentViewMaxX) * alpha;
+    if (Math.abs(this.targetViewMinX - this.currentViewMinX) < 1e-8)
+      this.currentViewMinX = this.targetViewMinX;
+    if (Math.abs(this.targetViewMaxX - this.currentViewMaxX) < 1e-8)
+      this.currentViewMaxX = this.targetViewMaxX;
+
+    const [targetMinY, targetMaxY] = this.computeVisibleYRange();
+    this.currentViewMinY += (targetMinY - this.currentViewMinY) * alpha;
+    this.currentViewMaxY += (targetMaxY - this.currentViewMaxY) * alpha;
+  }
+
+  getViewMinX(): number {
+    return this.currentViewMinX;
+  }
+  getViewMaxX(): number {
+    return this.currentViewMaxX;
+  }
+  getViewMinY(): number {
+    return this.currentViewMinY;
+  }
+  getViewMaxY(): number {
+    return this.currentViewMaxY;
+  }
+
+  bindCanvas(canvas: HTMLCanvasElement): void {
+    canvas.style.touchAction = "none";
+
+    canvas.addEventListener("pointerdown", (e) => {
+      this.isPanning = true;
+      this.lastPointerX = e.clientX;
+      canvas.setPointerCapture(e.pointerId);
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      if (!this.isPanning) return;
+      const rect = canvas.getBoundingClientRect();
+      const deltaXRatio = (e.clientX - this.lastPointerX) / rect.width;
+      this.lastPointerX = e.clientX;
+      const span = this.targetViewMaxX - this.targetViewMinX;
+      const deltaX = deltaXRatio * span;
+      this.targetViewMinX -= deltaX;
+      this.targetViewMaxX -= deltaX;
+      this.clampTarget();
+    });
+
+    const stopPan = (e: PointerEvent) => {
+      if (!this.isPanning) return;
+      this.isPanning = false;
+      canvas.releasePointerCapture(e.pointerId);
+    };
+    canvas.addEventListener("pointerup", stopPan);
+    canvas.addEventListener("pointercancel", stopPan);
+
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const anchorRatio = Math.max(
+          0,
+          Math.min(1, (e.clientX - rect.left) / rect.width),
+        );
+        const currentSpan = this.targetViewMaxX - this.targetViewMinX;
+        const zoomFactor = Math.exp(e.deltaY * 0.0015);
+        const nextSpan = Math.max(
+          this.minViewRangeX,
+          Math.min(this.fullRangeX, currentSpan * zoomFactor),
+        );
+        if (!Number.isFinite(nextSpan) || nextSpan === currentSpan) return;
+        const anchorX = this.targetViewMinX + anchorRatio * currentSpan;
+        this.targetViewMinX = anchorX - anchorRatio * nextSpan;
+        this.targetViewMaxX = this.targetViewMinX + nextSpan;
+        this.clampTarget();
+      },
+      { passive: false },
+    );
+  }
+
+  private clampTarget(): void {
+    const span = Math.max(
+      this.targetViewMaxX - this.targetViewMinX,
+      this.minViewRangeX,
+    );
+    this.targetViewMinX = Math.max(
+      this.dataMinX,
+      Math.min(this.targetViewMinX, this.dataMaxX - span),
+    );
+    this.targetViewMaxX = this.targetViewMinX + span;
+  }
 }
 
