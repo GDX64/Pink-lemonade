@@ -1,8 +1,10 @@
 import { createNoiseData } from "../../chart/chart";
 
+const DOWNSCALE = 16;
+
 export async function rasterizingExample() {
   const canvas = createCanvas();
-  const data = createNoiseData(100);
+  const data = createNoiseData(100_000);
 
   let minX = data[0]![0];
   let maxX = data[0]![0];
@@ -22,10 +24,6 @@ export async function rasterizingExample() {
   const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
     gpu.device,
     data,
-    minX,
-    maxX,
-    minY,
-    maxY,
   );
 
   // Holds a single u32: the max accumulation count across all pixels
@@ -39,7 +37,9 @@ export async function rasterizingExample() {
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
   });
 
-  let hdrTexture = createHDRTexture(gpu.device, canvas.width, canvas.height);
+  let hdrW = Math.max(1, Math.ceil(canvas.width / DOWNSCALE));
+  let hdrH = Math.max(1, Math.ceil(canvas.height / DOWNSCALE));
+  let hdrTexture = createHDRTexture(gpu.device, hdrW, hdrH);
   let reductionBindGroup = createReductionBindGroup(
     gpu.device,
     reductionPipeline,
@@ -74,8 +74,8 @@ export async function rasterizingExample() {
       maxX,
       minY,
       maxY,
-      canvas.width,
-      canvas.height,
+      hdrW,
+      hdrH,
     );
 
     // Reset max to 0 before reduction
@@ -83,7 +83,7 @@ export async function rasterizingExample() {
 
     const encoder = gpu.device.createCommandEncoder();
 
-    // Pass 1: accumulate points additively into the r32float HDR texture
+    // Pass 1: accumulate points into the low-res r32float HDR texture
     const accPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -101,17 +101,14 @@ export async function rasterizingExample() {
     accPass.draw(6, data.length);
     accPass.end();
 
-    // Pass 2: reduce HDR texture to find min/max accumulation values
+    // Pass 2: reduce low-res HDR texture to find max accumulation value
     const reductionPass = encoder.beginComputePass();
     reductionPass.setPipeline(reductionPipeline);
     reductionPass.setBindGroup(0, reductionBindGroup);
-    reductionPass.dispatchWorkgroups(
-      Math.ceil(canvas.width / 8),
-      Math.ceil(canvas.height / 8),
-    );
+    reductionPass.dispatchWorkgroups(Math.ceil(hdrW / 8), Math.ceil(hdrH / 8));
     reductionPass.end();
 
-    // Pass 3: tone-map using min/max to normalize, output to swapchain
+    // Pass 3: bicubic upsample + tonemap to full canvas resolution
     const tonemapPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -135,8 +132,10 @@ export async function rasterizingExample() {
   window.addEventListener("resize", () => {
     canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
     canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
+    hdrW = Math.max(1, Math.ceil(canvas.width / DOWNSCALE));
+    hdrH = Math.max(1, Math.ceil(canvas.height / DOWNSCALE));
     hdrTexture.destroy();
-    hdrTexture = createHDRTexture(gpu.device, canvas.width, canvas.height);
+    hdrTexture = createHDRTexture(gpu.device, hdrW, hdrH);
     reductionBindGroup = createReductionBindGroup(
       gpu.device,
       reductionPipeline,
@@ -197,7 +196,7 @@ function createAccumulationPipeline(device: GPUDevice) {
       ) -> VertexOut {
         let nx = (point.x - u.minX) / (u.maxX - u.minX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = 100.0;
+        const R = 6.0;
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -207,9 +206,8 @@ function createAccumulationPipeline(device: GPUDevice) {
 
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
-        // Gaussian kernel: sigma=0.5 so it falls to ~0 at the quad edge (r=1)
         let d2 = dot(offset, offset);
-        return exp(-d2 / (2.0 * 0.5 * 0.5));
+        return max(0.0, 1.0 - d2);
       }
     `,
   });
@@ -290,15 +288,56 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         return vec4f(positions[vi], 0.0, 1.0);
       }
 
+      // Mitchell-Netravali cubic kernel (B=1/3, C=1/3)
+      fn cubic_weight(x: f32) -> f32 {
+        let ax = abs(x);
+        let ax2 = ax * ax;
+        let ax3 = ax2 * ax;
+        const B = 1.0 / 3.0;
+        const C = 1.0 / 3.0;
+        if (ax < 1.0) {
+          return ((12.0 - 9.0*B - 6.0*C) * ax3
+                + (-18.0 + 12.0*B + 6.0*C) * ax2
+                + (6.0 - 2.0*B)) / 6.0;
+        } else if (ax < 2.0) {
+          return ((-B - 6.0*C) * ax3
+                + (6.0*B + 30.0*C) * ax2
+                + (-12.0*B - 48.0*C) * ax
+                + (8.0*B + 24.0*C)) / 6.0;
+        }
+        return 0.0;
+      }
+
+      fn bicubic_sample(uv: vec2f) -> f32 {
+        let size = vec2f(textureDimensions(hdr));
+        // pixel-space coordinate of the sample center
+        let p = uv * size - 0.5;
+        let p0 = floor(p);
+        let frac = p - p0;
+
+        var result = 0.0;
+        for (var j = -1; j <= 2; j++) {
+          let wy = cubic_weight(frac.y - f32(j));
+          for (var i = -1; i <= 2; i++) {
+            let wx = cubic_weight(frac.x - f32(i));
+            let coord = vec2i(p0) + vec2i(i, j);
+            let clamped = clamp(coord, vec2i(0), vec2i(size) - vec2i(1));
+            result += wx * wy * textureLoad(hdr, clamped, 0).r;
+          }
+        }
+        return max(result, 0.0);
+      }
+
       @fragment
       fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-        let accum = textureLoad(hdr, vec2u(pos.xy), 0).r;
+        let outSize = vec2f(textureDimensions(hdr) * ${DOWNSCALE}u);
+        let uv = pos.xy / outSize;
+        let accum = bicubic_sample(uv);
 
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
 
         // Classic heatmap: black -> blue -> cyan -> green -> yellow -> red -> white
-        // Each color stop spans 1/6 of the [0,1] range
         var color: vec3f;
         if (t < 1.0 / 6.0) {
           color = mix(vec3f(0.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), t * 6.0);
@@ -315,7 +354,8 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         }
 
         // Gamma correction (linear -> sRGB)
-        let gamma = pow(color, vec3f(1.0 / 2.2));
+        // let gamma = pow(color, vec3f(1.0 / 2.2));
+        let gamma = color;
         return vec4f(gamma, 1.0);
       }
     `,
@@ -365,14 +405,7 @@ const QUAD_CORNERS = new Float32Array([
   -1,  1,   1, -1,   1,  1,
 ]);
 
-function uploadData(
-  device: GPUDevice,
-  data: [number, number][],
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number,
-) {
+function uploadData(device: GPUDevice, data: [number, number][]) {
   const quadBuffer = device.createBuffer({
     size: QUAD_CORNERS.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -397,7 +430,7 @@ function uploadData(
   device.queue.writeBuffer(
     uniformBuffer,
     0,
-    new Float32Array([minX, maxX, minY, maxY, 1, 1]),
+    new Float32Array([0, 1, 0, 1, 1, 1]),
   );
 
   return { quadBuffer, instanceBuffer, uniformBuffer };
