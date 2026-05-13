@@ -2,7 +2,7 @@ import { createNoiseData } from "../../chart/chart";
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(100);
 
   let minX = data[0]![0];
   let maxX = data[0]![0];
@@ -53,7 +53,20 @@ export async function rasterizingExample() {
     statsBuffer,
   );
 
+  const fpsEl = createFpsDisplay();
+  let lastTime = performance.now();
+  let frameCount = 0;
+
   function render() {
+    const now = performance.now();
+    frameCount++;
+    const elapsed = now - lastTime;
+    if (elapsed >= 500) {
+      fpsEl.textContent = `${((frameCount / elapsed) * 1000).toFixed(1)} fps`;
+      frameCount = 0;
+      lastTime = now;
+    }
+
     updateUniform(
       gpu.device,
       uniformBuffer,
@@ -114,6 +127,7 @@ export async function rasterizingExample() {
     tonemapPass.end();
 
     gpu.device.queue.submit([encoder.finish()]);
+    requestAnimationFrame(render);
   }
 
   render();
@@ -183,7 +197,7 @@ function createAccumulationPipeline(device: GPUDevice) {
       ) -> VertexOut {
         let nx = (point.x - u.minX) / (u.maxX - u.minX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = 50.0;
+        const R = 100.0;
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -193,9 +207,9 @@ function createAccumulationPipeline(device: GPUDevice) {
 
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
-        // offset is in [-1, 1]; its length is 0 at center, sqrt(2) at corners
-        let d = length(offset);
-        return max(1.0 - d, 0.0);
+        // Gaussian kernel: sigma=0.5 so it falls to ~0 at the quad edge (r=1)
+        let d2 = dot(offset, offset);
+        return exp(-d2 / (2.0 * 0.5 * 0.5));
       }
     `,
   });
@@ -404,6 +418,14 @@ function updateUniform(
     0,
     new Float32Array([minX, maxX, minY, maxY, width, height]),
   );
+}
+
+function createFpsDisplay() {
+  const el = document.createElement("div");
+  el.style.cssText =
+    "position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;background:rgba(0,0,0,.5);padding:2px 6px;border-radius:4px;pointer-events:none;";
+  document.body.appendChild(el);
+  return el;
 }
 
 function createCanvas() {
