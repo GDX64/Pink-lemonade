@@ -16,7 +16,8 @@ export async function rasterizingExample() {
   }
 
   const gpu = await initWebGPU(canvas);
-  const pipeline = createGPUPipeline(gpu.device, gpu.format);
+  const accumulationPipeline = createAccumulationPipeline(gpu.device);
+  const tonemapPipeline = createTonemapPipeline(gpu.device, gpu.format);
   const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
     gpu.device,
     data,
@@ -26,10 +27,18 @@ export async function rasterizingExample() {
     maxY,
   );
 
-  const bindGroup = gpu.device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
+  let hdrTexture = createHDRTexture(gpu.device, canvas.width, canvas.height);
+
+  const accBindGroup = gpu.device.createBindGroup({
+    layout: accumulationPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
   });
+
+  let tonemapBindGroup = createTonemapBindGroup(
+    gpu.device,
+    tonemapPipeline,
+    hdrTexture,
+  );
 
   function render() {
     updateUniform(
@@ -42,23 +51,42 @@ export async function rasterizingExample() {
       canvas.width,
       canvas.height,
     );
+
     const encoder = gpu.device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
+
+    // Pass 1: accumulate points additively into the f32 HDR texture
+    const accPass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: gpu.context.getCurrentTexture().createView(),
-          clearValue: { r: 0.05, g: 0.05, b: 0.08, a: 1 },
+          view: hdrTexture.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
           loadOp: "clear",
           storeOp: "store",
         },
       ],
     });
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.setVertexBuffer(0, quadBuffer);
-    pass.setVertexBuffer(1, instanceBuffer);
-    pass.draw(6, data.length);
-    pass.end();
+    accPass.setPipeline(accumulationPipeline);
+    accPass.setBindGroup(0, accBindGroup);
+    accPass.setVertexBuffer(0, quadBuffer);
+    accPass.setVertexBuffer(1, instanceBuffer);
+    accPass.draw(6, data.length);
+    accPass.end();
+
+    // Pass 2: tone-map the HDR texture into the swapchain
+    const tonemapPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: gpu.context.getCurrentTexture().createView(),
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+    });
+    tonemapPass.setPipeline(tonemapPipeline);
+    tonemapPass.setBindGroup(0, tonemapBindGroup);
+    tonemapPass.draw(3);
+    tonemapPass.end();
+
     gpu.device.queue.submit([encoder.finish()]);
   }
 
@@ -67,6 +95,13 @@ export async function rasterizingExample() {
   window.addEventListener("resize", () => {
     canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
     canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
+    hdrTexture.destroy();
+    hdrTexture = createHDRTexture(gpu.device, canvas.width, canvas.height);
+    tonemapBindGroup = createTonemapBindGroup(
+      gpu.device,
+      tonemapPipeline,
+      hdrTexture,
+    );
     render();
   });
 }
@@ -75,42 +110,49 @@ async function initWebGPU(canvas: HTMLCanvasElement) {
   if (!navigator.gpu) throw new Error("WebGPU not supported");
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("No WebGPU adapter found");
-  const device = await adapter.requestDevice();
+  const device = await adapter.requestDevice({
+    requiredFeatures: ["float32-blendable"],
+  });
   const context = canvas.getContext("webgpu")!;
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: "premultiplied" });
   return { device, context, format };
 }
 
-function createGPUPipeline(device: GPUDevice, format: GPUTextureFormat) {
-  const shaderModule = device.createShaderModule({
+function createHDRTexture(device: GPUDevice, width: number, height: number) {
+  return device.createTexture({
+    size: [width, height],
+    format: "r32float",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+}
+
+function createAccumulationPipeline(device: GPUDevice) {
+  const module = device.createShaderModule({
     code: /* wgsl */ `
       struct Uniforms {
-        minX: f32,
-        maxX: f32,
-        minY: f32,
-        maxY: f32,
-        screenWidth: f32,
-        screenHeight: f32,
+        minX: f32, maxX: f32,
+        minY: f32, maxY: f32,
+        screenWidth: f32, screenHeight: f32,
       };
 
       @group(0) @binding(0) var<uniform> u: Uniforms;
 
       @vertex
       fn vs_main(
-        @location(0) quadOffset: vec2f,  // per-vertex: corner of the unit quad
-        @location(1) point: vec2f,        // per-instance: data point in data space
+        @location(0) quadOffset: vec2f,
+        @location(1) point: vec2f,
       ) -> @builtin(position) vec4f {
         let nx = (point.x - u.minX) / (u.maxX - u.minX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
         const R = 10.0;
-        let pointRadius = vec2f(R / u.screenWidth, R / u.screenHeight);
-        return vec4f(nx + quadOffset.x * pointRadius.x, ny + quadOffset.y * pointRadius.y, 0.0, 1.0);
+        let r = vec2f(R / u.screenWidth, R / u.screenHeight);
+        return vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0);
       }
 
       @fragment
-      fn fs_main() -> @location(0) vec4f {
-        return vec4f(0.2, 0.7, 1.0, 1.0);
+      fn fs_main() -> @location(0) f32 {
+        return 1.0;
       }
     `,
   });
@@ -118,17 +160,15 @@ function createGPUPipeline(device: GPUDevice, format: GPUTextureFormat) {
   return device.createRenderPipeline({
     layout: "auto",
     vertex: {
-      module: shaderModule,
+      module,
       entryPoint: "vs_main",
       buffers: [
         {
-          // slot 0: quad geometry, one corner per vertex
           arrayStride: 8,
           stepMode: "vertex",
           attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }],
         },
         {
-          // slot 1: data points, one per instance
           arrayStride: 8,
           stepMode: "instance",
           attributes: [{ shaderLocation: 1, offset: 0, format: "float32x2" }],
@@ -136,11 +176,68 @@ function createGPUPipeline(device: GPUDevice, format: GPUTextureFormat) {
       ],
     },
     fragment: {
-      module: shaderModule,
+      module,
       entryPoint: "fs_main",
-      targets: [{ format }],
+      targets: [
+        {
+          format: "r32float",
+          blend: {
+            color: { srcFactor: "one", dstFactor: "one", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one", operation: "add" },
+          },
+        },
+      ],
     },
     primitive: { topology: "triangle-list" },
+  });
+}
+
+function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
+  const module = device.createShaderModule({
+    code: /* wgsl */ `
+      @group(0) @binding(0) var hdr: texture_2d<f32>;
+
+      // Full-screen triangle — no vertex buffer needed
+      @vertex
+      fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+        var positions = array<vec2f, 3>(
+          vec2f(-1.0, -1.0),
+          vec2f( 3.0, -1.0),
+          vec2f(-1.0,  3.0),
+        );
+        return vec4f(positions[vi], 0.0, 1.0);
+      }
+
+      @fragment
+      fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+        let accum = textureLoad(hdr, vec2u(pos.xy), 0).r;
+        // Reinhard tone mapping
+        let mapped = accum / (accum + 1.0);
+        // Gamma correction (linear -> sRGB)
+        let gamma = pow(mapped, 1.0 / 2.2);
+        return vec4f(gamma, gamma, gamma, 1.0);
+      }
+    `,
+  });
+
+  return device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module, entryPoint: "vs_main" },
+    fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+}
+
+function createTonemapBindGroup(
+  device: GPUDevice,
+  pipeline: GPURenderPipeline,
+  hdrTexture: GPUTexture,
+) {
+  return device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: hdrTexture.createView() },
+    ],
   });
 }
 
