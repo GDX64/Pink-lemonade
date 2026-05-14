@@ -1,10 +1,8 @@
 import { createNoiseData } from "../../chart/chart";
 
-const DOWNSCALE = 4;
-
 export async function rasterizingExample() {
   const canvas = createCanvas();
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(10_000);
 
   let dataMinX = data[0]![0];
   let dataMaxX = data[0]![0];
@@ -32,8 +30,8 @@ export async function rasterizingExample() {
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
   });
 
-  let hdrW = Math.max(1, Math.ceil(canvas.width / DOWNSCALE));
-  let hdrH = Math.max(1, Math.ceil(canvas.height / DOWNSCALE));
+  let hdrW = canvas.width;
+  let hdrH = canvas.height;
   let hdrTexture = createHDRTexture(gpu.device, hdrW, hdrH);
   let reductionBindGroup = createReductionBindGroup(
     gpu.device,
@@ -131,8 +129,8 @@ export async function rasterizingExample() {
   window.addEventListener("resize", () => {
     canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
     canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
-    hdrW = Math.max(1, Math.ceil(canvas.width / DOWNSCALE));
-    hdrH = Math.max(1, Math.ceil(canvas.height / DOWNSCALE));
+    hdrW = canvas.width;
+    hdrH = canvas.height;
     hdrTexture.destroy();
     hdrTexture = createHDRTexture(gpu.device, hdrW, hdrH);
     reductionBindGroup = createReductionBindGroup(
@@ -199,7 +197,7 @@ function createAccumulationPipeline(device: GPUDevice) {
 
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = 30.0;
+        const R = 120.0;
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -210,7 +208,7 @@ function createAccumulationPipeline(device: GPUDevice) {
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
         let d2 = dot(offset, offset);
-        return max(0.0, 1.0 - d2);
+        return exp(-4.0 * d2);
       }
     `,
   });
@@ -291,44 +289,6 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         return vec4f(positions[vi], 0.0, 1.0);
       }
 
-      fn cubic_weight(x: f32) -> f32 {
-        let ax = abs(x);
-        let ax2 = ax * ax;
-        let ax3 = ax2 * ax;
-        const B = 1.0 / 3.0;
-        const C = 1.0 / 3.0;
-        if (ax < 1.0) {
-          return ((12.0 - 9.0*B - 6.0*C) * ax3
-                + (-18.0 + 12.0*B + 6.0*C) * ax2
-                + (6.0 - 2.0*B)) / 6.0;
-        } else if (ax < 2.0) {
-          return ((-B - 6.0*C) * ax3
-                + (6.0*B + 30.0*C) * ax2
-                + (-12.0*B - 48.0*C) * ax
-                + (8.0*B + 24.0*C)) / 6.0;
-        }
-        return 0.0;
-      }
-
-      fn bicubic_sample(uv: vec2f) -> f32 {
-        let size = vec2f(textureDimensions(hdr));
-        let p = uv * size - 0.5;
-        let p0 = floor(p);
-        let frac = p - p0;
-
-        var result = 0.0;
-        for (var j = -1; j <= 2; j++) {
-          let wy = cubic_weight(frac.y - f32(j));
-          for (var i = -1; i <= 2; i++) {
-            let wx = cubic_weight(frac.x - f32(i));
-            let coord = vec2i(p0) + vec2i(i, j);
-            let clamped = clamp(coord, vec2i(0), vec2i(size) - vec2i(1));
-            result += wx * wy * textureLoad(hdr, clamped, 0).r;
-          }
-        }
-        return max(result, 0.0);
-      }
-
       fn mapColor(value: f32) -> vec3f {
         let x = clamp(value, 0.0, 1.0);
         // Classic heatmap: black -> blue -> cyan -> green -> yellow -> red -> white
@@ -355,9 +315,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       @fragment
       fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-        let outSize = vec2f(textureDimensions(hdr) * ${DOWNSCALE}u);
-        let uv = pos.xy / outSize;
-        let accum = bicubic_sample(uv);
+        let accum = textureLoad(hdr, vec2i(pos.xy), 0).r;
 
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
@@ -630,4 +588,3 @@ class ViewManager {
     this.targetViewMaxX = this.targetViewMinX + span;
   }
 }
-
