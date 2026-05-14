@@ -10,9 +10,9 @@ const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 
 // RGB triplets for the low/mid/high stops of the colormap
 const paletteColors = {
-  c0: "#badafd", // pale yellow
-  c1: "#97f7f1", // orange
-  c2: "#f28787", // dark crimson
+  c0: "#d1edff",
+  c1: "#feffb8",
+  c2: "#f28787",
 };
 let quantSteps = 6; // 0 = off
 
@@ -398,7 +398,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         var t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = step(0.05, t);
+        let opacity = step(0.01, t);
         if palette.steps > 1.0 { 
           t = floor(t * palette.steps) / (palette.steps - 1.0); 
         }
