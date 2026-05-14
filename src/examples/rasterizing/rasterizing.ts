@@ -1,6 +1,8 @@
+import GUI from "lil-gui";
 import { createNoiseData } from "../../chart/chart";
 
 const KERNEL_SIZE = 100;
+let kernelSize = KERNEL_SIZE;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -61,6 +63,14 @@ export async function rasterizingExample() {
   viewManager.bindCanvas(canvas);
 
   const fpsEl = createFpsDisplay();
+  const controls = { kernelSize };
+  const gui = new GUI({ title: "Render Controls" });
+  gui
+    .add(controls, "kernelSize", 1, 300, 1)
+    .name("Kernel size (R)")
+    .onChange((v: number) => {
+      kernelSize = v;
+    });
   const chartCanvas = new ChartCanvas(data);
   let lastTime = performance.now();
   let fpsAccTime = 0;
@@ -104,6 +114,7 @@ export async function rasterizingExample() {
       viewManager.getViewMaxY(),
       hdrW,
       hdrH,
+      kernelSize,
     );
 
     gpu.device.queue.writeBuffer(statsBuffer, 0, new Uint32Array([0]));
@@ -210,6 +221,7 @@ function createAccumulationPipeline(device: GPUDevice) {
         viewMinX: f32, viewMaxX: f32,
         minY: f32, maxY: f32,
         screenWidth: f32, screenHeight: f32,
+        kernelSize: f32, _pad: f32,
       };
 
       @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -231,8 +243,7 @@ function createAccumulationPipeline(device: GPUDevice) {
 
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = ${KERNEL_SIZE};
-        let r = vec2f(R / u.screenWidth, R / u.screenHeight);
+        let r = vec2f(u.kernelSize / u.screenWidth, u.kernelSize / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
           quadOffset,
@@ -434,11 +445,21 @@ function updateUniform(
   maxY: number,
   width: number,
   height: number,
+  kernelSz: number,
 ) {
   device.queue.writeBuffer(
     uniformBuffer,
     0,
-    new Float32Array([viewMinX, viewMaxX, minY, maxY, width, height, 0, 0]),
+    new Float32Array([
+      viewMinX,
+      viewMaxX,
+      minY,
+      maxY,
+      width,
+      height,
+      kernelSz,
+      0,
+    ]),
   );
 }
 
@@ -567,7 +588,7 @@ class ChartCanvas {
     ctx.stroke();
   }
 
-  private drawLegend(cssW: number, _cssH: number) {
+  private drawLegend(cssW: number, cssH: number) {
     const { ctx } = this;
     const {
       BAR_W,
@@ -580,8 +601,8 @@ class ChartCanvas {
       LEGEND_H,
     } = ChartCanvas;
 
-    const ox = cssW - LEGEND_W - 8;
-    const oy = 8;
+    const ox = 0;
+    const oy = cssH - LEGEND_H;
 
     ctx.save();
     ctx.translate(ox, oy);
