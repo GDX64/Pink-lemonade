@@ -196,9 +196,18 @@ export async function rasterizingExample() {
       viewMinY !== lastViewMinY ||
       viewMaxY !== lastViewMaxY
     ) {
-      const merged = mergePoints(data, viewMinX, viewMaxX, viewMinY, viewMaxY, hdrW, hdrH);
+      const merged = mergePoints(
+        data,
+        viewMinX,
+        viewMaxX,
+        viewMinY,
+        viewMaxY,
+        hdrW,
+        hdrH,
+      );
       gpu.device.queue.writeBuffer(instanceBuffer, 0, merged);
       lastMergedCount = merged.length / 3;
+      chartCanvas.setMergedPoints(merged);
       lastViewMinX = viewMinX;
       lastViewMaxX = viewMaxX;
       lastViewMinY = viewMinY;
@@ -654,7 +663,7 @@ function heatmapColor(value: number): [number, number, number] {
 class ChartCanvas {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly data: [number, number][];
+  private mergedPoints: Float32Array = new Float32Array(0);
   private maxVal = 1;
 
   private static readonly BAR_W = 16;
@@ -670,13 +679,16 @@ class ChartCanvas {
   private static readonly LEGEND_H =
     ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
 
-  constructor(data: [number, number][]) {
-    this.data = data;
+  constructor(_data: [number, number][]) {
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
       "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
     document.body.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
+  }
+
+  setMergedPoints(points: Float32Array) {
+    this.mergedPoints = points;
   }
 
   setMaxVal(val: number) {
@@ -730,7 +742,7 @@ class ChartCanvas {
     viewMinY: number,
     viewMaxY: number,
   ) {
-    const { ctx, data } = this;
+    const { ctx } = this;
     const toScreenX = (x: number) =>
       ((x - viewMinX) / (viewMaxX - viewMinX)) * hmW;
     const toScreenY = (y: number) =>
@@ -744,20 +756,13 @@ class ChartCanvas {
     ctx.strokeStyle = "rgba(0,0,0,0.55)";
     ctx.lineWidth = 0.75;
     ctx.beginPath();
-    let started = false;
-    for (const [x, y] of data) {
-      if (x < viewMinX || x > viewMaxX) {
-        started = false;
-        continue;
-      }
-      const sx = toScreenX(x);
-      const sy = toScreenY(y);
-      if (!started) {
-        ctx.moveTo(sx, sy);
-        started = true;
-      } else {
-        ctx.lineTo(sx, sy);
-      }
+    const pts = this.mergedPoints;
+    const n = pts.length / 3;
+    for (let i = 0; i < n; i++) {
+      const sx = toScreenX(pts[i * 3]!);
+      const sy = toScreenY(pts[i * 3 + 1]!);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
     ctx.restore();
