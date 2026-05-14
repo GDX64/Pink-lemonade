@@ -280,16 +280,18 @@ function createAccumulationPipeline(device: GPUDevice) {
       struct VertexOut {
         @builtin(position) pos: vec4f,
         @location(0) offset: vec2f,
+        @location(1) weight: f32,
       };
 
       @vertex
       fn vs_main(
         @location(0) quadOffset: vec2f,
         @location(1) point: vec2f,
+        @location(2) weight: f32,
       ) -> VertexOut {
         // Cull points outside the X view range (move to degenerate clip position)
         if (point.x < u.viewMinX || point.x > u.viewMaxX) {
-          return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0));
+          return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0), 0.0);
         }
 
         let padFrac = ${padFrac.toFixed(6)}f;
@@ -300,16 +302,17 @@ function createAccumulationPipeline(device: GPUDevice) {
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
           quadOffset,
+          weight,
         );
       }
 
       @fragment
-      fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
+      fn fs_main(@location(0) offset: vec2f, @location(1) weight: f32) -> @location(0) f32 {
         let d2 = dot(offset, offset);
         if d2 > 0.81 { discard; } // 0.9² — drop fragments outside the radius
         // 4/π normalizes the Gaussian so it integrates to 1 over ℝ²
         let result = (4.0 / 3.14159265) * exp(-4.0 * d2);
-        return result;
+        return result * weight;
       }
     `,
   });
@@ -326,9 +329,12 @@ function createAccumulationPipeline(device: GPUDevice) {
           attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }],
         },
         {
-          arrayStride: 8,
+          arrayStride: 12,
           stepMode: "instance",
-          attributes: [{ shaderLocation: 1, offset: 0, format: "float32x2" }],
+          attributes: [
+            { shaderLocation: 1, offset: 0, format: "float32x2" },
+            { shaderLocation: 2, offset: 8, format: "float32" },
+          ],
         },
       ],
     },
@@ -502,10 +508,11 @@ function uploadData(device: GPUDevice, data: [number, number][]) {
   });
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
-  const points = new Float32Array(data.length * 2);
+  const points = new Float32Array(data.length * 3);
   for (let i = 0; i < data.length; i++) {
-    points[i * 2] = data[i]![0];
-    points[i * 2 + 1] = data[i]![1];
+    points[i * 3] = data[i]![0];
+    points[i * 3 + 1] = data[i]![1];
+    points[i * 3 + 2] = 1.0; // weight
   }
   const instanceBuffer = device.createBuffer({
     size: points.byteLength,
