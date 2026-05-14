@@ -124,6 +124,11 @@ export async function rasterizingExample() {
   let fpsAccTime = 0;
   let frameCount = 0;
   let readbackPending = false;
+  let lastMergedCount = 0;
+  let lastViewMinX = NaN;
+  let lastViewMaxX = NaN;
+  let lastViewMinY = NaN;
+  let lastViewMaxY = NaN;
 
   function scheduleReadback() {
     if (readbackPending) return;
@@ -180,23 +185,31 @@ export async function rasterizingExample() {
         },
       ],
     });
-    const merged = mergePoints(
-      data,
-      viewManager.getViewMinX(),
-      viewManager.getViewMaxX(),
-      viewManager.getViewMinY(),
-      viewManager.getViewMaxY(),
-      hdrW,
-      hdrH,
-    );
+    const viewMinX = viewManager.getViewMinX();
+    const viewMaxX = viewManager.getViewMaxX();
+    const viewMinY = viewManager.getViewMinY();
+    const viewMaxY = viewManager.getViewMaxY();
 
-    gpu.device.queue.writeBuffer(instanceBuffer, 0, merged);
+    if (
+      viewMinX !== lastViewMinX ||
+      viewMaxX !== lastViewMaxX ||
+      viewMinY !== lastViewMinY ||
+      viewMaxY !== lastViewMaxY
+    ) {
+      const merged = mergePoints(data, viewMinX, viewMaxX, viewMinY, viewMaxY, hdrW, hdrH);
+      gpu.device.queue.writeBuffer(instanceBuffer, 0, merged);
+      lastMergedCount = merged.length / 3;
+      lastViewMinX = viewMinX;
+      lastViewMaxX = viewMaxX;
+      lastViewMinY = viewMinY;
+      lastViewMaxY = viewMaxY;
+    }
 
     accPass.setPipeline(accumulationPipeline);
     accPass.setBindGroup(0, accBindGroup);
     accPass.setVertexBuffer(0, quadBuffer);
     accPass.setVertexBuffer(1, instanceBuffer);
-    accPass.draw(6, merged.length / 3);
+    accPass.draw(6, lastMergedCount);
     accPass.end();
 
     const reductionPass = encoder.beginComputePass();
@@ -236,6 +249,7 @@ export async function rasterizingExample() {
     resizeHeatmapCanvas(canvas);
     hdrW = canvas.width;
     hdrH = canvas.height;
+    lastViewMinX = NaN; // force re-merge with new screen dimensions
     hdrTexture.destroy();
     hdrTexture = createHDRTexture(gpu.device, hdrW, hdrH);
     reductionBindGroup = createReductionBindGroup(
