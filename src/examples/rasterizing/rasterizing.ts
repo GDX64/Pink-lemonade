@@ -1,5 +1,7 @@
 import { createNoiseData } from "../../chart/chart";
 
+const KERNEL_SIZE = 100;
+
 export async function rasterizingExample() {
   const canvas = createCanvas();
   const data = createNoiseData(10_000);
@@ -227,7 +229,7 @@ function createAccumulationPipeline(device: GPUDevice) {
 
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
-        const R = 120.0;
+        const R = ${KERNEL_SIZE};
         let r = vec2f(R / u.screenWidth, R / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -238,7 +240,8 @@ function createAccumulationPipeline(device: GPUDevice) {
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
         let d2 = dot(offset, offset);
-        return exp(-4.0 * d2);
+        // 4/π normalizes the Gaussian so it integrates to 1 over ℝ²
+        return (4.0 / 3.14159265) * exp(-4.0 * d2);
       }
     `,
   });
@@ -487,7 +490,8 @@ function createLegend(): HTMLCanvasElement {
   return c;
 }
 
-function drawLegend(canvas: HTMLCanvasElement, maxVal: number) {
+function drawLegend(canvas: HTMLCanvasElement, _maxVal: number) {
+  const maxVal = _maxVal;
   const BAR_W = 16;
   const BAR_H = 160;
   const LABEL_W = 64;
@@ -506,7 +510,7 @@ function drawLegend(canvas: HTMLCanvasElement, maxVal: number) {
   ctx.fillStyle = "#fff";
   ctx.font = FONT;
   ctx.textAlign = "left";
-  ctx.fillText("pts/px", 0, 15);
+  ctx.fillText("pts/kernel", 0, 15);
   ctx.translate(0, titleSize);
 
   // gradient bar
@@ -523,7 +527,7 @@ function drawLegend(canvas: HTMLCanvasElement, maxVal: number) {
     const t = k / TICKS;
     const py = PAD + (1 - t) * (BAR_H - 1);
     const val = t * maxVal;
-    const label = val < 10 ? val.toFixed(1) : Math.round(val).toString();
+    const label = val.toFixed(2);
     ctx.fillStyle = "#fff";
     ctx.fillText(label, BAR_W + PAD, py);
   }
