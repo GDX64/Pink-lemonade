@@ -22,7 +22,15 @@ export async function rasterizingExample() {
 
   const statsBuffer = gpu.device.createBuffer({
     size: 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage:
+      GPUBufferUsage.STORAGE |
+      GPUBufferUsage.COPY_DST |
+      GPUBufferUsage.COPY_SRC,
+  });
+
+  const statsReadbackBuffer = gpu.device.createBuffer({
+    size: 4,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
   });
 
   const accBindGroup = gpu.device.createBindGroup({
@@ -50,9 +58,30 @@ export async function rasterizingExample() {
   viewManager.bindCanvas(canvas);
 
   const fpsEl = createFpsDisplay();
+  const legend = createLegend();
+  drawLegend(legend, 1);
   let lastTime = performance.now();
   let fpsAccTime = 0;
   let frameCount = 0;
+  let readbackPending = false;
+  let currentMaxVal = 1;
+
+  function scheduleReadback() {
+    if (readbackPending) return;
+    readbackPending = true;
+    const encoder = gpu.device.createCommandEncoder();
+    encoder.copyBufferToBuffer(statsBuffer, 0, statsReadbackBuffer, 0, 4);
+    gpu.device.queue.submit([encoder.finish()]);
+    statsReadbackBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const val = new Uint32Array(statsReadbackBuffer.getMappedRange())[0] ?? 1;
+      statsReadbackBuffer.unmap();
+      readbackPending = false;
+      if (val > 0 && val !== currentMaxVal) {
+        currentMaxVal = val;
+        drawLegend(legend, currentMaxVal);
+      }
+    });
+  }
 
   function render() {
     const now = performance.now();
@@ -121,6 +150,7 @@ export async function rasterizingExample() {
     tonemapPass.end();
 
     gpu.device.queue.submit([encoder.finish()]);
+    scheduleReadback();
     requestAnimationFrame(render);
   }
 
@@ -424,6 +454,79 @@ function createFpsDisplay() {
     "position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;background:rgba(0,0,0,.5);padding:2px 6px;border-radius:4px;pointer-events:none;";
   document.body.appendChild(el);
   return el;
+}
+
+// Heatmap stops matching the WGSL mapColor function
+const HEATMAP: [number, number, number][] = [
+  [0, 0, 0],
+  [0, 0, 255],
+  [0, 255, 255],
+  [0, 255, 0],
+  [255, 255, 0],
+  [255, 0, 0],
+  [255, 255, 255],
+];
+
+function heatmapColor(t: number): [number, number, number] {
+  const s = Math.min(Math.max(t, 0), 1) * (HEATMAP.length - 1);
+  const i = Math.min(Math.floor(s), HEATMAP.length - 2);
+  const f = s - i;
+  const a = HEATMAP[i]!;
+  const b = HEATMAP[i + 1]!;
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * f),
+    Math.round(a[1] + (b[1] - a[1]) * f),
+    Math.round(a[2] + (b[2] - a[2]) * f),
+  ];
+}
+
+function createLegend(): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.style.cssText = "position:fixed;top:8px;right:8px;pointer-events:none;";
+  document.body.appendChild(c);
+  return c;
+}
+
+function drawLegend(canvas: HTMLCanvasElement, maxVal: number) {
+  const BAR_W = 16;
+  const BAR_H = 160;
+  const LABEL_W = 64;
+  const PAD = 6;
+  const TICKS = 5;
+  const FONT = "11px monospace";
+  const titleSize = 25;
+
+  canvas.width = BAR_W + PAD + LABEL_W;
+  canvas.height = BAR_H + PAD * 2 + 14 + titleSize;
+
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // title
+  ctx.fillStyle = "#fff";
+  ctx.font = FONT;
+  ctx.textAlign = "left";
+  ctx.fillText("pts/px", 0, 15);
+  ctx.translate(0, titleSize);
+
+  // gradient bar
+  for (let py = 0; py < BAR_H; py++) {
+    const t = 1 - py / (BAR_H - 1);
+    const [r, g, b] = heatmapColor(t);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, PAD + py, BAR_W, 1);
+  }
+
+  // tick labels
+  ctx.textBaseline = "middle";
+  for (let k = 0; k <= TICKS; k++) {
+    const t = k / TICKS;
+    const py = PAD + (1 - t) * (BAR_H - 1);
+    const val = t * maxVal;
+    const label = val < 10 ? val.toFixed(1) : Math.round(val).toString();
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, BAR_W + PAD, py);
+  }
 }
 
 function createCanvas() {
