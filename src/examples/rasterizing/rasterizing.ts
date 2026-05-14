@@ -14,6 +14,7 @@ const paletteColors = {
   c1: "#97f7f1", // orange
   c2: "#f28787", // dark crimson
 };
+let quantSteps = 6; // 0 = off
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -50,7 +51,7 @@ export async function rasterizingExample() {
   });
 
   const colorBuffer = gpu.device.createBuffer({
-    size: 48, // 3 colors × (3 floats + 1 pad) × 4 bytes
+    size: 64, // 3 colors × vec4f + vec4f(steps, pad, pad, pad)
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   writePaletteToBuffer(gpu.device, colorBuffer);
@@ -89,6 +90,13 @@ export async function rasterizingExample() {
     .name("Kernel size (R)")
     .onChange((v: number) => {
       kernelSize = v;
+    });
+  gui
+    .add({ quantSteps }, "quantSteps", 0, 32, 1)
+    .name("Quantize steps")
+    .onChange((v: number) => {
+      quantSteps = v;
+      writePaletteToBuffer(gpu.device, colorBuffer);
     });
   const colorFolder = gui.addFolder("Color map");
   colorFolder
@@ -290,7 +298,7 @@ function createAccumulationPipeline(device: GPUDevice) {
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
         let d2 = dot(offset, offset);
-        if d2 > 0.75 { discard; } // 0.9² — drop fragments outside the radius
+        if d2 > 0.81 { discard; } // 0.9² — drop fragments outside the radius
         // 4/π normalizes the Gaussian so it integrates to 1 over ℝ²
         let result = (4.0 / 3.14159265) * exp(-4.0 * d2);
         return result;
@@ -361,7 +369,7 @@ function createReductionPipeline(device: GPUDevice) {
 function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
   const module = device.createShaderModule({
     code: /* wgsl */ `
-      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f };
+      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, _p1: f32, _p2: f32, _p3: f32 };
 
       @group(0) @binding(0) var hdr: texture_2d<f32>;
       @group(0) @binding(1) var<storage, read> stats: array<u32, 1>;
@@ -389,8 +397,11 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
         let accum = textureLoad(hdr, vec2i(pos.xy), 0).r;
 
         let maxVal = f32(stats[0]);
-        let t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = smoothstep(0.0, 0.15, t) * 1;
+        var t = clamp(accum / maxVal, 0.0, 1.0);
+        let opacity = step(0.05, t);
+        if palette.steps > 1.0 { 
+          t = floor(t * palette.steps) / (palette.steps - 1.0); 
+        }
         // let opacity = ;
 
         let rgb = mapColor(t) * opacity;
@@ -445,11 +456,11 @@ function hexToLinear(hex: string): [number, number, number] {
 }
 
 function writePaletteToBuffer(device: GPUDevice, buffer: GPUBuffer) {
-  const data = new Float32Array(12);
+  const data = new Float32Array(16);
   const [r0, g0, b0] = hexToLinear(paletteColors.c0);
   const [r1, g1, b1] = hexToLinear(paletteColors.c1);
   const [r2, g2, b2] = hexToLinear(paletteColors.c2);
-  data.set([r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0]);
+  data.set([r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0, quantSteps, 0, 0, 0]);
   device.queue.writeBuffer(buffer, 0, data);
 }
 
