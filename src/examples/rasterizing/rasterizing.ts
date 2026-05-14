@@ -4,6 +4,13 @@ import { createNoiseData } from "../../chart/chart";
 const KERNEL_SIZE = 100;
 let kernelSize = KERNEL_SIZE;
 
+// RGB triplets for the low/mid/high stops of the colormap
+const paletteColors = {
+  c0: "#badafd", // pale yellow
+  c1: "#97f7f1", // orange
+  c2: "#f28787", // dark crimson
+};
+
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
@@ -38,6 +45,12 @@ export async function rasterizingExample() {
     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
   });
 
+  const colorBuffer = gpu.device.createBuffer({
+    size: 48, // 3 colors × (3 floats + 1 pad) × 4 bytes
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  writePaletteToBuffer(gpu.device, colorBuffer);
+
   const accBindGroup = gpu.device.createBindGroup({
     layout: accumulationPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
@@ -57,6 +70,7 @@ export async function rasterizingExample() {
     tonemapPipeline,
     hdrTexture,
     statsBuffer,
+    colorBuffer,
   );
 
   const viewManager = new ViewManager(data);
@@ -71,6 +85,19 @@ export async function rasterizingExample() {
     .onChange((v: number) => {
       kernelSize = v;
     });
+  const colorFolder = gui.addFolder("Color map");
+  colorFolder
+    .addColor(paletteColors, "c0")
+    .name("Low")
+    .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
+  colorFolder
+    .addColor(paletteColors, "c1")
+    .name("Mid")
+    .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
+  colorFolder
+    .addColor(paletteColors, "c2")
+    .name("High")
+    .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
   const chartCanvas = new ChartCanvas(data);
   let lastTime = performance.now();
   let fpsAccTime = 0;
@@ -189,6 +216,7 @@ export async function rasterizingExample() {
       tonemapPipeline,
       hdrTexture,
       statsBuffer,
+      colorBuffer,
     );
   });
 }
@@ -322,8 +350,11 @@ function createReductionPipeline(device: GPUDevice) {
 function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
   const module = device.createShaderModule({
     code: /* wgsl */ `
+      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f };
+
       @group(0) @binding(0) var hdr: texture_2d<f32>;
       @group(0) @binding(1) var<storage, read> stats: array<u32, 1>;
+      @group(0) @binding(2) var<uniform> palette: Palette;
 
       @vertex
       fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
@@ -337,12 +368,9 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       fn mapColor(value: f32) -> vec3f {
         let x = clamp(value, 0.0, 1.0);
-        let c0 = vec3f(1.00, 1.00, 0.67); // pale yellow  #ffffaa
-        let c1 = vec3f(1.00, 0.53, 0.00); // orange       #ff8800
-        let c2 = vec3f(0.85, 0.00, 0.00); // dark crimson #c70303
         let t1 = smoothstep(0.0, 0.5, x);
         let t2 = smoothstep(0.5, 1.0, x);
-        return mix(mix(c0, c1, t1), c2, t2);
+        return mix(mix(palette.c0.rgb, palette.c1.rgb, t1), palette.c2.rgb, t2);
       }
 
       @fragment
@@ -388,14 +416,30 @@ function createTonemapBindGroup(
   pipeline: GPURenderPipeline,
   hdrTexture: GPUTexture,
   statsBuffer: GPUBuffer,
+  colorBuffer: GPUBuffer,
 ) {
   return device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
     entries: [
       { binding: 0, resource: hdrTexture.createView() },
       { binding: 1, resource: { buffer: statsBuffer } },
+      { binding: 2, resource: { buffer: colorBuffer } },
     ],
   });
+}
+
+function hexToLinear(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
+}
+
+function writePaletteToBuffer(device: GPUDevice, buffer: GPUBuffer) {
+  const data = new Float32Array(12);
+  const [r0, g0, b0] = hexToLinear(paletteColors.c0);
+  const [r1, g1, b1] = hexToLinear(paletteColors.c1);
+  const [r2, g2, b2] = hexToLinear(paletteColors.c2);
+  data.set([r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0]);
+  device.queue.writeBuffer(buffer, 0, data);
 }
 
 // prettier-ignore
@@ -478,9 +522,12 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 
 function heatmapColor(value: number): [number, number, number] {
   const x = Math.min(Math.max(value, 0), 1);
-  const c0 = [1.0, 1.0, 0.67]; // pale yellow
-  const c1 = [1.0, 0.53, 0.0]; // orange
-  const c2 = [0.85, 0.0, 0.0]; // dark crimson
+  const [r0, g0, b0] = hexToLinear(paletteColors.c0);
+  const [r1, g1, b1] = hexToLinear(paletteColors.c1);
+  const [r2, g2, b2] = hexToLinear(paletteColors.c2);
+  const c0 = [r0, g0, b0];
+  const c1 = [r1, g1, b1];
+  const c2 = [r2, g2, b2];
   const t1 = smoothstep(0.0, 0.5, x);
   const t2 = smoothstep(0.5, 1.0, x);
   const mid = c0.map((v, i) => v + (c1[i]! - v) * t1);
