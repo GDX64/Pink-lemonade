@@ -536,7 +536,7 @@ const QUAD_CORNERS = new Float32Array([
   -1,  1,   1, -1,   1,  1,
 ]);
 
-const MERGE_THRESHOLD_PX = 5;
+const MERGE_THRESHOLD_PX = 10;
 const MERGE_PASSES = 2;
 
 function mergePass(
