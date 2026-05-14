@@ -20,7 +20,7 @@ let opacityCut = 0.03;
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
-  const data = createNoiseData(10_000);
+  const data = createNoiseData(100_000);
 
   let dataMinX = data[0]![0];
   let dataMaxX = data[0]![0];
@@ -180,11 +180,23 @@ export async function rasterizingExample() {
         },
       ],
     });
+    const merged = mergePoints(
+      data,
+      viewManager.getViewMinX(),
+      viewManager.getViewMaxX(),
+      viewManager.getViewMinY(),
+      viewManager.getViewMaxY(),
+      hdrW,
+      hdrH,
+    );
+
+    gpu.device.queue.writeBuffer(instanceBuffer, 0, merged);
+
     accPass.setPipeline(accumulationPipeline);
     accPass.setBindGroup(0, accBindGroup);
     accPass.setVertexBuffer(0, quadBuffer);
     accPass.setVertexBuffer(1, instanceBuffer);
-    accPass.draw(6, data.length);
+    accPass.draw(6, merged.length / 3);
     accPass.end();
 
     const reductionPass = encoder.beginComputePass();
@@ -501,6 +513,53 @@ const QUAD_CORNERS = new Float32Array([
   -1,  1,   1, -1,   1,  1,
 ]);
 
+const MERGE_THRESHOLD_PX = 5;
+
+function mergePoints(
+  data: [number, number][],
+  viewMinX: number,
+  viewMaxX: number,
+  viewMinY: number,
+  viewMaxY: number,
+  screenW: number,
+  screenH: number,
+): Float32Array {
+  const toSX = (x: number) =>
+    ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
+  const toSY = (y: number) =>
+    ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
+
+  const out = new Float32Array(data.length * 3);
+  let count = 0;
+
+  for (let i = 0; i < data.length; i++) {
+    const [xi, yi] = data[i]!;
+    if (xi < viewMinX || xi > viewMaxX) continue;
+
+    const sx = toSX(xi);
+    const sy = toSY(yi);
+
+    if (count > 0) {
+      const j = count - 1;
+      const dx = sx - toSX(out[j * 3]!);
+      const dy = sy - toSY(out[j * 3 + 1]!);
+      if (dx * dx + dy * dy < MERGE_THRESHOLD_PX * MERGE_THRESHOLD_PX) {
+        const w = out[j * 3 + 2]!;
+        out[j * 3] = (out[j * 3]! * w + xi) / (w + 1);
+        out[j * 3 + 1] = (out[j * 3 + 1]! * w + yi) / (w + 1);
+        out[j * 3 + 2] = w + 1;
+        continue;
+      }
+    }
+
+    out[count * 3] = xi;
+    out[count * 3 + 1] = yi;
+    out[count * 3 + 2] = 1.0;
+    count++;
+  }
+  return out.subarray(0, count * 3);
+}
+
 function uploadData(device: GPUDevice, data: [number, number][]) {
   const quadBuffer = device.createBuffer({
     size: QUAD_CORNERS.byteLength,
@@ -508,17 +567,10 @@ function uploadData(device: GPUDevice, data: [number, number][]) {
   });
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
-  const points = new Float32Array(data.length * 3);
-  for (let i = 0; i < data.length; i++) {
-    points[i * 3] = data[i]![0];
-    points[i * 3 + 1] = data[i]![1];
-    points[i * 3 + 2] = 1.0; // weight
-  }
   const instanceBuffer = device.createBuffer({
-    size: points.byteLength,
+    size: data.length * 3 * 4, // worst case: no merging
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(instanceBuffer, 0, points);
 
   // 8 floats: viewMinX, viewMaxX, minY, maxY, screenWidth, screenHeight, (2 padding)
   const uniformBuffer = device.createBuffer({
