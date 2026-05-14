@@ -6,6 +6,7 @@ let kernelSize = KERNEL_SIZE;
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 30; // px reserved on the bottom for the X axis
+const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 
 // RGB triplets for the low/mid/high stops of the colormap
 const paletteColors = {
@@ -247,6 +248,8 @@ function createHDRTexture(device: GPUDevice, width: number, height: number) {
 }
 
 function createAccumulationPipeline(device: GPUDevice) {
+  // Fraction of canvas height reserved for top+bottom padding
+  const padFrac = CHART_PAD_Y / (window.innerHeight - AXIS_X_H);
   const module = device.createShaderModule({
     code: /* wgsl */ `
       struct Uniforms {
@@ -273,8 +276,10 @@ function createAccumulationPipeline(device: GPUDevice) {
           return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0));
         }
 
+        let padFrac = ${padFrac.toFixed(6)}f;
+        let scale = 1.0 - 2.0 * padFrac;
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
-        let ny = (point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0;
+        let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
         let r = vec2f(u.kernelSize / u.screenWidth, u.kernelSize / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -585,18 +590,22 @@ class ChartCanvas {
       this.canvas.height = h;
     }
 
-    // heatmap occupies [0, cssW - AXIS_Y_W] × [0, cssH - AXIS_X_H]
+    // heatmap occupies [0, cssW - AXIS_Y_W] × [CHART_PAD_Y, cssH - AXIS_X_H - CHART_PAD_Y]
     const hmW = cssW - AXIS_Y_W;
-    const hmH = cssH - AXIS_X_H;
+    const hmH = cssH - AXIS_X_H - CHART_PAD_Y * 2;
 
     const { ctx } = this;
     ctx.clearRect(0, 0, w, h);
     ctx.save();
     ctx.scale(dpr, dpr);
+    ctx.save();
 
+    ctx.translate(0, CHART_PAD_Y);
     this.drawLinePlot(hmW, hmH, viewMinX, viewMaxX, viewMinY, viewMaxY);
-    this.drawXAxis(hmW, hmH, cssH, viewMinX, viewMaxX);
+    this.drawXAxis(hmW, hmH, cssH - CHART_PAD_Y * 2, viewMinX, viewMaxX);
     this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
+    ctx.restore();
+
     this.drawLegend(cssW, cssH);
 
     ctx.restore();
@@ -652,11 +661,11 @@ class ChartCanvas {
   ) {
     const { ctx } = this;
     const { TICKS_X, FONT, PAD } = ChartCanvas;
-    const stripY = hmH; // top of the X-axis strip
+    const stripY = hmH + CHART_PAD_Y; // top of the X-axis strip, after bottom padding gap
 
     ctx.save();
     ctx.fillStyle = "#f5f5f5";
-    ctx.fillRect(0, stripY, hmW, cssH - stripY);
+    ctx.fillRect(0, stripY, hmW, cssH);
 
     ctx.strokeStyle = "#999";
     ctx.lineWidth = 1;
@@ -739,8 +748,8 @@ class ChartCanvas {
       ChartCanvas;
 
     // place legend at top-left corner of the heatmap area
-    const ox = PAD;
-    const oy = PAD;
+    const ox = 0;
+    const oy = 10;
 
     ctx.save();
     ctx.translate(ox, oy);
@@ -754,7 +763,7 @@ class ChartCanvas {
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText("pts/kernel", PAD, PAD);
+    ctx.fillText("pts/kernel", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 
@@ -791,6 +800,7 @@ function resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
   const cssH = window.innerHeight - AXIS_X_H;
   canvas.style.width = `${cssW}px`;
   canvas.style.height = `${cssH}px`;
+  canvas.style.top = "0px";
   canvas.width = Math.round(cssW * devicePixelRatio);
   canvas.height = Math.round(cssH * devicePixelRatio);
 }
