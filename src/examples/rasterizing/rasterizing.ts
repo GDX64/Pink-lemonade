@@ -290,8 +290,10 @@ function createAccumulationPipeline(device: GPUDevice) {
       @fragment
       fn fs_main(@location(0) offset: vec2f) -> @location(0) f32 {
         let d2 = dot(offset, offset);
+        if d2 > 0.75 { discard; } // 0.9² — drop fragments outside the radius
         // 4/π normalizes the Gaussian so it integrates to 1 over ℝ²
-        return (4.0 / 3.14159265) * exp(-4.0 * d2);
+        let result = (4.0 / 3.14159265) * exp(-4.0 * d2);
+        return result;
       }
     `,
   });
