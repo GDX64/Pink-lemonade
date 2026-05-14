@@ -4,7 +4,7 @@ const KERNEL_SIZE = 100;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
-  canvas.style.opacity = "0.5";
+  //   canvas.style.opacity = "0.75";
   const data = createNoiseData(10_000);
 
   let dataMinX = data[0]![0];
@@ -326,18 +326,12 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       fn mapColor(value: f32) -> vec3f {
         let x = clamp(value, 0.0, 1.0);
-        let c0 = vec3f(0.00, 0.00, 0.00);
-        let c1 = vec3f(0.10, 0.45, 0.75);
-        let c2 = vec3f(0.95, 0.80, 0.35);
-        let c3 = vec3f(0.98, 0.30, 0.15);
-        let t01 = smoothstep(0.00, 0.35, x);
-        let t12 = smoothstep(0.35, 0.70, x);
-        let t23 = smoothstep(0.70, 1.00, x);
-        let col01 = mix(c0, c1, t01);
-        let col12 = mix(c1, c2, t12);
-        let col23 = mix(c2, c3, t23);
-        let lowMid = mix(col01, col12, step(0.35, x));
-        return mix(lowMid, col23, step(0.70, x));
+        let c0 = vec3f(1.00, 1.00, 0.67); // pale yellow  #ffffaa
+        let c1 = vec3f(1.00, 0.53, 0.00); // orange       #ff8800
+        let c2 = vec3f(0.85, 0.00, 0.00); // dark crimson #c70303
+        let t1 = smoothstep(0.0, 0.5, x);
+        let t2 = smoothstep(0.5, 1.0, x);
+        return mix(mix(c0, c1, t1), c2, t2);
       }
 
       @fragment
@@ -346,9 +340,11 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = smoothstep(0.1, 0.2, t);
+        let opacity = smoothstep(0.0, 0.15, t) * 1;
+        // let opacity = ;
 
-        return vec4f(mapColor(t), opacity);
+        let rgb = mapColor(t) * opacity;
+        return vec4f(rgb, opacity);
       }
     `,
   });
@@ -449,7 +445,7 @@ function updateUniform(
 function createFpsDisplay() {
   const el = document.createElement("div");
   el.style.cssText =
-    "position:fixed;top:8px;left:8px;color:#fff;font:12px monospace;background:rgba(0,0,0,.5);padding:2px 6px;border-radius:4px;pointer-events:none;";
+    "position:fixed;top:8px;left:8px;color:#000;font:12px monospace;background:rgb(255, 255, 255);padding:2px 6px;border-radius:4px;pointer-events:none;";
   document.body.appendChild(el);
   return el;
 }
@@ -461,18 +457,13 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 
 function heatmapColor(value: number): [number, number, number] {
   const x = Math.min(Math.max(value, 0), 1);
-  const c0 = [0.0, 0.0, 0.0];
-  const c1 = [0.1, 0.45, 0.75];
-  const c2 = [0.95, 0.8, 0.35];
-  const c3 = [0.98, 0.3, 0.15];
-  const t01 = smoothstep(0.0, 0.35, x);
-  const t12 = smoothstep(0.35, 0.7, x);
-  const t23 = smoothstep(0.7, 1.0, x);
-  const col01 = c0.map((v, i) => v + (c1[i]! - v) * t01);
-  const col12 = c1.map((v, i) => v + (c2[i]! - v) * t12);
-  const col23 = c2.map((v, i) => v + (c3[i]! - v) * t23);
-  const lowMid = x < 0.35 ? col01 : col12;
-  const rgb = x < 0.7 ? lowMid : col23;
+  const c0 = [1.0, 1.0, 0.67]; // pale yellow
+  const c1 = [1.0, 0.53, 0.0]; // orange
+  const c2 = [0.85, 0.0, 0.0]; // dark crimson
+  const t1 = smoothstep(0.0, 0.5, x);
+  const t2 = smoothstep(0.5, 1.0, x);
+  const mid = c0.map((v, i) => v + (c1[i]! - v) * t1);
+  const rgb = mid.map((v, i) => v + (c2[i]! - v) * t2);
   return [
     Math.round(rgb[0]! * 255),
     Math.round(rgb[1]! * 255),
@@ -502,7 +493,7 @@ class ChartCanvas {
     this.data = data;
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
-      "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;";
+      "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
     document.body.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
   }
@@ -533,8 +524,7 @@ class ChartCanvas {
     ctx.clearRect(0, 0, w, h);
     ctx.save();
     ctx.scale(dpr, dpr);
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, cssW, cssH);
+    // ctx.fillRect(0, 0, cssW, cssH);
 
     this.drawLinePlot(cssW, cssH, viewMinX, viewMaxX, viewMinY, viewMaxY);
     this.drawLegend(cssW, cssH);
@@ -556,8 +546,8 @@ class ChartCanvas {
     const toScreenY = (y: number) =>
       (1 - (y - viewMinY) / (viewMaxY - viewMinY)) * cssH;
 
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.lineWidth = 0.75;
     ctx.beginPath();
     let started = false;
     for (const [x, y] of data) {
@@ -597,13 +587,13 @@ class ChartCanvas {
     ctx.translate(ox, oy);
 
     // background
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillStyle = "rgb(255, 255, 255)";
     ctx.beginPath();
     ctx.roundRect(0, 0, LEGEND_W, LEGEND_H, 4);
     ctx.fill();
 
     // title
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = "#000";
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
@@ -625,7 +615,7 @@ class ChartCanvas {
       const t = k / TICKS;
       const py = (1 - t) * (BAR_H - 1);
       const val = t * this.maxVal;
-      ctx.fillStyle = "#fff";
+      ctx.fillStyle = "#000";
       ctx.fillText(val.toFixed(2), BAR_W + PAD, py);
     }
 
@@ -635,7 +625,8 @@ class ChartCanvas {
 
 function createCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.style.cssText = "position:absolute;width:100%;height:100%;z-index:1;";
+  canvas.style.cssText =
+    "position:absolute;width:100%;height:100%;background:#ffffff;";
   document.body.appendChild(canvas);
   canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
   canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
