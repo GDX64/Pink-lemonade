@@ -4,6 +4,7 @@ const KERNEL_SIZE = 100;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
+  canvas.style.opacity = "0.5";
   const data = createNoiseData(10_000);
 
   let dataMinX = data[0]![0];
@@ -60,13 +61,11 @@ export async function rasterizingExample() {
   viewManager.bindCanvas(canvas);
 
   const fpsEl = createFpsDisplay();
-  const legend = createLegend();
-  drawLegend(legend, 1);
+  const chartCanvas = new ChartCanvas(data);
   let lastTime = performance.now();
   let fpsAccTime = 0;
   let frameCount = 0;
   let readbackPending = false;
-  let currentMaxVal = 1;
 
   function scheduleReadback() {
     if (readbackPending) return;
@@ -78,10 +77,7 @@ export async function rasterizingExample() {
       const val = new Uint32Array(statsReadbackBuffer.getMappedRange())[0] ?? 1;
       statsReadbackBuffer.unmap();
       readbackPending = false;
-      if (val > 0 && val !== currentMaxVal) {
-        currentMaxVal = val;
-        drawLegend(legend, currentMaxVal);
-      }
+      chartCanvas.setMaxVal(val);
     });
   }
 
@@ -153,6 +149,12 @@ export async function rasterizingExample() {
 
     gpu.device.queue.submit([encoder.finish()]);
     scheduleReadback();
+    chartCanvas.render(
+      viewManager.getViewMinX(),
+      viewManager.getViewMaxX(),
+      viewManager.getViewMinY(),
+      viewManager.getViewMaxY(),
+    );
     requestAnimationFrame(render);
   }
 
@@ -352,8 +354,9 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
+        let opacity = t * t;
 
-        return vec4f(mapColor(t), 1.0);
+        return vec4f(mapColor(t), opacity);
       }
     `,
   });
@@ -483,61 +486,162 @@ function heatmapColor(t: number): [number, number, number] {
   ];
 }
 
-function createLegend(): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.style.cssText = "position:fixed;top:8px;right:8px;pointer-events:none;";
-  document.body.appendChild(c);
-  return c;
-}
+class ChartCanvas {
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly data: [number, number][];
+  private maxVal = 1;
 
-function drawLegend(canvas: HTMLCanvasElement, _maxVal: number) {
-  const maxVal = _maxVal;
-  const BAR_W = 16;
-  const BAR_H = 160;
-  const LABEL_W = 64;
-  const PAD = 6;
-  const TICKS = 5;
-  const FONT = "11px monospace";
-  const titleSize = 25;
+  private static readonly BAR_W = 16;
+  private static readonly BAR_H = 160;
+  private static readonly LABEL_W = 68;
+  private static readonly PAD = 6;
+  private static readonly TICKS = 5;
+  private static readonly FONT = "11px monospace";
+  private static readonly LEGEND_TITLE_H = 25;
+  private static readonly LEGEND_W =
+    ChartCanvas.BAR_W + ChartCanvas.PAD + ChartCanvas.LABEL_W;
+  private static readonly LEGEND_H =
+    ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
 
-  canvas.width = BAR_W + PAD + LABEL_W;
-  canvas.height = BAR_H + PAD * 2 + 14 + titleSize;
-
-  const ctx = canvas.getContext("2d")!;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // title
-  ctx.fillStyle = "#fff";
-  ctx.font = FONT;
-  ctx.textAlign = "left";
-  ctx.fillText("pts/kernel", 0, 15);
-  ctx.translate(0, titleSize);
-
-  // gradient bar
-  for (let py = 0; py < BAR_H; py++) {
-    const t = 1 - py / (BAR_H - 1);
-    const [r, g, b] = heatmapColor(t);
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
-    ctx.fillRect(0, PAD + py, BAR_W, 1);
+  constructor(data: [number, number][]) {
+    this.data = data;
+    this.canvas = document.createElement("canvas");
+    this.canvas.style.cssText =
+      "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;";
+    document.body.appendChild(this.canvas);
+    this.ctx = this.canvas.getContext("2d")!;
   }
 
-  // tick labels
-  ctx.textBaseline = "middle";
-  for (let k = 0; k <= TICKS; k++) {
-    const t = k / TICKS;
-    const py = PAD + (1 - t) * (BAR_H - 1);
-    const val = t * maxVal;
-    const label = val.toFixed(2);
+  setMaxVal(val: number) {
+    if (val > 0 && val !== this.maxVal) {
+      this.maxVal = val;
+    }
+  }
+
+  render(
+    viewMinX: number,
+    viewMaxX: number,
+    viewMinY: number,
+    viewMaxY: number,
+  ) {
+    const dpr = devicePixelRatio;
+    const cssW = this.canvas.getBoundingClientRect().width;
+    const cssH = this.canvas.getBoundingClientRect().height;
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(cssH * dpr);
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+
+    const { ctx } = this;
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, cssW, cssH);
+
+    this.drawLinePlot(cssW, cssH, viewMinX, viewMaxX, viewMinY, viewMaxY);
+    this.drawLegend(cssW, cssH);
+
+    ctx.restore();
+  }
+
+  private drawLinePlot(
+    cssW: number,
+    cssH: number,
+    viewMinX: number,
+    viewMaxX: number,
+    viewMinY: number,
+    viewMaxY: number,
+  ) {
+    const { ctx, data } = this;
+    const toScreenX = (x: number) =>
+      ((x - viewMinX) / (viewMaxX - viewMinX)) * cssW;
+    const toScreenY = (y: number) =>
+      (1 - (y - viewMinY) / (viewMaxY - viewMinY)) * cssH;
+
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    let started = false;
+    for (const [x, y] of data) {
+      if (x < viewMinX || x > viewMaxX) {
+        started = false;
+        continue;
+      }
+      const sx = toScreenX(x);
+      const sy = toScreenY(y);
+      if (!started) {
+        ctx.moveTo(sx, sy);
+        started = true;
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    ctx.stroke();
+  }
+
+  private drawLegend(cssW: number, _cssH: number) {
+    const { ctx } = this;
+    const {
+      BAR_W,
+      BAR_H,
+      PAD,
+      TICKS,
+      FONT,
+      LEGEND_TITLE_H,
+      LEGEND_W,
+      LEGEND_H,
+    } = ChartCanvas;
+
+    const ox = cssW - LEGEND_W - 8;
+    const oy = 8;
+
+    ctx.save();
+    ctx.translate(ox, oy);
+
+    // background
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.beginPath();
+    ctx.roundRect(0, 0, LEGEND_W, LEGEND_H, 4);
+    ctx.fill();
+
+    // title
     ctx.fillStyle = "#fff";
-    ctx.fillText(label, BAR_W + PAD, py);
+    ctx.font = FONT;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("pts/kernel", PAD, PAD);
+
+    ctx.translate(PAD, LEGEND_TITLE_H);
+
+    // gradient bar
+    for (let py = 0; py < BAR_H; py++) {
+      const t = 1 - py / (BAR_H - 1);
+      const [r, g, b] = heatmapColor(t);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(0, py, BAR_W, 1);
+    }
+
+    // tick labels
+    ctx.textBaseline = "middle";
+    for (let k = 0; k <= TICKS; k++) {
+      const t = k / TICKS;
+      const py = (1 - t) * (BAR_H - 1);
+      const val = t * this.maxVal;
+      ctx.fillStyle = "#fff";
+      ctx.fillText(val.toFixed(2), BAR_W + PAD, py);
+    }
+
+    ctx.restore();
   }
 }
 
 function createCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.style.position = "absolute";
-  canvas.style.width = "100%";
-  canvas.style.height = "100%";
+  canvas.style.cssText = "position:absolute;width:100%;height:100%;z-index:1;";
   document.body.appendChild(canvas);
   canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
   canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
