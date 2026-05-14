@@ -4,6 +4,9 @@ import { createNoiseData } from "../../chart/chart";
 const KERNEL_SIZE = 100;
 let kernelSize = KERNEL_SIZE;
 
+const AXIS_Y_W = 70; // px reserved on the right for the Y axis
+const AXIS_X_H = 30; // px reserved on the bottom for the X axis
+
 // RGB triplets for the low/mid/high stops of the colormap
 const paletteColors = {
   c0: "#badafd", // pale yellow
@@ -76,9 +79,10 @@ export async function rasterizingExample() {
   const viewManager = new ViewManager(data);
   viewManager.bindCanvas(canvas);
 
-  const fpsEl = createFpsDisplay();
-  const controls = { kernelSize };
+  const controls = { kernelSize, fps: "0.0" };
   const gui = new GUI({ title: "Render Controls" });
+  gui.domElement.style.right = `${AXIS_Y_W}px`;
+  const fpsController = gui.add(controls, "fps").name("FPS").disable();
   gui
     .add(controls, "kernelSize", 1, 300, 1)
     .name("Kernel size (R)")
@@ -125,7 +129,8 @@ export async function rasterizingExample() {
     frameCount++;
     fpsAccTime += dt;
     if (fpsAccTime >= 0.5) {
-      fpsEl.textContent = `${(frameCount / fpsAccTime).toFixed(1)} fps`;
+      controls.fps = `${(frameCount / fpsAccTime).toFixed(1)} fps`;
+      fpsController.updateDisplay();
       frameCount = 0;
       fpsAccTime = 0;
     }
@@ -199,8 +204,7 @@ export async function rasterizingExample() {
   render();
 
   window.addEventListener("resize", () => {
-    canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
-    canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
+    resizeHeatmapCanvas(canvas);
     hdrW = canvas.width;
     hdrH = canvas.height;
     hdrTexture.destroy();
@@ -507,14 +511,6 @@ function updateUniform(
   );
 }
 
-function createFpsDisplay() {
-  const el = document.createElement("div");
-  el.style.cssText =
-    "position:fixed;top:8px;left:8px;color:#000;font:12px monospace;background:rgb(255, 255, 255);padding:2px 6px;border-radius:4px;pointer-events:none;";
-  document.body.appendChild(el);
-  return el;
-}
-
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
   return t * t * (3 - 2 * t);
@@ -549,7 +545,8 @@ class ChartCanvas {
   private static readonly BAR_H = 160;
   private static readonly LABEL_W = 68;
   private static readonly PAD = 6;
-  private static readonly TICKS = 5;
+  private static readonly TICKS_X = 8;
+  private static readonly TICKS_Y = 6;
   private static readonly FONT = "11px monospace";
   private static readonly LEGEND_TITLE_H = 25;
   private static readonly LEGEND_W =
@@ -561,7 +558,7 @@ class ChartCanvas {
     this.data = data;
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
-      "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
+      "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
     document.body.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
   }
@@ -579,8 +576,8 @@ class ChartCanvas {
     viewMaxY: number,
   ) {
     const dpr = devicePixelRatio;
-    const cssW = this.canvas.getBoundingClientRect().width;
-    const cssH = this.canvas.getBoundingClientRect().height;
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
     const w = Math.round(cssW * dpr);
     const h = Math.round(cssH * dpr);
     if (this.canvas.width !== w || this.canvas.height !== h) {
@@ -588,21 +585,26 @@ class ChartCanvas {
       this.canvas.height = h;
     }
 
+    // heatmap occupies [0, cssW - AXIS_Y_W] × [0, cssH - AXIS_X_H]
+    const hmW = cssW - AXIS_Y_W;
+    const hmH = cssH - AXIS_X_H;
+
     const { ctx } = this;
     ctx.clearRect(0, 0, w, h);
     ctx.save();
     ctx.scale(dpr, dpr);
-    // ctx.fillRect(0, 0, cssW, cssH);
 
-    this.drawLinePlot(cssW, cssH, viewMinX, viewMaxX, viewMinY, viewMaxY);
+    this.drawLinePlot(hmW, hmH, viewMinX, viewMaxX, viewMinY, viewMaxY);
+    this.drawXAxis(hmW, hmH, cssH, viewMinX, viewMaxX);
+    this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
     this.drawLegend(cssW, cssH);
 
     ctx.restore();
   }
 
   private drawLinePlot(
-    cssW: number,
-    cssH: number,
+    hmW: number,
+    hmH: number,
     viewMinX: number,
     viewMaxX: number,
     viewMinY: number,
@@ -610,9 +612,14 @@ class ChartCanvas {
   ) {
     const { ctx, data } = this;
     const toScreenX = (x: number) =>
-      ((x - viewMinX) / (viewMaxX - viewMinX)) * cssW;
+      ((x - viewMinX) / (viewMaxX - viewMinX)) * hmW;
     const toScreenY = (y: number) =>
-      (1 - (y - viewMinY) / (viewMaxY - viewMinY)) * cssH;
+      (1 - (y - viewMinY) / (viewMaxY - viewMinY)) * hmH;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, hmW, hmH);
+    ctx.clip();
 
     ctx.strokeStyle = "rgba(0,0,0,0.55)";
     ctx.lineWidth = 0.75;
@@ -633,34 +640,116 @@ class ChartCanvas {
       }
     }
     ctx.stroke();
+    ctx.restore();
   }
 
-  private drawLegend(cssW: number, cssH: number) {
+  private drawXAxis(
+    hmW: number,
+    hmH: number,
+    cssH: number,
+    viewMinX: number,
+    viewMaxX: number,
+  ) {
     const { ctx } = this;
-    const {
-      BAR_W,
-      BAR_H,
-      PAD,
-      TICKS,
-      FONT,
-      LEGEND_TITLE_H,
-      LEGEND_W,
-      LEGEND_H,
-    } = ChartCanvas;
+    const { TICKS_X, FONT, PAD } = ChartCanvas;
+    const stripY = hmH; // top of the X-axis strip
 
-    const ox = 0;
-    const oy = cssH - LEGEND_H;
+    ctx.save();
+    ctx.fillStyle = "#f5f5f5";
+    ctx.fillRect(0, stripY, hmW, cssH - stripY);
+
+    ctx.strokeStyle = "#999";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, stripY);
+    ctx.lineTo(hmW, stripY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#333";
+    ctx.font = FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    for (let i = 0; i <= TICKS_X; i++) {
+      const t = i / TICKS_X;
+      const x = t * hmW;
+      const val = viewMinX + t * (viewMaxX - viewMinX);
+
+      ctx.strokeStyle = "#bbb";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, stripY);
+      ctx.lineTo(x, stripY + 5);
+      ctx.stroke();
+
+      ctx.fillStyle = "#333";
+      ctx.fillText(val.toFixed(2), x, stripY + PAD + 5);
+    }
+    ctx.restore();
+  }
+
+  private drawYAxis(
+    hmW: number,
+    hmH: number,
+    cssW: number,
+    viewMinY: number,
+    viewMaxY: number,
+  ) {
+    const { ctx } = this;
+    const { TICKS_Y, FONT, PAD } = ChartCanvas;
+    const stripX = hmW; // left edge of the Y-axis strip
+
+    ctx.save();
+    ctx.fillStyle = "#f5f5f5";
+    ctx.fillRect(stripX, 0, cssW - stripX, hmH);
+
+    ctx.strokeStyle = "#999";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(stripX, 0);
+    ctx.lineTo(stripX, hmH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#333";
+    ctx.font = FONT;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+
+    for (let i = 0; i <= TICKS_Y; i++) {
+      const t = i / TICKS_Y;
+      const y = (1 - t) * hmH;
+      const val = viewMinY + t * (viewMaxY - viewMinY);
+
+      ctx.strokeStyle = "#bbb";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(stripX, y);
+      ctx.lineTo(stripX + 5, y);
+      ctx.stroke();
+
+      ctx.fillStyle = "#333";
+      ctx.fillText(val.toFixed(2), stripX + PAD + 5, y);
+    }
+    ctx.restore();
+  }
+
+  private drawLegend(_cssW: number, _cssH: number) {
+    const { ctx } = this;
+    const { BAR_W, BAR_H, PAD, FONT, LEGEND_TITLE_H, LEGEND_W, LEGEND_H } =
+      ChartCanvas;
+
+    // place legend at top-left corner of the heatmap area
+    const ox = PAD;
+    const oy = PAD;
 
     ctx.save();
     ctx.translate(ox, oy);
 
-    // background
-    ctx.fillStyle = "rgb(255, 255, 255)";
-    ctx.beginPath();
-    ctx.roundRect(0, 0, LEGEND_W, LEGEND_H, 4);
-    ctx.fill();
+    // ctx.fillStyle = "rgba(245,245,245,0.95)";
+    // ctx.beginPath();
+    // ctx.roundRect(0, 0, LEGEND_W, LEGEND_H, 4);
+    // ctx.fill();
 
-    // title
     ctx.fillStyle = "#000";
     ctx.font = FONT;
     ctx.textAlign = "left";
@@ -669,7 +758,6 @@ class ChartCanvas {
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 
-    // gradient bar
     for (let py = 0; py < BAR_H; py++) {
       const t = 1 - py / (BAR_H - 1);
       const [r, g, b] = heatmapColor(t);
@@ -677,10 +765,9 @@ class ChartCanvas {
       ctx.fillRect(0, py, BAR_W, 1);
     }
 
-    // tick labels
     ctx.textBaseline = "middle";
-    for (let k = 0; k <= TICKS; k++) {
-      const t = k / TICKS;
+    for (let k = 0; k <= 5; k++) {
+      const t = k / 5;
       const py = (1 - t) * (BAR_H - 1);
       const val = t * this.maxVal;
       ctx.fillStyle = "#000";
@@ -693,12 +780,19 @@ class ChartCanvas {
 
 function createCanvas() {
   const canvas = document.createElement("canvas");
-  canvas.style.cssText =
-    "position:absolute;width:100%;height:100%;background:#ffffff;";
+  canvas.style.cssText = "position:absolute;top:0;left:0;background:#ffffff;";
   document.body.appendChild(canvas);
-  canvas.width = canvas.getBoundingClientRect().width * devicePixelRatio;
-  canvas.height = canvas.getBoundingClientRect().height * devicePixelRatio;
+  resizeHeatmapCanvas(canvas);
   return canvas;
+}
+
+function resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
+  const cssW = window.innerWidth - AXIS_Y_W;
+  const cssH = window.innerHeight - AXIS_X_H;
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.width = Math.round(cssW * devicePixelRatio);
+  canvas.height = Math.round(cssH * devicePixelRatio);
 }
 
 class ViewManager {
