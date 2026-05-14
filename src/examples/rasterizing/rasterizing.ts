@@ -326,26 +326,18 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       fn mapColor(value: f32) -> vec3f {
         let x = clamp(value, 0.0, 1.0);
-        // Classic heatmap: black -> blue -> cyan -> green -> yellow -> red -> white
-        let c0 = vec3f(0.0, 0.0, 0.0);
-        let c1 = vec3f(0.0, 0.0, 1.0);
-        let c2 = vec3f(0.0, 1.0, 1.0);
-        let c3 = vec3f(0.0, 1.0, 0.0);
-        let c4 = vec3f(1.0, 1.0, 0.0);
-        let c5 = vec3f(1.0, 0.0, 0.0);
-        let c6 = vec3f(1.0, 1.0, 1.0);
-        let s = x * 6.0;
-        let i = floor(s);
-        let f = s - i;
-        var a: vec3f;
-        var b: vec3f;
-        if (i < 1.0)      { a = c0; b = c1; }
-        else if (i < 2.0) { a = c1; b = c2; }
-        else if (i < 3.0) { a = c2; b = c3; }
-        else if (i < 4.0) { a = c3; b = c4; }
-        else if (i < 5.0) { a = c4; b = c5; }
-        else               { a = c5; b = c6; }
-        return mix(a, b, f);
+        let c0 = vec3f(0.00, 0.00, 0.00);
+        let c1 = vec3f(0.10, 0.45, 0.75);
+        let c2 = vec3f(0.95, 0.80, 0.35);
+        let c3 = vec3f(0.98, 0.30, 0.15);
+        let t01 = smoothstep(0.00, 0.35, x);
+        let t12 = smoothstep(0.35, 0.70, x);
+        let t23 = smoothstep(0.70, 1.00, x);
+        let col01 = mix(c0, c1, t01);
+        let col12 = mix(c1, c2, t12);
+        let col23 = mix(c2, c3, t23);
+        let lowMid = mix(col01, col12, step(0.35, x));
+        return mix(lowMid, col23, step(0.70, x));
       }
 
       @fragment
@@ -354,7 +346,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         let t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = t * t;
+        let opacity = smoothstep(0.1, 0.2, t);
 
         return vec4f(mapColor(t), opacity);
       }
@@ -462,27 +454,29 @@ function createFpsDisplay() {
   return el;
 }
 
-// Heatmap stops matching the WGSL mapColor function
-const HEATMAP: [number, number, number][] = [
-  [0, 0, 0],
-  [0, 0, 255],
-  [0, 255, 255],
-  [0, 255, 0],
-  [255, 255, 0],
-  [255, 0, 0],
-  [255, 255, 255],
-];
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
+  return t * t * (3 - 2 * t);
+}
 
-function heatmapColor(t: number): [number, number, number] {
-  const s = Math.min(Math.max(t, 0), 1) * (HEATMAP.length - 1);
-  const i = Math.min(Math.floor(s), HEATMAP.length - 2);
-  const f = s - i;
-  const a = HEATMAP[i]!;
-  const b = HEATMAP[i + 1]!;
+function heatmapColor(value: number): [number, number, number] {
+  const x = Math.min(Math.max(value, 0), 1);
+  const c0 = [0.0, 0.0, 0.0];
+  const c1 = [0.1, 0.45, 0.75];
+  const c2 = [0.95, 0.8, 0.35];
+  const c3 = [0.98, 0.3, 0.15];
+  const t01 = smoothstep(0.0, 0.35, x);
+  const t12 = smoothstep(0.35, 0.7, x);
+  const t23 = smoothstep(0.7, 1.0, x);
+  const col01 = c0.map((v, i) => v + (c1[i]! - v) * t01);
+  const col12 = c1.map((v, i) => v + (c2[i]! - v) * t12);
+  const col23 = c2.map((v, i) => v + (c3[i]! - v) * t23);
+  const lowMid = x < 0.35 ? col01 : col12;
+  const rgb = x < 0.7 ? lowMid : col23;
   return [
-    Math.round(a[0] + (b[0] - a[0]) * f),
-    Math.round(a[1] + (b[1] - a[1]) * f),
-    Math.round(a[2] + (b[2] - a[2]) * f),
+    Math.round(rgb[0]! * 255),
+    Math.round(rgb[1]! * 255),
+    Math.round(rgb[2]! * 255),
   ];
 }
 
