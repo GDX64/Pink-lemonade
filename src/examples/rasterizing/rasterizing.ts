@@ -537,6 +537,46 @@ const QUAD_CORNERS = new Float32Array([
 ]);
 
 const MERGE_THRESHOLD_PX = 5;
+const MERGE_PASSES = 2;
+
+function mergePass(
+  pts: Float32Array,
+  toSX: (x: number) => number,
+  toSY: (y: number) => number,
+): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(pts.length);
+  let count = 0;
+  const n = pts.length / 3;
+
+  for (let i = 0; i < n; i++) {
+    const xi = pts[i * 3]!;
+    const yi = pts[i * 3 + 1]!;
+    const wi = pts[i * 3 + 2]!;
+    const sx = toSX(xi);
+    const sy = toSY(yi);
+
+    if (count > 0) {
+      const j = count - 1;
+      const dx = sx - toSX(out[j * 3]!);
+      const dy = sy - toSY(out[j * 3 + 1]!);
+      if (dx * dx + dy * dy < MERGE_THRESHOLD_PX * MERGE_THRESHOLD_PX) {
+        const wj = out[j * 3 + 2]!;
+        const wSum = wj + wi;
+        out[j * 3] = (out[j * 3]! * wj + xi * wi) / wSum;
+        out[j * 3 + 1] = (out[j * 3 + 1]! * wj + yi * wi) / wSum;
+        out[j * 3 + 2] = wSum;
+        continue;
+      }
+    }
+
+    out[count * 3] = xi;
+    out[count * 3 + 1] = yi;
+    out[count * 3 + 2] = wi;
+    count++;
+  }
+
+  return out.slice(0, count * 3);
+}
 
 function mergePoints(
   data: [number, number][],
@@ -546,41 +586,29 @@ function mergePoints(
   viewMaxY: number,
   screenW: number,
   screenH: number,
-): Float32Array {
+): Float32Array<ArrayBuffer> {
   const toSX = (x: number) =>
     ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
   const toSY = (y: number) =>
     ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
 
-  const out = new Float32Array(data.length * 3);
-  let count = 0;
-
+  // seed: filter to visible points and assign weight 1
+  const seed = new Float32Array(data.length * 3);
+  let seedCount = 0;
   for (let i = 0; i < data.length; i++) {
     const [xi, yi] = data[i]!;
     if (xi < viewMinX || xi > viewMaxX) continue;
-
-    const sx = toSX(xi);
-    const sy = toSY(yi);
-
-    if (count > 0) {
-      const j = count - 1;
-      const dx = sx - toSX(out[j * 3]!);
-      const dy = sy - toSY(out[j * 3 + 1]!);
-      if (dx * dx + dy * dy < MERGE_THRESHOLD_PX * MERGE_THRESHOLD_PX) {
-        const w = out[j * 3 + 2]!;
-        out[j * 3] = (out[j * 3]! * w + xi) / (w + 1);
-        out[j * 3 + 1] = (out[j * 3 + 1]! * w + yi) / (w + 1);
-        out[j * 3 + 2] = w + 1;
-        continue;
-      }
-    }
-
-    out[count * 3] = xi;
-    out[count * 3 + 1] = yi;
-    out[count * 3 + 2] = 1.0;
-    count++;
+    seed[seedCount * 3] = xi;
+    seed[seedCount * 3 + 1] = yi;
+    seed[seedCount * 3 + 2] = 1.0;
+    seedCount++;
   }
-  return out.subarray(0, count * 3);
+
+  let result = seed.subarray(0, seedCount * 3);
+  for (let pass = 0; pass < MERGE_PASSES; pass++) {
+    result = mergePass(result, toSX, toSY);
+  }
+  return result;
 }
 
 function uploadData(device: GPUDevice, data: [number, number][]) {
