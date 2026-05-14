@@ -14,7 +14,8 @@ const paletteColors = {
   c1: "#feffb8",
   c2: "#f28787",
 };
-let quantSteps = 6; // 0 = off
+let quantSteps = 12; // 0 = off
+let opacityCut = 0.03;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -96,6 +97,13 @@ export async function rasterizingExample() {
     .name("Quantize steps")
     .onChange((v: number) => {
       quantSteps = v;
+      writePaletteToBuffer(gpu.device, colorBuffer);
+    });
+  gui
+    .add({ opacityCut }, "opacityCut", 0.001, 0.15, 0.001)
+    .name("Opacity cut")
+    .onChange((v: number) => {
+      opacityCut = v;
       writePaletteToBuffer(gpu.device, colorBuffer);
     });
   const colorFolder = gui.addFolder("Color map");
@@ -369,7 +377,7 @@ function createReductionPipeline(device: GPUDevice) {
 function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
   const module = device.createShaderModule({
     code: /* wgsl */ `
-      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, _p1: f32, _p2: f32, _p3: f32 };
+      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, opacityCut: f32, _p2: f32, _p3: f32 };
 
       @group(0) @binding(0) var hdr: texture_2d<f32>;
       @group(0) @binding(1) var<storage, read> stats: array<u32, 1>;
@@ -398,7 +406,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         var t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = step(0.01, t);
+        let opacity = step(palette.opacityCut, t);
         if palette.steps > 1.0 { 
           t = floor(t * palette.steps) / (palette.steps - 1.0); 
         }
@@ -460,7 +468,24 @@ function writePaletteToBuffer(device: GPUDevice, buffer: GPUBuffer) {
   const [r0, g0, b0] = hexToLinear(paletteColors.c0);
   const [r1, g1, b1] = hexToLinear(paletteColors.c1);
   const [r2, g2, b2] = hexToLinear(paletteColors.c2);
-  data.set([r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0, quantSteps, 0, 0, 0]);
+  data.set([
+    r0,
+    g0,
+    b0,
+    0,
+    r1,
+    g1,
+    b1,
+    0,
+    r2,
+    g2,
+    b2,
+    0,
+    quantSteps,
+    opacityCut,
+    0,
+    0,
+  ]);
   device.queue.writeBuffer(buffer, 0, data);
 }
 
@@ -777,7 +802,7 @@ class ChartCanvas {
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText("pts/kernel", PAD, 0);
+    ctx.fillText("Pts/Kernel", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 
@@ -938,21 +963,31 @@ class ViewManager {
       (e) => {
         e.preventDefault();
         const rect = canvas.getBoundingClientRect();
-        const anchorRatio = Math.max(
-          0,
-          Math.min(1, (e.clientX - rect.left) / rect.width),
-        );
         const currentSpan = this.targetViewMaxX - this.targetViewMinX;
-        const zoomFactor = Math.exp(e.deltaY * 0.0015);
-        const nextSpan = Math.max(
-          this.minViewRangeX,
-          Math.min(this.fullRangeX, currentSpan * zoomFactor),
-        );
-        if (!Number.isFinite(nextSpan) || nextSpan === currentSpan) return;
-        const anchorX = this.targetViewMinX + anchorRatio * currentSpan;
-        this.targetViewMinX = anchorX - anchorRatio * nextSpan;
-        this.targetViewMaxX = this.targetViewMinX + nextSpan;
-        this.clampTarget();
+
+        const isLateral = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+
+        if (isLateral && e.deltaX !== 0) {
+          const deltaX = (e.deltaX / rect.width) * currentSpan;
+          this.targetViewMinX += deltaX;
+          this.targetViewMaxX += deltaX;
+          this.clampTarget();
+        } else if (e.deltaY !== 0) {
+          const anchorRatio = Math.max(
+            0,
+            Math.min(1, (e.clientX - rect.left) / rect.width),
+          );
+          const zoomFactor = Math.exp(e.deltaY * 0.0015);
+          const nextSpan = Math.max(
+            this.minViewRangeX,
+            Math.min(this.fullRangeX, currentSpan * zoomFactor),
+          );
+          if (!Number.isFinite(nextSpan) || nextSpan === currentSpan) return;
+          const anchorX = this.targetViewMinX + anchorRatio * currentSpan;
+          this.targetViewMinX = anchorX - anchorRatio * nextSpan;
+          this.targetViewMaxX = this.targetViewMinX + nextSpan;
+          this.clampTarget();
+        }
       },
       { passive: false },
     );
