@@ -679,9 +679,10 @@ class ChartCanvas {
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
 
+    const xPad = 20;
     for (let i = 0; i <= TICKS_X; i++) {
       const t = i / TICKS_X;
-      const x = t * hmW;
+      const x = xPad + t * (hmW - xPad * 2);
       const val = viewMinX + t * (viewMaxX - viewMinX);
 
       ctx.strokeStyle = "#bbb";
