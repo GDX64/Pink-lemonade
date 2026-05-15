@@ -1,5 +1,6 @@
 import GUI from "lil-gui";
 import { createNoiseData } from "../../chart/chart";
+import { downsample } from "./downsampling";
 
 const KERNEL_SIZE = 100;
 let kernelSize = KERNEL_SIZE;
@@ -529,54 +530,11 @@ function writePaletteToBuffer(device: GPUDevice, buffer: GPUBuffer) {
   ]);
   device.queue.writeBuffer(buffer, 0, data);
 }
-
 // prettier-ignore
 const QUAD_CORNERS = new Float32Array([
   -1, -1,   1, -1,  -1,  1,
   -1,  1,   1, -1,   1,  1,
 ]);
-
-const MERGE_THRESHOLD_PX = 10;
-const MERGE_PASSES = 2;
-
-function mergePass(
-  pts: Float32Array,
-  toSX: (x: number) => number,
-  toSY: (y: number) => number,
-): Float32Array<ArrayBuffer> {
-  const out = new Float32Array(pts.length);
-  let count = 0;
-  const n = pts.length / 3;
-
-  for (let i = 0; i < n; i++) {
-    const xi = pts[i * 3]!;
-    const yi = pts[i * 3 + 1]!;
-    const wi = pts[i * 3 + 2]!;
-    const sx = toSX(xi);
-    const sy = toSY(yi);
-
-    if (count > 0) {
-      const j = count - 1;
-      const dx = sx - toSX(out[j * 3]!);
-      const dy = sy - toSY(out[j * 3 + 1]!);
-      if (dx * dx + dy * dy < MERGE_THRESHOLD_PX * MERGE_THRESHOLD_PX) {
-        const wj = out[j * 3 + 2]!;
-        const wSum = wj + wi;
-        out[j * 3] = (out[j * 3]! * wj + xi * wi) / wSum;
-        out[j * 3 + 1] = (out[j * 3 + 1]! * wj + yi * wi) / wSum;
-        out[j * 3 + 2] = wSum;
-        continue;
-      }
-    }
-
-    out[count * 3] = xi;
-    out[count * 3 + 1] = yi;
-    out[count * 3 + 2] = wi;
-    count++;
-  }
-
-  return out.slice(0, count * 3);
-}
 
 function mergePoints(
   data: [number, number][],
@@ -586,13 +544,12 @@ function mergePoints(
   viewMaxY: number,
   screenW: number,
   screenH: number,
-): Float32Array<ArrayBuffer> {
+): Float32Array {
   const toSX = (x: number) =>
     ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
   const toSY = (y: number) =>
     ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
 
-  // seed: filter to visible points and assign weight 1
   const seed = new Float32Array(data.length * 3);
   let seedCount = 0;
   for (let i = 0; i < data.length; i++) {
@@ -604,11 +561,13 @@ function mergePoints(
     seedCount++;
   }
 
-  let result = seed.subarray(0, seedCount * 3);
-  for (let pass = 0; pass < MERGE_PASSES; pass++) {
-    result = mergePass(result, toSX, toSY);
-  }
-  return result;
+  return downsample({
+    points: seed.slice(0, seedCount * 3),
+    strategy: "merge",
+    toSX,
+    toSY,
+    mergeThreshold: 5,
+  });
 }
 
 function uploadData(device: GPUDevice, data: [number, number][]) {
