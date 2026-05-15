@@ -22,7 +22,7 @@ let mergeThreshold = 5;
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
-  const data = createNoiseData(100_000);
+  const data = createNoiseData(1000_000);
 
   let dataMinX = data[0]![0];
   let dataMaxX = data[0]![0];
@@ -968,7 +968,7 @@ class ViewManager {
     this.dataMinY = minY;
     this.dataMaxY = maxY;
     this.fullRangeX = Math.max(this.dataMaxX - this.dataMinX, 1e-6);
-    this.minViewRangeX = Math.max(this.fullRangeX / 512, 1e-6);
+    this.minViewRangeX = Math.max(this.fullRangeX / 2048, 1e-6);
     this.currentViewMinX = this.dataMinX;
     this.currentViewMaxX = this.dataMaxX;
     this.targetViewMinX = this.dataMinX;

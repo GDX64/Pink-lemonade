@@ -34,7 +34,7 @@ export function downsample(args: DownsampleArgs): Float32Array {
 // Merge strategy
 // ---------------------------------------------------------------------------
 
-const MERGE_PASSES = 3;
+const MERGE_PASSES = 1;
 
 function mergePass(
   pts: Float32Array,
@@ -192,15 +192,19 @@ function lttbDownsample({
 // ---------------------------------------------------------------------------
 
 function perpendicularDistanceSq(
-  px: number, py: number,
-  ax: number, ay: number,
-  bx: number, by: number,
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
 ): number {
   const dx = bx - ax;
   const dy = by - ay;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) {
-    const ex = px - ax, ey = py - ay;
+    const ex = px - ax,
+      ey = py - ay;
     return ex * ex + ey * ey;
   }
   const t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
@@ -228,8 +232,18 @@ function rdpRecursive(
   let maxDistSq = 0;
   let maxIdx = start;
   for (let i = start + 1; i < end; i++) {
-    const d = perpendicularDistanceSq(toSX(pts[i * 3]!), toSY(pts[i * 3 + 1]!), ax, ay, bx, by);
-    if (d > maxDistSq) { maxDistSq = d; maxIdx = i; }
+    const d = perpendicularDistanceSq(
+      toSX(pts[i * 3]!),
+      toSY(pts[i * 3 + 1]!),
+      ax,
+      ay,
+      bx,
+      by,
+    );
+    if (d > maxDistSq) {
+      maxDistSq = d;
+      maxIdx = i;
+    }
   }
 
   if (maxDistSq > epsilonSq) {
@@ -239,7 +253,12 @@ function rdpRecursive(
   }
 }
 
-function rdpDownsample({ points, toSX, toSY, epsilon = 1 }: DownsampleArgs): Float32Array {
+function rdpDownsample({
+  points,
+  toSX,
+  toSY,
+  epsilon = 1,
+}: DownsampleArgs): Float32Array {
   const n = points.length / 3;
   if (n <= 2) return points;
 
