@@ -17,6 +17,7 @@ const paletteColors = {
 };
 let quantSteps = 12; // 0 = off
 let opacityCut = 0.03;
+let mergeThreshold = 5;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -83,10 +84,28 @@ export async function rasterizingExample() {
   const viewManager = new ViewManager(data);
   viewManager.bindCanvas(canvas);
 
-  const controls = { kernelSize, fps: "0.0" };
+  let lastViewMinX = NaN;
+  let lastViewMaxX = NaN;
+  let lastViewMinY = NaN;
+  let lastViewMaxY = NaN;
+
+  const controls = {
+    kernelSize,
+    fps: "0.0",
+    totalPoints: data.length,
+    renderedPoints: 0,
+  };
   const gui = new GUI({ title: "Render Controls" });
   gui.domElement.style.right = `${AXIS_Y_W}px`;
   const fpsController = gui.add(controls, "fps").name("FPS").disable();
+  const totalPointsController = gui
+    .add(controls, "totalPoints")
+    .name("Total points")
+    .disable();
+  const renderedPointsController = gui
+    .add(controls, "renderedPoints")
+    .name("Rendered points")
+    .disable();
   gui
     .add(controls, "kernelSize", 1, 300, 1)
     .name("Kernel size (R)")
@@ -107,6 +126,13 @@ export async function rasterizingExample() {
       opacityCut = v;
       writePaletteToBuffer(gpu.device, colorBuffer);
     });
+  gui
+    .add({ mergeThreshold }, "mergeThreshold", 2, 15, 1)
+    .name("Merge threshold (px)")
+    .onChange((v: number) => {
+      mergeThreshold = v;
+      lastViewMinX = NaN; // force re-merge
+    });
   const colorFolder = gui.addFolder("Color map");
   colorFolder
     .addColor(paletteColors, "c0")
@@ -126,10 +152,6 @@ export async function rasterizingExample() {
   let frameCount = 0;
   let readbackPending = false;
   let lastMergedCount = 0;
-  let lastViewMinX = NaN;
-  let lastViewMaxX = NaN;
-  let lastViewMinY = NaN;
-  let lastViewMaxY = NaN;
 
   function scheduleReadback() {
     if (readbackPending) return;
@@ -208,6 +230,8 @@ export async function rasterizingExample() {
       );
       gpu.device.queue.writeBuffer(instanceBuffer, 0, merged);
       lastMergedCount = merged.length / 3;
+      controls.renderedPoints = lastMergedCount;
+      renderedPointsController.updateDisplay();
       chartCanvas.setMergedPoints(merged);
       lastViewMinX = viewMinX;
       lastViewMaxX = viewMaxX;
@@ -566,7 +590,7 @@ function mergePoints(
     strategy: "merge",
     toSX,
     toSY,
-    mergeThreshold: 5,
+    mergeThreshold,
   });
 }
 
