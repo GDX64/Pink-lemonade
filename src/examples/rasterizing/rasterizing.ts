@@ -1,8 +1,7 @@
 import GUI from "lil-gui";
 import { createNoiseData } from "../../chart/chart";
 import { downsample } from "./downsampling";
-
-let kernelSize = 150;
+import jsonData from "./data.json";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 30; // px reserved on the bottom for the X axis
@@ -14,6 +13,8 @@ const paletteColors = {
   c1: "#feffb8",
   c2: "#f28787",
 };
+
+let kernelSize = 150;
 let quantSteps = 5;
 let opacityCut = 0.06;
 let mergeThreshold = 10;
@@ -21,19 +22,22 @@ let mergeThreshold = 10;
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
-  const data = createNoiseData(100_000);
+  // const data = createNoiseData(100_000);
+  const data = jsonData.data as [number, number, number][];
 
-  // pre-pack into Float64Array once — x is sorted, weight=1
+  // normalize x to [0, 1] to avoid float precision loss in GPU/math
+  const xMin = data[0]![0];
+  const xMax = data[data.length - 1]![0];
+  const xScale = xMax - xMin || 1; // original span in ms; used to denormalize for display
+  debugger;
+
+  // pre-pack into Float64Array once — x is sorted and normalized
   const dataF64 = new Float64Array(data.length * 3);
-  let dataMinX = data[0]![0];
-  let dataMaxX = data[0]![0];
   for (let i = 0; i < data.length; i++) {
-    const [x, y] = data[i]!;
-    dataF64[i * 3] = x;
+    const [x, y, w] = data[i]!;
+    dataF64[i * 3] = (x - xMin) / xScale;
     dataF64[i * 3 + 1] = y;
-    dataF64[i * 3 + 2] = 1.0;
-    dataMinX = Math.min(dataMinX, x);
-    dataMaxX = Math.max(dataMaxX, x);
+    dataF64[i * 3 + 2] = w ?? 1.0;
   }
 
   const gpu = await initWebGPU(canvas);
@@ -86,7 +90,7 @@ export async function rasterizingExample() {
     colorBuffer,
   );
 
-  const viewManager = new ViewManager(data);
+  const viewManager = new ViewManager(dataF64);
   viewManager.bindCanvas(canvas);
 
   let lastViewMinX = NaN;
@@ -132,7 +136,7 @@ export async function rasterizingExample() {
       writePaletteToBuffer(gpu.device, colorBuffer);
     });
   gui
-    .add({ mergeThreshold }, "mergeThreshold", 2, 15, 1)
+    .add({ mergeThreshold }, "mergeThreshold", 2, 50, 1)
     .name("Merge threshold (px)")
     .onChange((v: number) => {
       mergeThreshold = v;
@@ -151,7 +155,7 @@ export async function rasterizingExample() {
     .addColor(paletteColors, "c2")
     .name("High")
     .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
-  const chartCanvas = new ChartCanvas(data);
+  const chartCanvas = new ChartCanvas(data, xMin, xScale);
   let lastTime = performance.now();
   let fpsAccTime = 0;
   let frameCount = 0;
@@ -615,7 +619,7 @@ function mergePoints(
   return new Float32Array(merged);
 }
 
-function uploadData(device: GPUDevice, data: [number, number][]) {
+function uploadData(device: GPUDevice, data: [number, number, number][]) {
   const quadBuffer = device.createBuffer({
     size: QUAD_CORNERS.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -668,6 +672,11 @@ function updateUniform(
   );
 }
 
+function formatTimestamp(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
   return t * t * (3 - 2 * t);
@@ -697,6 +706,8 @@ class ChartCanvas {
   private readonly ctx: CanvasRenderingContext2D;
   private mergedPoints: Float32Array = new Float32Array(0);
   private maxVal = 1;
+  private readonly xMin: number;
+  private readonly xScale: number;
 
   private static readonly BAR_W = 16;
   private static readonly BAR_H = 160;
@@ -711,7 +722,9 @@ class ChartCanvas {
   private static readonly LEGEND_H =
     ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
 
-  constructor(_data: [number, number][]) {
+  constructor(_data: [number, number, number][], xMin: number, xScale: number) {
+    this.xMin = xMin;
+    this.xScale = xScale;
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
       "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
@@ -841,7 +854,11 @@ class ChartCanvas {
       ctx.stroke();
 
       ctx.fillStyle = "#333";
-      ctx.fillText(val.toFixed(2), x, stripY + PAD + 5);
+      ctx.fillText(
+        formatTimestamp(val * this.xScale + this.xMin),
+        x,
+        stripY + PAD + 5,
+      );
     }
     ctx.restore();
   }
@@ -955,9 +972,7 @@ function resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
 }
 
 class ViewManager {
-  private readonly data: [number, number][];
-  private readonly dataMinX: number;
-  private readonly dataMaxX: number;
+  private readonly pts: Float64Array;
   private readonly dataMinY: number;
   private readonly dataMaxY: number;
   private readonly fullRangeX: number;
@@ -972,39 +987,39 @@ class ViewManager {
   private lastPointerX = 0;
   private readonly interpolationRate = 12;
 
-  constructor(data: [number, number][]) {
-    this.data = data;
-    let minX = Infinity,
-      maxX = -Infinity;
+  constructor(pts: Float64Array) {
+    this.pts = pts;
+    const n = pts.length / 3;
     let minY = Infinity,
       maxY = -Infinity;
-    for (const [x, y] of data) {
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
+    for (let i = 0; i < n; i++) {
+      const y = pts[i * 3 + 1]!;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
-    this.dataMinX = minX;
-    this.dataMaxX = maxX;
+    // x is normalized to [0, 1] and sorted
     this.dataMinY = minY;
     this.dataMaxY = maxY;
-    this.fullRangeX = Math.max(this.dataMaxX - this.dataMinX, 1e-6);
-    this.minViewRangeX = Math.max(this.fullRangeX / 2 ** 16, 1e-6);
-    this.currentViewMinX = this.dataMinX;
-    this.currentViewMaxX = this.dataMaxX;
-    this.targetViewMinX = this.dataMinX;
-    this.targetViewMaxX = this.dataMaxX;
+    this.fullRangeX = 1; // x span is always 1 after normalization
+    this.minViewRangeX = Math.max(1 / 2 ** 16, 1e-9);
+    this.currentViewMinX = 0;
+    this.currentViewMaxX = 1;
+    this.targetViewMinX = 0;
+    this.targetViewMaxX = 1;
     this.currentViewMinY = minY;
     this.currentViewMaxY = maxY;
   }
 
   private computeVisibleYRange(): [number, number] {
+    const { pts } = this;
+    const startIdx = lowerBound(pts, this.currentViewMinX);
+    const endIdx = upperBound(pts, this.currentViewMaxX);
     let minY = Infinity,
       maxY = -Infinity;
-    for (const [x, y] of this.data) {
-      if (x < this.currentViewMinX || x > this.currentViewMaxX) continue;
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
+    for (let i = startIdx; i < endIdx; i++) {
+      const y = pts[i * 3 + 1]!;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
     if (!isFinite(minY)) return [this.dataMinY, this.dataMaxY];
     return [minY, maxY];
@@ -1108,10 +1123,7 @@ class ViewManager {
       this.targetViewMaxX - this.targetViewMinX,
       this.minViewRangeX,
     );
-    this.targetViewMinX = Math.max(
-      this.dataMinX,
-      Math.min(this.targetViewMinX, this.dataMaxX - span),
-    );
+    this.targetViewMinX = Math.max(0, Math.min(this.targetViewMinX, 1 - span));
     this.targetViewMaxX = this.targetViewMinX + span;
   }
 }
