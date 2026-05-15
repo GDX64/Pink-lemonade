@@ -2,7 +2,7 @@ export type DownsampleStrategy = "merge" | "lttb" | "rdp";
 
 export interface DownsampleArgs {
   /** Packed [x, y, weight] triples, already filtered to the visible range. */
-  points: Float32Array;
+  points: Float64Array;
   strategy: DownsampleStrategy;
   /** Maps a data-space x to screen pixels. */
   toSX: (x: number) => number;
@@ -19,7 +19,7 @@ export interface DownsampleArgs {
   epsilon?: number;
 }
 
-export function downsample(args: DownsampleArgs): Float32Array {
+export function downsample(args: DownsampleArgs): Float64Array {
   switch (args.strategy) {
     case "merge":
       return mergeDownsample(args);
@@ -34,15 +34,15 @@ export function downsample(args: DownsampleArgs): Float32Array {
 // Merge strategy
 // ---------------------------------------------------------------------------
 
-const MERGE_PASSES = 1;
+const MERGE_PASSES = 2;
 
 function mergePass(
-  pts: Float32Array,
+  pts: Float64Array,
   toSX: (x: number) => number,
   toSY: (y: number) => number,
   thresholdPx: number,
-): Float32Array {
-  const out = new Float32Array(pts.length);
+): Float64Array {
+  const out = new Float64Array(pts.length);
   let count = 0;
   const n = pts.length / 3;
   const t2 = thresholdPx * thresholdPx;
@@ -82,7 +82,7 @@ function mergeDownsample({
   toSX,
   toSY,
   mergeThreshold,
-}: DownsampleArgs): Float32Array {
+}: DownsampleArgs): Float64Array {
   let result = points;
   for (let pass = 0; pass < MERGE_PASSES; pass++) {
     result = mergePass(result, toSX, toSY, mergeThreshold ?? 1);
@@ -110,12 +110,12 @@ function lttbDownsample({
   toSX,
   toSY,
   threshold = 10,
-}: DownsampleArgs): Float32Array {
+}: DownsampleArgs): Float64Array {
   const n = points.length / 3;
   const targetCount = Math.round(threshold);
   if (targetCount >= n) return points;
 
-  const out = new Float32Array(targetCount * 3);
+  const out = new Float64Array(targetCount * 3);
   let outIdx = 0;
 
   const write = (i: number, extraWeight = 0) => {
@@ -214,7 +214,7 @@ function perpendicularDistanceSq(
 }
 
 function rdpRecursive(
-  pts: Float32Array,
+  pts: Float64Array,
   toSX: (x: number) => number,
   toSY: (y: number) => number,
   start: number,
@@ -258,7 +258,7 @@ function rdpDownsample({
   toSX,
   toSY,
   epsilon = 1,
-}: DownsampleArgs): Float32Array {
+}: DownsampleArgs): Float64Array {
   const n = points.length / 3;
   if (n <= 2) return points;
 
@@ -269,7 +269,7 @@ function rdpDownsample({
   rdpRecursive(points, toSX, toSY, 0, n - 1, epsilon * epsilon, keep);
 
   // accumulate dropped weights into the next kept point
-  const weights = new Float32Array(n);
+  const weights = new Float64Array(n);
   for (let i = 0; i < n; i++) weights[i] = points[i * 3 + 2]!;
   let pending = 0;
   for (let i = 0; i < n; i++) {
@@ -284,7 +284,7 @@ function rdpDownsample({
   let count = 0;
   for (let i = 0; i < n; i++) count += keep[i]!;
 
-  const out = new Float32Array(count * 3);
+  const out = new Float64Array(count * 3);
   let outIdx = 0;
   for (let i = 0; i < n; i++) {
     if (keep[i]) {

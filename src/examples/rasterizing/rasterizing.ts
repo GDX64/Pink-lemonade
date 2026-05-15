@@ -2,8 +2,7 @@ import GUI from "lil-gui";
 import { createNoiseData } from "../../chart/chart";
 import { downsample } from "./downsampling";
 
-const KERNEL_SIZE = 100;
-let kernelSize = KERNEL_SIZE;
+let kernelSize = 150;
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 30; // px reserved on the bottom for the X axis
@@ -15,18 +14,24 @@ const paletteColors = {
   c1: "#feffb8",
   c2: "#f28787",
 };
-let quantSteps = 12; // 0 = off
+let quantSteps = 5;
 let opacityCut = 0.03;
-let mergeThreshold = 5;
+let mergeThreshold = 10;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
-  const data = createNoiseData(1000_000);
+  const data = createNoiseData(100_000);
 
+  // pre-pack into Float64Array once — x is sorted, weight=1
+  const dataF64 = new Float64Array(data.length * 3);
   let dataMinX = data[0]![0];
   let dataMaxX = data[0]![0];
-  for (const [x] of data) {
+  for (let i = 0; i < data.length; i++) {
+    const [x, y] = data[i]!;
+    dataF64[i * 3] = x;
+    dataF64[i * 3 + 1] = y;
+    dataF64[i * 3 + 2] = 1.0;
     dataMinX = Math.min(dataMinX, x);
     dataMaxX = Math.max(dataMaxX, x);
   }
@@ -220,7 +225,7 @@ export async function rasterizingExample() {
       viewMaxY !== lastViewMaxY
     ) {
       const merged = mergePoints(
-        data,
+        dataF64,
         viewMinX,
         viewMaxX,
         viewMinY,
@@ -560,8 +565,30 @@ const QUAD_CORNERS = new Float32Array([
   -1,  1,   1, -1,   1,  1,
 ]);
 
+function lowerBound(pts: Float64Array, x: number): number {
+  let lo = 0,
+    hi = pts.length / 3;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (pts[mid * 3]! < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(pts: Float64Array, x: number): number {
+  let lo = 0,
+    hi = pts.length / 3;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (pts[mid * 3]! <= x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function mergePoints(
-  data: [number, number][],
+  pts: Float64Array,
   viewMinX: number,
   viewMaxX: number,
   viewMinY: number,
@@ -574,24 +601,18 @@ function mergePoints(
   const toSY = (y: number) =>
     ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
 
-  const seed = new Float32Array(data.length * 3);
-  let seedCount = 0;
-  for (let i = 0; i < data.length; i++) {
-    const [xi, yi] = data[i]!;
-    if (xi < viewMinX || xi > viewMaxX) continue;
-    seed[seedCount * 3] = xi;
-    seed[seedCount * 3 + 1] = yi;
-    seed[seedCount * 3 + 2] = 1.0;
-    seedCount++;
-  }
+  const startIdx = lowerBound(pts, viewMinX);
+  const endIdx = upperBound(pts, viewMaxX);
 
-  return downsample({
-    points: seed.slice(0, seedCount * 3),
+  const merged = downsample({
+    points: pts.slice(startIdx * 3, endIdx * 3),
     strategy: "merge",
     toSX,
     toSY,
     mergeThreshold,
   });
+
+  return new Float32Array(merged);
 }
 
 function uploadData(device: GPUDevice, data: [number, number][]) {
@@ -968,7 +989,7 @@ class ViewManager {
     this.dataMinY = minY;
     this.dataMaxY = maxY;
     this.fullRangeX = Math.max(this.dataMaxX - this.dataMinX, 1e-6);
-    this.minViewRangeX = Math.max(this.fullRangeX / 2048, 1e-6);
+    this.minViewRangeX = Math.max(this.fullRangeX / 2 ** 16, 1e-6);
     this.currentViewMinX = this.dataMinX;
     this.currentViewMaxX = this.dataMaxX;
     this.targetViewMinX = this.dataMinX;
