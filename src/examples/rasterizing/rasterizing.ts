@@ -17,13 +17,14 @@ const paletteColors = {
 let kernelSize = 150;
 let quantSteps = 5;
 let opacityCut = 0.06;
-let mergeThreshold = 10;
+let mergeThreshold = 30;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
   // const data = createNoiseData(100_000);
-  const data = jsonData.data as [number, number, number][];
+  const data = (jsonData as any).data as [number, number, number][];
+  data.sort((a, b) => a[0]! - b[0]!); // sort by x ascending
 
   // normalize x to [0, 1] to avoid float precision loss in GPU/math
   const xMin = data[0]![0];
@@ -614,6 +615,7 @@ function mergePoints(
     toSX,
     toSY,
     mergeThreshold,
+    threshold: 1000,
   });
 
   return new Float32Array(merged);
