@@ -15,7 +15,7 @@ const paletteColors = {
   c2: "#f28787",
 };
 let quantSteps = 5;
-let opacityCut = 0.03;
+let opacityCut = 0.06;
 let mergeThreshold = 10;
 
 export async function rasterizingExample() {
