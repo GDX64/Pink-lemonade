@@ -1,7 +1,7 @@
 import GUI from "lil-gui";
 // import { createNoiseData } from "../../chart/chart";
 import { downsample } from "./downsampling";
-import jsonData from "./data.json";
+import jsonData from "./data.json?url";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 30; // px reserved on the bottom for the X axis
@@ -23,7 +23,9 @@ export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
   // const data = createNoiseData(100_000);
-  const data = (jsonData as any).data as [number, number, number][];
+  const { data }: { data: [number, number, number][] } = await (
+    await fetch(jsonData)
+  ).json();
   data.sort((a, b) => a[0]! - b[0]!); // sort by x ascending
 
   // normalize x to [0, 1] to avoid float precision loss in GPU/math
