@@ -1,5 +1,5 @@
 import GUI from "lil-gui";
-import { createNoiseData } from "../../chart/chart";
+// import { createNoiseData } from "../../chart/chart";
 import { downsample } from "./downsampling";
 import jsonData from "./data.json";
 
@@ -14,10 +14,10 @@ const paletteColors = {
   c2: "#f28787",
 };
 
-let kernelSize = 150;
+let kernelSize = 100;
 let quantSteps = 5;
 let opacityCut = 0.06;
-let mergeThreshold = 30;
+let mergeThreshold = 20;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();

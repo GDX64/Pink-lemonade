@@ -45,9 +45,11 @@ function mergePass(
   const n = pts.length / 3;
   const t2 = thresholdPx * thresholdPx;
 
-  // Indices of points currently accumulated in the open cluster.
-  // We store them to re-check each against the evolving centroid.
-  const clusterIdx: number[] = [];
+  // Track only the first point of the open cluster — it's most likely to be
+  // left behind as the centroid drifts forward with each new addition.
+  let hasCluster = false;
+  let firstX = 0;
+  let firstY = 0;
   let clusterX = 0;
   let clusterY = 0;
   let clusterW = 0;
@@ -57,7 +59,7 @@ function mergePass(
     out[count * 3 + 1] = clusterY;
     out[count * 3 + 2] = clusterW;
     count++;
-    clusterIdx.length = 0;
+    hasCluster = false;
   };
 
   for (let i = 0; i < n; i++) {
@@ -65,9 +67,10 @@ function mergePass(
     const yi = pts[i * 3 + 1]!;
     const wi = pts[i * 3 + 2]!;
 
-    if (clusterIdx.length === 0) {
-      // Start a new cluster with this point.
-      clusterIdx.push(i);
+    if (!hasCluster) {
+      hasCluster = true;
+      firstX = xi;
+      firstY = yi;
       clusterX = xi;
       clusterY = yi;
       clusterW = wi;
@@ -81,39 +84,28 @@ function mergePass(
     const newSX = toSX(newX);
     const newSY = toSY(newY);
 
-    // Check that every point already in the cluster stays within threshold
-    // of the new centroid.
-    let fits = true;
-    for (const k of clusterIdx) {
-      const dx = toSX(pts[k * 3]!) - newSX;
-      const dy = toSY(pts[k * 3 + 1]!) - newSY;
-      if (dx * dx + dy * dy >= t2) {
-        fits = false;
-        break;
-      }
-    }
-    // Also check the incoming point itself.
-    if (fits) {
-      const dx = toSX(xi) - newSX;
-      const dy = toSY(yi) - newSY;
-      if (dx * dx + dy * dy >= t2) fits = false;
-    }
+    // Check the first cluster point (most likely to exceed threshold) and the incoming point.
+    const dfx = toSX(firstX) - newSX;
+    const dfy = toSY(firstY) - newSY;
+    const dix = toSX(xi) - newSX;
+    const diy = toSY(yi) - newSY;
 
-    if (fits) {
-      clusterIdx.push(i);
+    if (dfx * dfx + dfy * dfy < t2 && dix * dix + diy * diy < t2) {
       clusterX = newX;
       clusterY = newY;
       clusterW = newW;
     } else {
       flushCluster();
-      clusterIdx.push(i);
+      hasCluster = true;
+      firstX = xi;
+      firstY = yi;
       clusterX = xi;
       clusterY = yi;
       clusterW = wi;
     }
   }
 
-  if (clusterIdx.length > 0) flushCluster();
+  if (hasCluster) flushCluster();
 
   return out.slice(0, count * 3);
 }
