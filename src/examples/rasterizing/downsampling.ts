@@ -34,8 +34,6 @@ export function downsample(args: DownsampleArgs): Float64Array {
 // Merge strategy
 // ---------------------------------------------------------------------------
 
-const MERGE_PASSES = 2;
-
 function mergePass(
   pts: Float64Array,
   toSX: (x: number) => number,
@@ -47,32 +45,75 @@ function mergePass(
   const n = pts.length / 3;
   const t2 = thresholdPx * thresholdPx;
 
+  // Indices of points currently accumulated in the open cluster.
+  // We store them to re-check each against the evolving centroid.
+  const clusterIdx: number[] = [];
+  let clusterX = 0;
+  let clusterY = 0;
+  let clusterW = 0;
+
+  const flushCluster = () => {
+    out[count * 3] = clusterX;
+    out[count * 3 + 1] = clusterY;
+    out[count * 3 + 2] = clusterW;
+    count++;
+    clusterIdx.length = 0;
+  };
+
   for (let i = 0; i < n; i++) {
     const xi = pts[i * 3]!;
     const yi = pts[i * 3 + 1]!;
     const wi = pts[i * 3 + 2]!;
-    const sx = toSX(xi);
-    const sy = toSY(yi);
 
-    if (count > 0) {
-      const j = count - 1;
-      const dx = sx - toSX(out[j * 3]!);
-      const dy = sy - toSY(out[j * 3 + 1]!);
-      if (dx * dx + dy * dy < t2) {
-        const wj = out[j * 3 + 2]!;
-        const wSum = wj + wi;
-        out[j * 3] = (out[j * 3]! * wj + xi * wi) / wSum;
-        out[j * 3 + 1] = (out[j * 3 + 1]! * wj + yi * wi) / wSum;
-        out[j * 3 + 2] = wSum;
-        continue;
-      }
+    if (clusterIdx.length === 0) {
+      // Start a new cluster with this point.
+      clusterIdx.push(i);
+      clusterX = xi;
+      clusterY = yi;
+      clusterW = wi;
+      continue;
     }
 
-    out[count * 3] = xi;
-    out[count * 3 + 1] = yi;
-    out[count * 3 + 2] = wi;
-    count++;
+    // Hypothetical centroid if we absorb point i.
+    const newW = clusterW + wi;
+    const newX = (clusterX * clusterW + xi * wi) / newW;
+    const newY = (clusterY * clusterW + yi * wi) / newW;
+    const newSX = toSX(newX);
+    const newSY = toSY(newY);
+
+    // Check that every point already in the cluster stays within threshold
+    // of the new centroid.
+    let fits = true;
+    for (const k of clusterIdx) {
+      const dx = toSX(pts[k * 3]!) - newSX;
+      const dy = toSY(pts[k * 3 + 1]!) - newSY;
+      if (dx * dx + dy * dy >= t2) {
+        fits = false;
+        break;
+      }
+    }
+    // Also check the incoming point itself.
+    if (fits) {
+      const dx = toSX(xi) - newSX;
+      const dy = toSY(yi) - newSY;
+      if (dx * dx + dy * dy >= t2) fits = false;
+    }
+
+    if (fits) {
+      clusterIdx.push(i);
+      clusterX = newX;
+      clusterY = newY;
+      clusterW = newW;
+    } else {
+      flushCluster();
+      clusterIdx.push(i);
+      clusterX = xi;
+      clusterY = yi;
+      clusterW = wi;
+    }
   }
+
+  if (clusterIdx.length > 0) flushCluster();
 
   return out.slice(0, count * 3);
 }
@@ -83,11 +124,7 @@ function mergeDownsample({
   toSY,
   mergeThreshold,
 }: DownsampleArgs): Float64Array {
-  let result = points;
-  for (let pass = 0; pass < MERGE_PASSES; pass++) {
-    result = mergePass(result, toSX, toSY, mergeThreshold ?? 1);
-  }
-  return result;
+  return mergePass(points, toSX, toSY, mergeThreshold ?? 1);
 }
 
 // ---------------------------------------------------------------------------
