@@ -23,25 +23,7 @@ export async function rasterizingExample() {
   const canvas = createCanvas();
   //   canvas.style.opacity = "0.75";
   // const data = createNoiseData(100_000);
-  const { data }: { data: [number, number, number][] } = await (
-    await fetch(jsonData)
-  ).json();
-  data.sort((a, b) => a[0]! - b[0]!); // sort by x ascending
-
-  // normalize x to [0, 1] to avoid float precision loss in GPU/math
-  const xMin = data[0]![0];
-  const xMax = data[data.length - 1]![0];
-  const xScale = xMax - xMin || 1; // original span in ms; used to denormalize for display
-  debugger;
-
-  // pre-pack into Float64Array once — x is sorted and normalized
-  const dataF64 = new Float64Array(data.length * 3);
-  for (let i = 0; i < data.length; i++) {
-    const [x, y, w] = data[i]!;
-    dataF64[i * 3] = (x - xMin) / xScale;
-    dataF64[i * 3 + 1] = y;
-    dataF64[i * 3 + 2] = w ?? 1.0;
-  }
+  const { n, dataF64, xMin, xScale } = await loadData();
 
   const gpu = await initWebGPU(canvas);
   const accumulationPipeline = createAccumulationPipeline(gpu.device);
@@ -49,7 +31,7 @@ export async function rasterizingExample() {
   const tonemapPipeline = createTonemapPipeline(gpu.device, gpu.format);
   const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
     gpu.device,
-    data,
+    n,
   );
 
   const statsBuffer = gpu.device.createBuffer({
@@ -104,7 +86,7 @@ export async function rasterizingExample() {
   const controls = {
     kernelSize,
     fps: "0.0",
-    totalPoints: data.length,
+    totalPoints: n,
     renderedPoints: 0,
   };
   const gui = new GUI({ title: "Render Controls" });
@@ -158,7 +140,7 @@ export async function rasterizingExample() {
     .addColor(paletteColors, "c2")
     .name("High")
     .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
-  const chartCanvas = new ChartCanvas(data, xMin, xScale);
+  const chartCanvas = new ChartCanvas(xMin, xScale);
   let lastTime = performance.now();
   let fpsAccTime = 0;
   let frameCount = 0;
@@ -312,6 +294,63 @@ export async function rasterizingExample() {
       colorBuffer,
     );
   });
+}
+
+async function loadData() {
+  const { base64: base64Data }: { base64: string } = await (
+    await fetch(jsonData)
+  ).json();
+  const other = base64Data.replaceAll("'", "");
+  const decoded = atob(other);
+  const buffer = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) {
+    buffer[i] = decoded.charCodeAt(i);
+  }
+  const raw = new Float64Array(buffer.buffer);
+
+  // data is flat: [time, price, buyQty, sellQty, ...] — sort by time ascending
+  const n = raw.length / 4;
+  const indices = Array.from({ length: n }, (_, i) => i).sort(
+    (a, b) => raw[a * 4]! - raw[b * 4]!,
+  );
+  const data = new Float64Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const src = indices[i]! * 4;
+    data.set(raw.subarray(src, src + 4), i * 4);
+  }
+
+  // filter to only rows from day 15 of their month
+  const day15Rows: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(data[i * 4]!);
+    if (d.getUTCDate() === 15) day15Rows.push(i);
+  }
+
+  const filtered = new Float64Array(day15Rows.length * 4);
+  for (let i = 0; i < day15Rows.length; i++) {
+    const src = day15Rows[i]! * 4;
+    filtered.set(data.subarray(src, src + 4), i * 4);
+  }
+
+  const nFiltered = day15Rows.length;
+
+  // normalize x to [0, 1] to avoid float precision loss in GPU/math
+  const xMin = filtered[0]!;
+  const xMax = filtered[(nFiltered - 1) * 4]!;
+  const xScale = xMax - xMin || 1; // original span in ms; used to denormalize for display
+
+  // pre-pack into Float64Array once — x is sorted and normalized, weight = buyQty + sellQty
+  const dataF64 = new Float64Array(nFiltered * 3);
+  for (let i = 0; i < nFiltered; i++) {
+    const time = filtered[i * 4]!;
+    const price = filtered[i * 4 + 1]!;
+    const buyQty = filtered[i * 4 + 2]!;
+    const sellQty = filtered[i * 4 + 3]!;
+    dataF64[i * 3] = (time - xMin) / xScale;
+    dataF64[i * 3 + 1] = price;
+    dataF64[i * 3 + 2] = buyQty + sellQty;
+  }
+  return { n: nFiltered, dataF64, xMin, xScale };
 }
 
 async function initWebGPU(canvas: HTMLCanvasElement) {
@@ -623,7 +662,7 @@ function mergePoints(
   return new Float32Array(merged);
 }
 
-function uploadData(device: GPUDevice, data: [number, number, number][]) {
+function uploadData(device: GPUDevice, pointCount: number) {
   const quadBuffer = device.createBuffer({
     size: QUAD_CORNERS.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -631,7 +670,7 @@ function uploadData(device: GPUDevice, data: [number, number, number][]) {
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
   const instanceBuffer = device.createBuffer({
-    size: data.length * 3 * 4, // worst case: no merging
+    size: pointCount * 3 * 4, // worst case: no merging
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
@@ -726,7 +765,7 @@ class ChartCanvas {
   private static readonly LEGEND_H =
     ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
 
-  constructor(_data: [number, number, number][], xMin: number, xScale: number) {
+  constructor(xMin: number, xScale: number) {
     this.xMin = xMin;
     this.xScale = xScale;
     this.canvas = document.createElement("canvas");
