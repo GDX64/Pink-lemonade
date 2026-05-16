@@ -18,6 +18,7 @@ let kernelSize = 100;
 let quantSteps = 5;
 let opacityCut = 0.06;
 let mergeThreshold = 20;
+let paletteLevel = 0.5;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -128,6 +129,13 @@ export async function rasterizingExample() {
       lastViewMinX = NaN; // force re-merge
     });
   const colorFolder = gui.addFolder("Color map");
+  colorFolder
+    .add({ paletteLevel }, "paletteLevel", 0.01, 0.99, 0.01)
+    .name("Mid level")
+    .onChange((v: number) => {
+      paletteLevel = v;
+      writePaletteToBuffer(gpu.device, colorBuffer);
+    });
   colorFolder
     .addColor(paletteColors, "c0")
     .name("Low")
@@ -494,7 +502,7 @@ function createReductionPipeline(device: GPUDevice) {
 function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
   const module = device.createShaderModule({
     code: /* wgsl */ `
-      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, opacityCut: f32, _p2: f32, _p3: f32 };
+      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, opacityCut: f32, level: f32, _p3: f32 };
 
       @group(0) @binding(0) var hdr: texture_2d<f32>;
       @group(0) @binding(1) var<storage, read> stats: array<u32, 1>;
@@ -512,8 +520,8 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
       fn mapColor(value: f32) -> vec3f {
         let x = clamp(value, 0.0, 1.0);
-        let t1 = smoothstep(0.0, 0.5, x);
-        let t2 = smoothstep(0.5, 1.0, x);
+        let t1 = smoothstep(0.0, palette.level, x);
+        let t2 = smoothstep(palette.level, 1.0, x);
         return mix(mix(palette.c0.rgb, palette.c1.rgb, t1), palette.c2.rgb, t2);
       }
 
@@ -600,7 +608,7 @@ function writePaletteToBuffer(device: GPUDevice, buffer: GPUBuffer) {
     0,
     quantSteps,
     opacityCut,
-    0,
+    paletteLevel,
     0,
   ]);
   device.queue.writeBuffer(buffer, 0, data);
@@ -733,8 +741,8 @@ function heatmapColor(value: number): [number, number, number] {
   const c0 = [r0, g0, b0];
   const c1 = [r1, g1, b1];
   const c2 = [r2, g2, b2];
-  const t1 = smoothstep(0.0, 0.5, x);
-  const t2 = smoothstep(0.5, 1.0, x);
+  const t1 = smoothstep(0.0, paletteLevel, x);
+  const t2 = smoothstep(paletteLevel, 1.0, x);
   const mid = c0.map((v, i) => v + (c1[i]! - v) * t1);
   const rgb = mid.map((v, i) => v + (c2[i]! - v) * t2);
   return [
