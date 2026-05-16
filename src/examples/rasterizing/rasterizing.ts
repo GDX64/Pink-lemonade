@@ -149,6 +149,10 @@ export async function rasterizingExample() {
     .name("High")
     .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
   const chartCanvas = new ChartCanvas(xMin, xScale);
+  chartCanvas.setOnLevelChange((v) => {
+    paletteLevel = v;
+    writePaletteToBuffer(gpu.device, colorBuffer);
+  });
   let lastTime = performance.now();
   let fpsAccTime = 0;
   let frameCount = 0;
@@ -759,6 +763,8 @@ class ChartCanvas {
   private maxVal = 1;
   private readonly xMin: number;
   private readonly xScale: number;
+  private onLevelChange: ((level: number) => void) | null = null;
+  private isDraggingLevel = false;
 
   private static readonly BAR_W = 16;
   private static readonly BAR_H = 160;
@@ -773,6 +779,10 @@ class ChartCanvas {
   private static readonly LEGEND_H =
     ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
 
+  // legend origin in CSS pixels (set during render, used for hit-testing)
+  private legendBarTop = 0;
+  private legendBarLeft = 0;
+
   constructor(xMin: number, xScale: number) {
     this.xMin = xMin;
     this.xScale = xScale;
@@ -781,6 +791,58 @@ class ChartCanvas {
       "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
     document.body.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
+    this.bindLevelDrag();
+  }
+
+  setOnLevelChange(cb: (level: number) => void) {
+    this.onLevelChange = cb;
+  }
+
+  private bindLevelDrag() {
+    const { BAR_H } = ChartCanvas;
+
+    const hitTest = (cssX: number, cssY: number) => {
+      const relY = cssY - this.legendBarTop;
+      const relX = cssX - this.legendBarLeft;
+      const triY = (1 - paletteLevel) * (BAR_H - 1);
+      return (
+        relX >= 0 && relX <= ChartCanvas.BAR_W &&
+        relY >= triY - 4 && relY <= triY + 4
+      );
+    };
+
+    const levelFromY = (cssY: number) => {
+      const relY = cssY - this.legendBarTop;
+      return Math.min(1, Math.max(0, 1 - relY / (BAR_H - 1)));
+    };
+
+    window.addEventListener("pointerdown", (e) => {
+      if (!hitTest(e.clientX, e.clientY)) return;
+      this.isDraggingLevel = true;
+      this.canvas.style.pointerEvents = "auto";
+      this.canvas.setPointerCapture(e.pointerId);
+      e.stopPropagation();
+    });
+
+    this.canvas.addEventListener("pointermove", (e) => {
+      if (!this.isDraggingLevel) return;
+      this.onLevelChange?.(levelFromY(e.clientY));
+    });
+
+    const stopDrag = (e: PointerEvent) => {
+      if (!this.isDraggingLevel) return;
+      this.isDraggingLevel = false;
+      this.canvas.style.pointerEvents = "none";
+      this.canvas.releasePointerCapture(e.pointerId);
+    };
+    this.canvas.addEventListener("pointerup", stopDrag);
+    this.canvas.addEventListener("pointercancel", stopDrag);
+
+    // change cursor when hovering the triangle
+    window.addEventListener("pointermove", (e) => {
+      if (this.isDraggingLevel) return;
+      document.body.style.cursor = hitTest(e.clientX, e.clientY) ? "ns-resize" : "";
+    });
   }
 
   setMergedPoints(points: Float32Array) {
@@ -961,20 +1023,13 @@ class ChartCanvas {
 
   private drawLegend(_cssW: number, _cssH: number) {
     const { ctx } = this;
-    const { BAR_W, BAR_H, PAD, FONT, LEGEND_TITLE_H, LEGEND_W, LEGEND_H } =
-      ChartCanvas;
+    const { BAR_W, BAR_H, PAD, FONT, LEGEND_TITLE_H } = ChartCanvas;
 
-    // place legend at top-left corner of the heatmap area
     const ox = 0;
     const oy = 10;
 
     ctx.save();
     ctx.translate(ox, oy);
-
-    // ctx.fillStyle = "rgba(245,245,245,0.95)";
-    // ctx.beginPath();
-    // ctx.roundRect(0, 0, LEGEND_W, LEGEND_H, 4);
-    // ctx.fill();
 
     ctx.fillStyle = "#000";
     ctx.font = FONT;
@@ -983,6 +1038,10 @@ class ChartCanvas {
     ctx.fillText("Pts/Kernel", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
+
+    // record bar origin in CSS px for hit-testing
+    this.legendBarTop = oy + LEGEND_TITLE_H;
+    this.legendBarLeft = ox + PAD;
 
     for (let py = 0; py < BAR_H; py++) {
       const t = 1 - py / (BAR_H - 1);
@@ -999,6 +1058,15 @@ class ChartCanvas {
       ctx.fillStyle = "#000";
       ctx.fillText(val.toFixed(2), BAR_W + PAD, py);
     }
+
+    // draw level bar across the gradient
+    const lineY = (1 - paletteLevel) * (BAR_H - 1);
+    ctx.strokeStyle = this.isDraggingLevel ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.7)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, lineY);
+    ctx.lineTo(BAR_W, lineY);
+    ctx.stroke();
 
     ctx.restore();
   }
