@@ -354,33 +354,20 @@ async function loadData() {
     data.set(raw.subarray(src, src + 4), i * 4);
   }
 
-  // filter to only rows from day 15 of their month
-  const day15Rows: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const d = new Date(data[i * 4]!);
-    if (d.getUTCDate() === 15) day15Rows.push(i);
-  }
-
-  const filtered = new Float64Array(day15Rows.length * 4);
-  for (let i = 0; i < day15Rows.length; i++) {
-    const src = day15Rows[i]! * 4;
-    filtered.set(data.subarray(src, src + 4), i * 4);
-  }
-
-  const nFiltered = day15Rows.length;
+  const nFiltered = data.length / 4;
 
   // normalize x to [0, 1] to avoid float precision loss in GPU/math
-  const xMin = filtered[0]!;
-  const xMax = filtered[(nFiltered - 1) * 4]!;
+  const xMin = data[0]!;
+  const xMax = data[(nFiltered - 1) * 4]!;
   const xScale = xMax - xMin || 1; // original span in ms; used to denormalize for display
 
   // pre-pack into Float64Array once — x is sorted and normalized, weight = buyQty + sellQty
   const dataF64 = new Float64Array(nFiltered * 3);
   for (let i = 0; i < nFiltered; i++) {
-    const time = filtered[i * 4]!;
-    const price = filtered[i * 4 + 1]!;
-    const buyQty = filtered[i * 4 + 2]!;
-    const sellQty = filtered[i * 4 + 3]!;
+    const time = data[i * 4]!;
+    const price = data[i * 4 + 1]!;
+    const buyQty = data[i * 4 + 2]!;
+    const sellQty = data[i * 4 + 3]!;
     dataF64[i * 3] = (time - xMin) / xScale;
     dataF64[i * 3 + 1] = price;
     dataF64[i * 3 + 2] = buyQty + sellQty;
