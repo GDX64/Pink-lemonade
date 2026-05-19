@@ -19,6 +19,9 @@ let quantSteps = 5;
 let opacityCut = 0.06;
 let mergeThreshold = 20;
 let paletteLevel = 0.5;
+let showLine = true;
+let lineOpacity = 0.55;
+let lineWidth = 0.75;
 
 export async function rasterizingExample() {
   const canvas = createCanvas();
@@ -148,6 +151,11 @@ export async function rasterizingExample() {
     .addColor(paletteColors, "c2")
     .name("High")
     .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
+  const lineFolder = gui.addFolder("Line chart");
+  lineFolder.add({ showLine }, "showLine").name("Show line").onChange((v: boolean) => { showLine = v; });
+  lineFolder.add({ lineOpacity }, "lineOpacity", 0.01, 1, 0.01).name("Opacity").onChange((v: number) => { lineOpacity = v; });
+  lineFolder.add({ lineWidth }, "lineWidth", 0.25, 5, 0.25).name("Line width").onChange((v: number) => { lineWidth = v; });
+
   const chartCanvas = new ChartCanvas(xMin, xScale);
   chartCanvas.setOnLevelChange((v) => {
     paletteLevel = v;
@@ -911,8 +919,9 @@ class ChartCanvas {
     ctx.rect(0, 0, hmW, hmH);
     ctx.clip();
 
-    ctx.strokeStyle = "rgba(0,0,0,0.55)";
-    ctx.lineWidth = 0.75;
+    if (!showLine) { ctx.restore(); return; }
+    ctx.strokeStyle = `rgba(0,0,0,${lineOpacity})`;
+    ctx.lineWidth = lineWidth;
     ctx.beginPath();
     const pts = this.mergedPoints;
     const n = pts.length / 3;
