@@ -14,7 +14,7 @@ const paletteColors = {
   c2: "#f28787",
 };
 
-let kernelSize = 100;
+let sigmaSize = 17; // in pixels; the radius of the Gaussian "splat" for each point
 let quantSteps = 5;
 let opacityCut = 0.06;
 let mergeThreshold = 20;
@@ -88,7 +88,7 @@ export async function rasterizingExample() {
   let lastViewMaxY = NaN;
 
   const controls = {
-    kernelSize,
+    sigmaSize,
     fps: "0.0",
     totalPoints: n,
     renderedPoints: 0,
@@ -105,10 +105,10 @@ export async function rasterizingExample() {
     .name("Rendered points")
     .disable();
   gui
-    .add(controls, "kernelSize", 1, 300, 1)
-    .name("Kernel size (R)")
+    .add(controls, "sigmaSize", 1, 50, 1)
+    .name("Kernel sigma (px)")
     .onChange((v: number) => {
-      kernelSize = v;
+      sigmaSize = v;
     });
   gui
     .add({ quantSteps }, "quantSteps", 0, 32, 1)
@@ -152,9 +152,24 @@ export async function rasterizingExample() {
     .name("High")
     .onChange(() => writePaletteToBuffer(gpu.device, colorBuffer));
   const lineFolder = gui.addFolder("Line chart");
-  lineFolder.add({ showLine }, "showLine").name("Show line").onChange((v: boolean) => { showLine = v; });
-  lineFolder.add({ lineOpacity }, "lineOpacity", 0.01, 1, 0.01).name("Opacity").onChange((v: number) => { lineOpacity = v; });
-  lineFolder.add({ lineWidth }, "lineWidth", 0.25, 5, 0.25).name("Line width").onChange((v: number) => { lineWidth = v; });
+  lineFolder
+    .add({ showLine }, "showLine")
+    .name("Show line")
+    .onChange((v: boolean) => {
+      showLine = v;
+    });
+  lineFolder
+    .add({ lineOpacity }, "lineOpacity", 0.01, 1, 0.01)
+    .name("Opacity")
+    .onChange((v: number) => {
+      lineOpacity = v;
+    });
+  lineFolder
+    .add({ lineWidth }, "lineWidth", 0.25, 5, 0.25)
+    .name("Line width")
+    .onChange((v: number) => {
+      lineWidth = v;
+    });
 
   const chartCanvas = new ChartCanvas(xMin, xScale);
   chartCanvas.setOnLevelChange((v) => {
@@ -205,7 +220,7 @@ export async function rasterizingExample() {
       viewManager.getViewMaxY(),
       hdrW,
       hdrH,
-      kernelSize,
+      sigmaSize,
     );
 
     gpu.device.queue.writeBuffer(statsBuffer, 0, new Uint32Array([0]));
@@ -403,7 +418,7 @@ function createAccumulationPipeline(device: GPUDevice) {
         viewMinX: f32, viewMaxX: f32,
         minY: f32, maxY: f32,
         screenWidth: f32, screenHeight: f32,
-        kernelSize: f32, _pad: f32,
+        sigmaSize: f32, _pad: f32,
       };
 
       @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -429,7 +444,8 @@ function createAccumulationPipeline(device: GPUDevice) {
         let scale = 1.0 - 2.0 * padFrac;
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
-        let r = vec2f(u.kernelSize / u.screenWidth, u.kernelSize / u.screenHeight);
+        let kernelSize = u.sigmaSize * 3.0 * 2.0;
+        let r = vec2f(kernelSize / u.screenWidth, kernelSize / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
           quadOffset,
@@ -440,9 +456,13 @@ function createAccumulationPipeline(device: GPUDevice) {
       @fragment
       fn fs_main(@location(0) offset: vec2f, @location(1) weight: f32) -> @location(0) f32 {
         let d2 = dot(offset, offset);
-        if d2 > 0.81 { discard; } // 0.9² — drop fragments outside the radius
+        // we are doing a change of variables here
+        // the ideia is that d = 1 represents 3*sigma
+        // if d2 > 1.0 { discard; } // 0.9² — drop fragments outside the radius
         // 4/π normalizes the Gaussian so it integrates to 1 over ℝ²
-        let result = (4.0 / 3.14159265) * exp(-4.0 * d2);
+        //d2 is in [0, 1]
+        //so exp(- dˆ2 / (2 sigma²)) when d is 1 should be exp(- (3 sigma)ˆ2 / (2 sigmaˆ2)) = exp(-4.5)
+        let result = exp(- d2 * 4.5);
         return result * weight;
       }
     `,
@@ -814,8 +834,10 @@ class ChartCanvas {
       const relX = cssX - this.legendBarLeft;
       const triY = (1 - paletteLevel) * (BAR_H - 1);
       return (
-        relX >= 0 && relX <= ChartCanvas.BAR_W &&
-        relY >= triY - 4 && relY <= triY + 4
+        relX >= 0 &&
+        relX <= ChartCanvas.BAR_W &&
+        relY >= triY - 4 &&
+        relY <= triY + 4
       );
     };
 
@@ -849,7 +871,9 @@ class ChartCanvas {
     // change cursor when hovering the triangle
     window.addEventListener("pointermove", (e) => {
       if (this.isDraggingLevel) return;
-      document.body.style.cursor = hitTest(e.clientX, e.clientY) ? "ns-resize" : "";
+      document.body.style.cursor = hitTest(e.clientX, e.clientY)
+        ? "ns-resize"
+        : "";
     });
   }
 
@@ -919,7 +943,10 @@ class ChartCanvas {
     ctx.rect(0, 0, hmW, hmH);
     ctx.clip();
 
-    if (!showLine) { ctx.restore(); return; }
+    if (!showLine) {
+      ctx.restore();
+      return;
+    }
     ctx.strokeStyle = `rgba(0,0,0,${lineOpacity})`;
     ctx.lineWidth = lineWidth;
     ctx.beginPath();
@@ -1070,7 +1097,9 @@ class ChartCanvas {
 
     // draw level bar across the gradient
     const lineY = (1 - paletteLevel) * (BAR_H - 1);
-    ctx.strokeStyle = this.isDraggingLevel ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.7)";
+    ctx.strokeStyle = this.isDraggingLevel
+      ? "rgba(255,255,255,0.9)"
+      : "rgba(0,0,0,0.7)";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, lineY);
