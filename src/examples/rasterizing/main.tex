@@ -1,0 +1,526 @@
+%==========================================
+%
+% SIBGRAPI 2026 paper template
+% Example of IEEEtran.cls
+%
+%==========================================
+
+% *** Authors should verify (and, if needed, correct) their LaTeX system  ***
+% *** with the testflow diagnostic prior to trusting their LaTeX platform ***
+% *** with production work. The IEEE's font choices and paper sizes can   ***
+% *** trigger bugs that do not appear when using other class files.       ***                          ***
+% The testflow support page is at:
+% http://www.michaelshell.org/tex/testflow/
+
+\documentclass[10pt,conference]{IEEEtran}
+
+
+% Some very useful LaTeX packages include:
+% (uncomment the ones you want to load)
+
+
+% *** MISC UTILITY PACKAGES ***
+%
+%\usepackage{ifpdf}
+% Heiko Oberdiek's ifpdf.sty is very useful if you need conditional
+% compilation based on whether the output is pdf or dvi.
+% usage:
+% \ifpdf
+%   % pdf code
+% \else
+%   % dvi code
+% \fi
+% The latest version of ifpdf.sty can be obtained from:
+% http://www.ctan.org/pkg/ifpdf
+% Also, note that IEEEtran.cls V1.7 and later provides a builtin
+% \ifCLASSINFOpdf conditional that works the same way.
+% When switching from latex to pdflatex and vice-versa, the compiler may
+% have to be run twice to clear warning/error messages.
+
+
+
+
+
+
+% *** CITATION PACKAGES ***
+%
+\usepackage{cite}
+% cite.sty was written by Donald Arseneau
+% V1.6 and later of IEEEtran pre-defines the format of the cite.sty package
+% \cite{} output to follow that of the IEEE. Loading the cite package will
+% result in citation numbers being automatically sorted and properly
+% "compressed/ranged". e.g., [1], [9], [2], [7], [5], [6] without using
+% cite.sty will become [1], [2], [5]--[7], [9] using cite.sty. cite.sty's
+% \cite will automatically add leading space, if needed. Use cite.sty's
+% noadjust option (cite.sty V3.8 and later) if you want to turn this off
+% such as if a citation ever needs to be enclosed in parenthesis.
+% cite.sty is already installed on most LaTeX systems. Be sure and use
+% version 5.0 (2009-03-20) and later if using hyperref.sty.
+% The latest version can be obtained at:
+% http://www.ctan.org/pkg/cite
+% The documentation is contained in the cite.sty file itself.
+
+
+
+
+
+
+% *** GRAPHICS RELATED PACKAGES ***
+%
+\ifCLASSINFOpdf
+   \usepackage[pdftex]{graphicx}
+  % declare the path(s) where your graphic files are
+   \graphicspath{{figs/}}
+  % and their extensions so you won't have to specify these with
+  % every instance of \includegraphics
+   \DeclareGraphicsExtensions{.pdf,.jpeg,.png}
+\else
+  % or other class option (dvipsone, dvipdf, if not using dvips). graphicx
+  % will default to the driver specified in the system graphics.cfg if no
+  % driver is specified.
+   \usepackage[dvips]{graphicx}
+  % declare the path(s) where your graphic files are
+   \graphicspath{{../figs/}}
+  % and their extensions so you won't have to specify these with
+  % every instance of \includegraphics
+   \DeclareGraphicsExtensions{.eps}
+\fi
+% graphicx was written by David Carlisle and Sebastian Rahtz. It is
+% required if you want graphics, photos, etc. graphicx.sty is already
+% installed on most LaTeX systems. The latest version and documentation
+% can be obtained at: 
+% http://www.ctan.org/pkg/graphicx
+% Another good source of documentation is "Using Imported Graphics in
+% LaTeX2e" by Keith Reckdahl which can be found at:
+% http://www.ctan.org/pkg/epslatex
+%
+% latex, and pdflatex in dvi mode, support graphics in encapsulated
+% postscript (.eps) format. pdflatex in pdf mode supports graphics
+% in .pdf, .jpeg, .png and .mps (metapost) formats. Users should ensure
+% that all non-photo figures use a vector format (.eps, .pdf, .mps) and
+% not a bitmapped formats (.jpeg, .png). The IEEE frowns on bitmapped formats
+% which can result in "jaggedy"/blurry rendering of lines and letters as
+% well as large increases in file sizes.
+%
+% You can find documentation about the pdfTeX application at:
+% http://www.tug.org/applications/pdftex
+
+
+
+
+
+% *** MATH PACKAGES ***
+%
+\usepackage[cmex10]{amsmath}
+% A popular package from the American Mathematical Society that provides
+% many useful and powerful commands for dealing with mathematics.
+%
+% Note that the amsmath package sets \interdisplaylinepenalty to 10000
+% thus preventing page breaks from occurring within multiline equations. Use:
+\interdisplaylinepenalty=2500
+% after loading amsmath to restore such page breaks as IEEEtran.cls normally
+% does. amsmath.sty is already installed on most LaTeX systems. The latest
+% version and documentation can be obtained at:
+% http://www.ctan.org/pkg/amsmath
+\usepackage{amsthm}
+\newtheorem{definition}{Definition}
+
+
+
+
+% *** SPECIALIZED LIST PACKAGES ***
+%
+\usepackage{algorithmic}
+% algorithmic.sty was written by Peter Williams and Rogerio Brito.
+% This package provides an algorithmic environment fo describing algorithms.
+% You can use the algorithmic environment in-text or within a figure
+% environment to provide for a floating algorithm. Do NOT use the algorithm
+% floating environment provided by algorithm.sty (by the same authors) or
+% algorithm2e.sty (by Christophe Fiorio) as the IEEE does not use dedicated
+% algorithm float types and packages that provide these will not provide
+% correct IEEE style captions. The latest version and documentation of
+% algorithmic.sty can be obtained at:
+% http://www.ctan.org/pkg/algorithms
+% Also of interest may be the (relatively newer and more customizable)
+% algorithmicx.sty package by Szasz Janos:
+% http://www.ctan.org/pkg/algorithmicx
+
+
+
+
+% *** ALIGNMENT PACKAGES ***
+%
+\usepackage{array}
+% Frank Mittelbach's and David Carlisle's array.sty patches and improves
+% the standard LaTeX2e array and tabular environments to provide better
+% appearance and additional user controls. As the default LaTeX2e table
+% generation code is lacking to the point of almost being broken with
+% respect to the quality of the end results, all users are strongly
+% advised to use an enhanced (at the very least that provided by array.sty)
+% set of table tools. array.sty is already installed on most systems. The
+% latest version and documentation can be obtained at:
+% http://www.ctan.org/pkg/array
+
+
+% IEEEtran contains the IEEEeqnarray family of commands that can be used to
+% generate multiline equations as well as matrices, tables, etc., of high
+% quality.
+
+
+
+
+% *** SUBFIGURE PACKAGES ***
+\ifCLASSOPTIONcompsoc
+  \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\else
+  \usepackage[caption=false,font=footnotesize]{subfig}
+\fi
+% subfig.sty, written by Steven Douglas Cochran, is the modern replacement
+% for subfigure.sty, the latter of which is no longer maintained and is
+% incompatible with some LaTeX packages including fixltx2e. However,
+% subfig.sty requires and automatically loads Axel Sommerfeldt's caption.sty
+% which will override IEEEtran.cls' handling of captions and this will result
+% in non-IEEE style figure/table captions. To prevent this problem, be sure
+% and invoke subfig.sty's "caption=false" package option (available since
+% subfig.sty version 1.3, 2005/06/28) as this is will preserve IEEEtran.cls
+% handling of captions.
+% Note that the Computer Society format requires a larger sans serif font
+% than the serif footnote size font used in traditional IEEE formatting
+% and thus the need to invoke different subfig.sty package options depending
+% on whether compsoc mode has been enabled.
+%
+% The latest version and documentation of subfig.sty can be obtained at:
+% http://www.ctan.org/pkg/subfig
+
+
+
+
+% *** FLOAT PACKAGES ***
+%
+%\usepackage{fixltx2e}
+% fixltx2e, the successor to the earlier fix2col.sty, was written by
+% Frank Mittelbach and David Carlisle. This package corrects a few problems
+% in the LaTeX2e kernel, the most notable of which is that in current
+% LaTeX2e releases, the ordering of single and double column floats is not
+% guaranteed to be preserved. Thus, an unpatched LaTeX2e can allow a
+% single column figure to be placed prior to an earlier double column
+% figure.
+% Be aware that LaTeX2e kernels dated 2015 and later have fixltx2e.sty's
+% corrections already built into the system in which case a warning will
+% be issued if an attempt is made to load fixltx2e.sty as it is no longer
+% needed.
+% The latest version and documentation can be found at:
+% http://www.ctan.org/pkg/fixltx2e
+
+
+%\usepackage{stfloats}
+% stfloats.sty was written by Sigitas Tolusis. This package gives LaTeX2e
+% the ability to do double column floats at the bottom of the page as well
+% as the top. (e.g., "\begin{figure*}[!b]" is not normally possible in
+% LaTeX2e). It also provides a command:
+%\fnbelowfloat
+% to enable the placement of footnotes below bottom floats (the standard
+% LaTeX2e kernel puts them above bottom floats). This is an invasive package
+% which rewrites many portions of the LaTeX2e float routines. It may not work
+% with other packages that modify the LaTeX2e float routines. The latest
+% version and documentation can be obtained at:
+% http://www.ctan.org/pkg/stfloats
+% Do not use the stfloats baselinefloat ability as the IEEE does not allow
+% \baselineskip to stretch. Authors submitting work to the IEEE should note
+% that the IEEE rarely uses double column equations and that authors should try
+% to avoid such use. Do not be tempted to use the cuted.sty or midfloat.sty
+% packages (also by Sigitas Tolusis) as the IEEE does not format its papers in
+% such ways.
+% Do not attempt to use stfloats with fixltx2e as they are incompatible.
+% Instead, use Morten Hogholm'a dblfloatfix which combines the features
+% of both fixltx2e and stfloats:
+%
+% \usepackage{dblfloatfix}
+% The latest version can be found at:
+% http://www.ctan.org/pkg/dblfloatfix
+
+
+
+
+% *** PDF, URL AND HYPERLINK PACKAGES ***
+%
+\usepackage{url}
+% url.sty was written by Donald Arseneau. It provides better support for
+% handling and breaking URLs. url.sty is already installed on most LaTeX
+% systems. The latest version and documentation can be obtained at:
+% http://www.ctan.org/pkg/url
+% Basically, \url{my_url_here}.
+
+
+
+
+% *** Do not adjust lengths that control margins, column widths, etc. ***
+% *** Do not use packages that alter fonts (such as pslatex).         ***
+% There should be no need to do such things with IEEEtran.cls V1.6 and later.
+% (Unless specifically asked to do so by the journal or conference you plan
+% to submit to, of course. )
+
+
+% correct bad hyphenation here
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+%------------------------------------------------------------------------- 
+% change the % on next lines to produce the final camera-ready version 
+\newif\iffinal
+\finalfalse
+%\finaltrue
+\newcommand{\cmtid}{99999}
+%------------------------------------------------------------------------- 
+
+\iffinal
+\else
+\usepackage[switch]{lineno}
+\fi
+
+\begin{document}
+%
+% paper title
+% Titles are generally capitalized except for words such as a, an, and, as,
+% at, but, by, for, in, nor, of, on, or, the, to and up, which are usually
+% not capitalized unless they are the first or last word of the title.
+% Linebreaks \\ can be used within to get better formatting as desired.
+% Do not put math or special symbols in the title.
+\title{GPU-Accelerated Density Heatmap Rendering for Large-Scale Financial Timeseries}
+
+
+% author names and affiliations
+% use a multiple column layout for up to two different
+% affiliations
+
+\iffinal
+
+% author names and affiliations
+% use a multiple column layout for up to three different
+% affiliations
+\author{\IEEEauthorblockN{Michael Shell}
+\IEEEauthorblockA{School of Electrical and\\Computer Engineering\\
+Georgia Institute of Technology\\
+Atlanta, Georgia 30332--0250\\
+Email: http://www.michaelshell.org/contact.html}
+\and
+\IEEEauthorblockN{Homer Simpson}
+\IEEEauthorblockA{Twentieth Century Fox\\
+Springfield, USA\\
+Email: homer@thesimpsons.com}
+\and
+\IEEEauthorblockN{James Kirk\\ and Montgomery Scott}
+\IEEEauthorblockA{Starfleet Academy\\
+San Francisco, California 96678--2391\\
+Telephone: (800) 555--1212\\
+Fax: (888) 555--1212}}
+
+% conference papers do not typically use \thanks and this command
+% is locked out in conference mode. If really needed, such as for
+% the acknowledgment of grants, issue a \IEEEoverridecommandlockouts
+% after \documentclass
+
+% for over three affiliations, or if they all won't fit within the width
+% of the page, use this alternative format:
+% 
+%\author{\IEEEauthorblockN{Michael Shell\IEEEauthorrefmark{1},
+%Homer Simpson\IEEEauthorrefmark{2},
+%James Kirk\IEEEauthorrefmark{3}, 
+%Montgomery Scott\IEEEauthorrefmark{3} and
+%Eldon Tyrell\IEEEauthorrefmark{4}}
+%\IEEEauthorblockA{\IEEEauthorrefmark{1}School of Electrical and Computer Engineering\\
+%Georgia Institute of Technology,
+%Atlanta, Georgia 30332--0250\\ Email: see http://www.michaelshell.org/contact.html}
+%\IEEEauthorblockA{\IEEEauthorrefmark{2}Twentieth Century Fox, Springfield, USA\\
+%Email: homer@thesimpsons.com}
+%\IEEEauthorblockA{\IEEEauthorrefmark{3}Starfleet Academy, San Francisco, California 96678-2391\\
+%Telephone: (800) 555--1212, Fax: (888) 555--1212}
+%\IEEEauthorblockA{\IEEEauthorrefmark{4}Tyrell Inc., 123 Replicant Street, Los Angeles, California 90210--4321}}
+
+\else
+  \author{SIBGRAPI Paper ID: \cmtid \\ }
+  \linenumbers
+\fi
+
+
+% make the title area
+\maketitle
+
+% As a general rule, do not put math, special symbols or citations
+% in the abstract
+\begin{abstract}
+A timeseries is typically visualized as a two-dimensional line chart of time against value. When a third scalar dimension is available --- such as traded volume at each price event --- a line chart provides no means to encode it, and the information is lost. We present a pipeline that encodes this third dimension as a weighted Kernel Density Estimation (KDE) density field rendered as a heatmap, allowing all three dimensions to be read simultaneously from a single chart. At the scale of hundreds of thousands of points, neither CPU-based KDE nor a na\"{i}ve GPU implementation achieves the frame budget required for real-time pan and zoom. We address this with a kernel-merging approximation that collapses spatially proximate points into single weighted kernels before GPU submission, reducing the number of kernel evaluations to screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- renders a perceptually calibrated density heatmap at interactive framerates with no server-side pre-aggregation.
+\end{abstract}
+
+% no keywords
+
+
+
+
+% For peerreview papers, this IEEEtran command inserts a page break and
+% creates the second title. It will be ignored for other modes.
+\IEEEpeerreviewmaketitle
+
+
+
+%==============================
+% Instruções de submissão em https://sibgrapi.sbc.org.br/2026/#/submission
+%==============================
+
+\section{Motivation}
+\label{sec:motivation}
+
+A timeseries associates two values --- a timestamp and a measured quantity --- and a line chart is the natural way to display that relationship. Many real-world timeseries carry a meaningful third scalar at each observation: traded volume in financial markets, signal amplitude in sensor data, event severity in telemetry. This third dimension cannot be encoded on a conventional line chart without resorting to separate panels or lossy aggregations such as bar charts, which break the continuity of the series.
+
+Kernel Density Estimation offers a principled way to incorporate the third dimension. By treating each observation as a weighted Gaussian kernel placed at its (time, value) coordinates, the superposition of all kernels forms a continuous density field over the two-dimensional chart space. Regions where observations are dense and heavily weighted accumulate high density; sparse or lightly weighted regions accumulate little. Mapping this field to a colormap produces a heatmap that encodes all three dimensions simultaneously --- time on the horizontal axis, value on the vertical axis, and the third scalar as color intensity.
+
+The practical obstacle is scale. A single trading session for an active instrument routinely produces hundreds of thousands of tick events. Evaluating a Gaussian kernel for each point at each pixel on the CPU is computationally intractable for real-time interaction: the cost grows as $O(N \times W \times H)$, where $N$ is the point count and $W \times H$ is the screen resolution. Moving the kernel splatting to the GPU reduces constant factors substantially, but a na\"{i}ve implementation --- one draw call per point, each covering a kernel-sized screen region --- still fails to meet the frame budget at this data scale when the view changes and all kernels must be re-evaluated.
+
+A na\"{i}ve GPU implementation faces a severe overdraw problem. Each Gaussian kernel spans a screen-aligned quad whose area scales with the square of the kernel radius; a kernel of radius 50 pixels covers roughly 30\,000 pixels, every one of which must be shaded and blended. With hundreds of thousands of kernels and significant spatial overlap between them, the total number of fragment shader invocations can reach into the billions per frame --- well beyond what any GPU can sustain at interactive rates.
+
+We address this with a \textit{kernel-merging approximation}. Points that project within a configurable screen-space threshold of one another are collapsed into a single representative kernel whose weight is the sum of the constituent weights. Because the merge is performed in screen space and re-run on each view change, the number of kernels submitted to the GPU is bounded by the pixel resolution of the display rather than by the size of the dataset. The approximation error is negligible when the threshold is kept near the kernel radius: merged points are perceptually indistinguishable from the exact superposition of their individual kernels. The result is a three-stage GPU pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- that renders a perceptually calibrated density heatmap at interactive framerates across the full range of zoom levels.
+
+
+\section{Data Preparation}
+\label{sec:data}
+
+Each data point carries three values: a timestamp, a price level, and a scalar weight. For financial tick data, weight is naturally derived from traded volume, making denser activity periods visually brighter regardless of the number of individual events.
+
+Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss under extreme zoom. The original scale factors are retained separately for axis label reconstruction.
+
+
+\section{Adaptive Downsampling}
+\label{sec:downsampling}
+
+\subsection{View-Range Clipping}
+
+Because data is sorted by time, only points falling within the current view window need to be considered. Binary search extracts this subset in logarithmic time, keeping all subsequent work proportional to visible data rather than total data.
+
+\subsection{Weighted Merge}
+
+The visible points are passed through a \textit{weighted merge} downsampler before GPU upload. The algorithm scans points left to right, maintaining an open cluster. When a new point arrives, it computes the hypothetical weighted centroid that would result from absorbing the point into the cluster. If both the earliest cluster point and the incoming point remain within a configurable screen-space threshold of that centroid, the point is absorbed and the centroid is updated. Otherwise the cluster is flushed as a single output point and a new cluster begins.
+
+The centroid of each output point carries the summed weight of all its constituents, conserving the total signal: a merged cluster renders with a proportionally brighter splat than any individual constituent would.
+
+Checking the earliest cluster point --- rather than just the current centroid --- guards against gradual centroid drift, which would otherwise allow clusters to grow larger than the threshold over many small steps.
+
+Because the data is sorted by the time axis, candidate neighbors for merging always arrive in order and a point can only join the current open cluster or trigger the start of a new one. No backtracking or reordering is needed, and each point is visited exactly once. The algorithm therefore runs in $O(N)$ time over the visible subset, which is critical given that the merge must complete within a single frame budget to support smooth interaction.
+
+Smooth pan and zoom are a first-class requirement of the system. As the user navigates, the set of visible points and their screen-space projections change continuously, so the merge is re-run on every view change. Abrupt discontinuities in the density field --- caused by points entering or leaving the view, or by the merge threshold splitting or joining clusters differently --- would produce jarring visual jumps that undermine the user's spatial intuition. The $O(N)$ merge is fast enough to re-run each frame, ensuring that the heatmap evolves gradually as the view moves rather than snapping between discrete states.
+
+\subsection{Why Shape-Preserving Simplification Is Insufficient}
+
+Classical timeseries simplification algorithms such as Largest-Triangle-Three-Buckets (LTTB) \cite{Steinarsson2013} and Ramer-Douglas-Peucker (RDP) \cite{Douglas1973} are designed to preserve the visual shape of a line chart: they select or retain points whose positions best reconstruct the geometry of the original polyline, discarding points they deem geometrically redundant. This objective is appropriate for a line chart, where the eye follows the trajectory of the series. It is, however, the wrong objective for KDE.
+
+In a density heatmap the quantity that must be conserved is the total weight --- the accumulated momentum of the signal --- not its geometric shape. A point that is geometrically redundant (lying close to a chord between its neighbors) may nonetheless carry substantial weight that, if discarded, would leave the density field darker than the data warrants. Conversely, a point selected by LTTB because it lies far from the chord may carry negligible weight, contributing little to the density while consuming a kernel evaluation. Both cases produce a density estimate that misrepresents the underlying distribution.
+
+The weighted merge strategy addresses this directly: the sole criterion for collapsing points is screen-space proximity, and the total weight is always conserved in the merged centroid. No information about the magnitude of the signal is lost, only spatial resolution that is already below the pixel threshold and therefore invisible.
+
+
+\section{GPU Rendering Pipeline}
+\label{sec:pipeline}
+
+The rendering pipeline consists of three GPU passes submitted together per frame.
+
+\subsection{Pass 1 --- Accumulation}
+
+The first pass performs KDE directly on the GPU. Each downsampled point is rendered as a small screen-aligned quad that splats a Gaussian kernel onto a high-dynamic-range (HDR) floating-point texture using additive blending. Because each fragment simply adds its contribution to the running sum, no explicit synchronization is needed: hardware blending accumulates the KDE density field correctly even when kernels overlap.
+
+The kernel radius is configurable in screen pixels. The quad is sized to cover the full extent of the kernel --- three standard deviations in each direction --- so that effectively all of the kernel mass is captured. Inside the quad, each fragment evaluates the Gaussian as a function of its distance from the point center, scaled by the point's weight. Points outside the current view window are discarded before reaching the rasterizer.
+
+A small padding margin is reserved at the top and bottom of the heatmap region so that density does not bleed into the axis areas.
+
+\subsection{Pass 2 --- Reduction}
+
+The second pass finds the maximum accumulated value across the entire HDR texture. A parallel reduction --- dispatched across the texture in tiles --- scans every texel and records the global maximum via an atomic operation.
+
+This maximum is read back to the CPU asynchronously for use in the legend scale. Because the readback is asynchronous it introduces at most one frame of lag, which is imperceptible in practice. More importantly, the value is available to the tonemapping pass in the same frame via the same GPU-side buffer, so normalization is always current.
+
+\subsection{Pass 3 --- Tonemapping}
+
+The third pass maps the raw floating-point accumulation values to a perceptual colormap and writes the final output. A fullscreen quad reads from the HDR texture and the maximum value buffer, normalizing each pixel's density to the range $[0, 1]$.
+
+Pixels below a configurable opacity threshold are rendered fully transparent, hiding empty or near-empty regions and separating signal from background cleanly.
+
+The normalized value is then mapped through a three-stop colormap with a user-adjustable midpoint. The fragment shader interpolates the color gradient from a low-density color through a mid-density color to a high-density color. The midpoint position controls where the perceptual emphasis of the colormap sits: pulling it toward zero compresses the high end and reveals fine structure in sparse regions; pushing it toward one stretches the low end and emphasizes the densest concentrations.
+
+An optional quantization step maps the normalized value to a discrete number of levels before color lookup, producing a contour-map aesthetic that can make density gradients easier to read.
+
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Complexity}
+
+Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and tonemapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.
+
+\subsection{Limitations}
+
+The technique requires a GPU that supports floating-point render target formats with additive blending. This is widely supported on desktop hardware but may not be available on all mobile devices.
+
+At very high zoom levels --- sub-millisecond time windows for tick data --- the view contains so few points that the density field degenerates into isolated splats, and the heatmap character of the visualization disappears. At that scale a plain line or scatter chart is more appropriate.
+
+The colormap is defined in display color space, while kernel accumulation operates in linear space. For saturated color palettes this can produce a minor perceptual inconsistency that would be corrected by linearizing the palette entries before upload.
+
+\subsection{Future Work}
+
+The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price trace without inflating kernel weights. Combining both representations in the same view would make the relationship between price trajectory and activity density immediately readable.
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We described an interactive density heatmap pipeline for weighted timeseries data. The central insight is that three GPU passes --- additive Gaussian accumulation onto a floating-point texture, parallel max-reduction for dynamic range normalization, and perceptual tonemapping with a tunable colormap --- are sufficient to render a fully interactive density visualization at the scale of financial tick data. Adaptive weighted-merge downsampling prior to each frame bounds the GPU work to screen resolution, ensuring performance scales with visible data rather than total data.
+
+
+
+
+% conference papers do not normally have an appendix
+
+
+% use section* for acknowledgment
+\section*{Acknowledgment}
+
+
+The authors would like to thank the open-source WebGPU community for tooling and reference implementations that informed this work.
+
+
+
+
+
+% trigger a \newpage just before the given reference
+% number - used to balance the columns on the last page
+% adjust value as needed - may need to be readjusted if
+% the document is modified later
+%\IEEEtriggeratref{8}
+% The "triggered" command can be changed if desired:
+%\IEEEtriggercmd{\enlargethispage{-5in}}
+
+% references section
+
+% can use a bibliography generated by BibTeX as a .bbl file
+% BibTeX documentation can be easily obtained at:
+% http://mirror.ctan.org/biblio/bibtex/contrib/doc/
+% The IEEEtran BibTeX style support page is at:
+% http://www.michaelshell.org/tex/ieeetran/bibtex/
+\bibliographystyle{IEEEtran}
+% argument is your BibTeX string definitions and bibliography database(s)
+\bibliography{example}
+%
+% <OR> manually copy in the resultant .bbl file
+% set second argument of \begin to the number of references
+% (used to reserve space for the reference number labels box)
+%\begin{thebibliography}{1}
+%
+%\bibitem{IEEEhowto:kopka}
+%H.~Kopka and P.~W. Daly, \emph{A Guide to \LaTeX}, 3rd~ed.\hskip 1em plus
+%  0.5em minus 0.4em\relax Harlow, England: Addison-Wesley, 1999.
+
+%\end{thebibliography}
+
+
+
+
+% that's all folks
+\end{document}
+
+
