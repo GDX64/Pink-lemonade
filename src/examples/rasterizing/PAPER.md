@@ -107,3 +107,5 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
 ## 6. Conclusion
 
 We described an interactive density heatmap pipeline for weighted timeseries data. The central insight is that three GPU passes — additive Gaussian accumulation onto a floating-point texture, parallel max-reduction for dynamic range normalization, and perceptual tonemapping with a tunable colormap — are sufficient to render a fully interactive density visualization at the scale of financial tick data. Adaptive weighted-merge downsampling prior to each frame bounds the GPU work to screen resolution, ensuring performance scales with visible data rather than total data.
+
+![Bitcoin negotiations](image.png)

@@ -14,3 +14,34 @@
   pages   = {112--122},
   year    = {1973}
 }
+
+@article{article,
+author = {Peng, Ruixiao and Guan, Li and Wang, Zhe and Dong, Yu and Zhang, Tianchi and Lu, Xuyi and Jia, Yifei and Shan, Guihua and Tian, Dong},
+year = {2026},
+month = {03},
+pages = {},
+title = {Gaussian Mixture Model-Based Splatting for Rapid Rendering and Time Series Analysis of Large-Scale Particle Data},
+volume = {PP},
+journal = {IEEE transactions on visualization and computer graphics},
+doi = {10.1109/TVCG.2026.3672120}
+abstract = {Driven by advances in supercomputing, the scale
+of scientific simulation data has grown dramatically. In fields
+such as cosmology, particle data have become a common representation, with state-of-the-art simulations now exceeding the
+trillion-particle mark. Consequently, the challenge of visually
+analyzing such massive datasets has become increasingly urgent.
+The traditional visual analysis workflow typically follows a
+”compression → storage → reconstruction → visualization”
+pipeline. However, this process is hampered by an extremely timeconsuming reconstruction stage, which severely impedes real-time
+interactive visualization. Moreover, in multi-time-step analyses,
+the enormous volume of reconstructed data creates significant I/O
+bottlenecks. In this work, we draw inspiration from 3D Gaussian
+splatting and compress the simulation data using Gaussian
+Mixture Models (GMMs), treating the resulting Gaussian kernels as fundamental rendering primitives. Our method renders
+billion-scale particles for each timestep in approximately 32 ms,
+requiring only 645 MB of GPU memory per timestep — nearly
+20× smaller than the original 12 GB raw data. This eliminates
+costly reconstruction, accelerates the visual analysis pipeline, and
+overcomes I/O bottlenecks in multi-time-step analysis. Extensive
+experiments and comparisons across multiple datasets validate
+the effectiveness of our method}
+}
