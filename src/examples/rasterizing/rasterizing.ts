@@ -15,7 +15,7 @@ const paletteColors = {
 };
 
 let sigmaSize = 17; // in pixels; the radius of the Gaussian "splat" for each point
-let quantSteps = 5;
+let quantSteps = 0;
 let opacityCut = 0.06;
 let mergeThreshold = 20;
 let paletteLevel = 0.5;
@@ -742,6 +742,14 @@ function updateUniform(
   );
 }
 
+function fmtCompact(v: number): string {
+  if (v === 0) return "0";
+  if (Math.abs(v) >= 1e9) return `${(v / 1e9).toPrecision(3)}B`;
+  if (Math.abs(v) >= 1e6) return `${(v / 1e6).toPrecision(3)}M`;
+  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toPrecision(3)}K`;
+  return v.toPrecision(3);
+}
+
 function formatTimestamp(ms: number): string {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -868,9 +876,9 @@ class ChartCanvas {
     this.mergedPoints = points;
   }
 
-  setMaxVal(val: number) {
-    if (val > 0 && val !== this.maxVal) {
-      this.maxVal = val;
+  setMaxVal(valFromGPU: number) {
+    if (valFromGPU > 0 && valFromGPU !== this.maxVal) {
+      this.maxVal = valFromGPU;
     }
   }
 
@@ -1039,7 +1047,7 @@ class ChartCanvas {
       ctx.stroke();
 
       ctx.fillStyle = "#333";
-      ctx.fillText(val.toFixed(2), stripX + PAD + 5, y);
+      ctx.fillText(fmtCompact(val), stripX + PAD + 5, y);
     }
     ctx.restore();
   }
@@ -1058,7 +1066,7 @@ class ChartCanvas {
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText("Pts/Kernel", PAD, 0);
+    ctx.fillText("Satoshi", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 
@@ -1077,9 +1085,12 @@ class ChartCanvas {
     for (let k = 0; k <= 5; k++) {
       const t = k / 5;
       const py = (1 - t) * (BAR_H - 1);
-      const val = t * this.maxVal;
+      let val = t * this.maxVal;
+      if (t === 0) {
+        val = opacityCut * this.maxVal;
+      }
       ctx.fillStyle = "#000";
-      ctx.fillText(val.toFixed(2), BAR_W + PAD, py);
+      ctx.fillText(fmtCompact(val), BAR_W + PAD, py);
     }
 
     // draw level bar across the gradient
