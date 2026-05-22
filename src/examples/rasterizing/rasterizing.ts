@@ -16,7 +16,7 @@ const paletteColors = {
 
 let sigmaSize = 17; // in pixels; the radius of the Gaussian "splat" for each point
 let quantSteps = 0;
-let opacityCut = 0.06;
+let opacityCut = 0.03;
 let mergeThreshold = 20;
 let paletteLevel = 0.5;
 let showLine = true;

@@ -2,7 +2,8 @@
   author  = {Sveinn Steinarsson},
   title   = {Downsampling Time Series for Visual Representation},
   school  = {University of Iceland},
-  year    = {2013}
+  year    = {2013},
+  url     = {https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf}
 }
 
 @article{Douglas1973,
@@ -24,24 +25,48 @@ title = {Gaussian Mixture Model-Based Splatting for Rapid Rendering and Time Ser
 volume = {PP},
 journal = {IEEE transactions on visualization and computer graphics},
 doi = {10.1109/TVCG.2026.3672120}
-abstract = {Driven by advances in supercomputing, the scale
-of scientific simulation data has grown dramatically. In fields
-such as cosmology, particle data have become a common representation, with state-of-the-art simulations now exceeding the
-trillion-particle mark. Consequently, the challenge of visually
-analyzing such massive datasets has become increasingly urgent.
-The traditional visual analysis workflow typically follows a
-”compression → storage → reconstruction → visualization”
-pipeline. However, this process is hampered by an extremely timeconsuming reconstruction stage, which severely impedes real-time
-interactive visualization. Moreover, in multi-time-step analyses,
-the enormous volume of reconstructed data creates significant I/O
-bottlenecks. In this work, we draw inspiration from 3D Gaussian
-splatting and compress the simulation data using Gaussian
-Mixture Models (GMMs), treating the resulting Gaussian kernels as fundamental rendering primitives. Our method renders
-billion-scale particles for each timestep in approximately 32 ms,
-requiring only 645 MB of GPU memory per timestep — nearly
-20× smaller than the original 12 GB raw data. This eliminates
-costly reconstruction, accelerates the visual analysis pipeline, and
-overcomes I/O bottlenecks in multi-time-step analysis. Extensive
-experiments and comparisons across multiple datasets validate
-the effectiveness of our method}
 }
+
+@ARTICLE{4383588,
+  author={Runnalls, A.R.},
+  journal={IEEE Transactions on Aerospace and Electronic Systems}, 
+  title={Kullback-Leibler Approach to Gaussian Mixture Reduction}, 
+  year={2007},
+  volume={43},
+  number={3},
+  pages={989-999},
+  abstract={A common problem in multi-target tracking is to approximate a Gaussian mixture by one containing fewer components; similar problems can arise in integrated navigation. A common approach is successively to merge pairs of components, replacing the pair with a single Gaussian component whose moments up to second order match those of the merged pair. Salmond [1] and Williams [2, 3] have each proposed algorithms along these lines, but using different criteria for selecting the pair to be merged at each stage. The paper shows how under certain circumstances each of these pair-selection criteria can give rise to anomalous behaviour, and proposes that a key consideration should the the Kullback-Leibler (KL) discrimination of the reduced mixture with respect to the original mixture. Although computing this directly would normally be impractical, the paper shows how an easily computed upper bound can be used as a pair-selection criterion which avoids the anomalies of the earlier approaches. The behaviour of the three algorithms is compared using a high-dimensional example drawn from terrain-referenced navigation.},
+  keywords={Merging;Target tracking;Upper bound;Distributed computing;Electronic mail;Gaussian distribution;Inertial navigation;Probability;Statistical analysis},
+  doi={10.1109/TAES.2007.4383588},
+  ISSN={1557-9603},
+  month={July},}
+
+
+@INPROCEEDINGS{5742387,
+  author={Daae Lampe, Ove and Hauser, Helwig},
+  booktitle={2011 IEEE Pacific Visualization Symposium}, 
+  title={Interactive visualization of streaming data with Kernel Density Estimation}, 
+  year={2011},
+  volume={},
+  number={},
+  pages={171-178},
+  abstract={In this paper, we discuss the extension and integration of the statistical concept of Kernel Density Estimation (KDE) in a scatterplot-like visualization for dynamic data at interactive rates. We present a line kernel for representing streaming data, we discuss how the concept of KDE can be adapted to enable a continuous representation of the distribution of a dependent variable of a 2D domain. We propose to automatically adapt the kernel bandwith of KDE to the viewport settings, in an interactive visualization environment that allows zooming and panning. We also present a GPU-based realization of KDE that leads to interactive frame rates, even for comparably large datasets. Finally, we demonstrate the usefulness of our approach in the context of three application scenarios - one studying streaming ship traffic data, another one from the oil & gas domain, where process data from the operation of an oil rig is streaming in to an on-shore operational center, and a third one studying commercial air traffic in the US spanning 1987 to 2008.},
+  keywords={Kernel;Data visualization;Bandwidth;Estimation;Histograms;Marine vehicles;Pixel;I.3.3 [Computing Methodologies]: Computer Graphics—Picture/Image Generation;G.3 [Mathematics of Computing]: Probability and Statistics—Time series analysis},
+  doi={10.1109/PACIFICVIS.2011.5742387},
+  ISSN={2165-8773},
+  month={March},}
+
+
+@INPROCEEDINGS{10589058,
+  author={Jayoma, Jaymer M. and Navales, Genevive P. and Bustamante, Flocer Angelo M. and Tradio, Lavranz R.},
+  booktitle={2023 IEEE 15th International Conference on Humanoid, Nanotechnology, Information Technology, Communication and Control, Environment, and Management (HNICEM)}, 
+  title={Enhanced Ramer-Douglas-Peucker Algorithm for Efficient 2D Line Simplification}, 
+  year={2023},
+  volume={},
+  number={},
+  pages={1-6},
+  abstract={The Ramer-Douglas-Peucker (RDP) algorithm is a potent method frequently used to simplify lines and curves while maintaining their essential properties. This recursive method is invaluable in several disciplines, including geographic information systems, mapping, and data analysis. It is excellent at condensing important information and removing unimportant details. The time series visualization and data reduction is one of its major applications. Time series datasets can have many data points, which can make complex processing and storage limitations. Although the traditional RDP approach works well for smaller datasets, it could have trouble keeping up with the needs of bigger ones. Researchers have improved the RDP approach by utilizing parallel computing and adding dynamic epsilon values to overcome this issue. With the help of the dynamic epsilon feature, the algorithm is more adaptable because it may change the distance threshold following the peculiarities of the dataset. This improved version, called Enhanced RDP (ERDP), has shown remarkably improved performance. During testing, ERDP significantly decreased processing time and could exclude up to 96.88% of data points without materially impairing the results' accuracy. In addition, statistical testing with a Wilcoxon-Signed Rank Test showed a clear distinction between the traditional RDP approach and ERDP's computational efficiency, with the latter regularly surpassing the former. This improvement demonstrates how the technique can be modified to meet the changing demands of data processing. It is a priceless tool for streamlining complicated datasets, especially in the context of time series research.},
+  keywords={Statistical analysis;Heuristic algorithms;Time series analysis;Data visualization;Parallel processing;Aerodynamics;Computational efficiency;computational efficiency;data reduction;dynamic epsilon;parallel computing;time-series visualization},
+  doi={10.1109/HNICEM60674.2023.10589058},
+  ISSN={2770-0682},
+  month={Nov},}
