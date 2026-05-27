@@ -1,0 +1,1143 @@
+Kullback-Leibler Approach to
+Gaussian Mixture Reduction
+ANDREW R. RUNNALLS
+University of Kent
+UK
+A common problem in multi-target tracking is to approximate
+a Gaussian mixture by one containing fewer components; similar
+problems can arise in integrated navigation. A common approach
+is successively to merge pairs of components, replacing the pair
+with a single Gaussian component whose moments up to second
+order match those of the merged pair. Salmond [1] and Williams
+[2, 3] have each proposed algorithms along these lines, but using
+different criteria for selecting the pair to be merged at each stage.
+The paper shows how under certain circumstances each of these
+pair-selection criteria can give rise to anomalous behaviour, and
+proposes that a key consideration should be the Kullback-Leibler
+(KL) discrimination of the reduced mixture with respect to
+the original mixture. Although computing this directly would
+normally be impractical, the paper shows how an easily computed
+upper bound can be used as a pair-selection criterion which
+avoids the anomalies of the earlier approaches. The behaviour
+of the three algorithms is compared using a high-dimensional
+example drawn from terrain-referenced navigation.
+Manuscript received January 20, 2006; revised September 1, 2006;
+released for publication December 4, 2006.
+IEEE Log No. T-AES/43/3/908406.
+Refereeing of this contribution was handled by Y. Oshman.
+This work was partially supported by QinetiQ Ltd., Farnborough,
+UK, under funding from the Applied Research Programme of the
+UK Ministry of Defence.
+Author’s address: Computing Laboratory, University of Kent,
+Canterbury CT2 7NF, Kent, UK, E-mail: (arr@kent.ac.uk).
+0018-9251/07/$25.00 °c 2007 IEEE
+I. INTRODUCTION
+Several data fusion algorithms, usually derived
+in some way from the Kalman filter, represent the
+state of the observed system as a mixture of Gaussian
+distributions. An important example is the multiple
+hypothesis approach to tracking multiple targets
+where there is ambiguity in assigning observations
+to tracks (see for example [4, sec. 6.7]) and this is
+the application motivating Salmond’s and Williams’s
+papers cited below. However, Gaussian mixture
+approaches are also useful in integrated navigation
+applications where, for example, there is some
+ambiguity in the position fixes used to augment an
+inertial navigation system. This is the application
+motivating the present note [5, 6].
+A common drawback with these Gaussian mixture
+algorithms is that there is a tendency for the number
+of components of the mixture to grow without bound;
+indeed, if the algorithm were simply to follow the
+statistical model on which the method is based, the
+number of components would increase exponentially
+over time. To combat this, various pragmatic measures
+must be taken to keep the number of components
+in check. Typically this will be achieved either by
+discarding components with low probability, and/or
+by merging components which represent similar state
+hypotheses.
+Salmond [1] proposed a mixture reduction
+algorithm in which the number of components is
+reduced by repeatedly choosing the two components
+that appear to be most similar to each other, and
+merging them. His criterion of similarity is based on
+concepts from the statistical analysis of variance, and
+seeks to minimise the increase in “within-component”
+variance resulting from merging the two chosen
+components.
+Williams [2, 3] proposed a mixture reduction
+algorithm based on an integrated squared difference
+(ISD) similarity measure, which as he points out
+has the big advantage that the similarity between
+two arbitrary Gaussian mixtures can be expressed
+in closed form. The algorithm he proposes uses a
+hill-climbing optimisation to search for a reduced
+mixture with the greatest similarity to the original
+mixture; however, to find starting points for the
+optimisation process, he uses a pairwise merge
+algorithm similar to Salmond’s, but using the ISD
+similarity measure.
+In the present paper, we propose a third variation
+on the pairwise-merge approach, in which the
+measure of similarity between two components is
+based on the Kullback-Leibler (KL) discrimination
+measure [7].
+The layout is as follows. Section II introduces
+a brief notation for Gaussian mixtures, defines the
+concept of a moment-preserving merge of two or
+more components of such a mixture, and outlines the
+IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007 989
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+pairwise-merge type of mixture reduction algorithm
+being considered here. Section III introduces the
+KL discrimination measure. Section IV describes
+the criterion proposed in [1] for selecting which
+pair of components to merge at each stage, and
+identifies two properties of this criterion that may be
+considered anomalous. Section V similarly studies the
+ISD criterion proposed by Williams, and identifies
+a property of this criterion that may be considered
+undesirable in some applications, particularly where
+the system state vector has high dimensionality.
+Section VI proposes a dissimilarity measure for
+pair selection based on KL discrimination, and
+explores its properties; Section VII then discusses
+the advantages and disadvantages of a pairwise
+merge algorithm based on this dissimilarity
+measure. Section VIII compares the operation of the
+Salmond, Williams, and KL reduction algorithms
+in reducing a high-dimensional mixture arising in
+terrain-referenced navigation. Finally Section IX
+draws conclusions.
+II. GENERAL BACKGROUND
+A. Notation
+We represent a component of a Gaussian
+mixture using notation of the form (w,¹,P); this
+represents a component with nonnegative weight
+w, mean vector ¹, and covariance matrix P. (We
+assume throughout that components’ covariance
+matrices are strictly positive definite, and not merely
+nonnegative definite.) We use notation such as
+f(w1,¹1,P1), (w2,¹2,P2),:::(wn,¹n,Pn)g to denote a
+mixture of n such components; such a mixture must
+satisfy w1 + ¢¢¢ + wn = 1, and has probability density
+function (pdf):
+f(x)=Xn
+i=1
+p
+wi
+(2¼)d detPi
+exp·
+¡1
+2
+(x ¡ ¹i
+)
+TP¡1
+i (x ¡ ¹i
+)
+¸
+where d is the dimensionality of the state vector x.A
+plain (unmixed) Gaussian distribution will be written
+using notation such as f(1,¹,P)g.
+B. Merging Two Components
+Suppose we are given a mixture of two Gaussian
+components:
+f(w1,¹1,P1), (w2,¹2,P2)g (1)
+(where w1 + w2 = 1) and that we wish to approximate
+this mixture as a single Gaussian. A strong candidate
+is the Gaussian whose zeroth, first- and second-order
+moments match those of (1), i.e., the Gaussian
+with mean vector ¹ and covariance matrix P as
+follows:
+¹ = w1¹1 + w2¹2
+P = w1(P1 +(¹1 ¡ ¹)(¹1 ¡ ¹)
+T)
++ w2(P2 +(¹2 ¡ ¹)(¹2 ¡ ¹)
+T)
+= w1P1 + w2P2 + w1w2(¹1 ¡ ¹2)(¹1 ¡ ¹2)
+T:
+(Theorem 2 shows that f(1,¹,P)g is the Gaussian
+whose KL discrimination from the mixture (1) is
+minimal.)
+We refer to (1,¹,P) as the moment-preserving
+merge of (w1,¹1,P1) and (w2,¹2,P2). More generally,
+we can remove the restriction that w1 + w2 = 1: given
+two weighted Gaussian components (wi
+,¹i
+,Pi
+) and
+(wj ,¹j ,Pj ), with w1 + w2 · 1, their moment-preserving
+merge is the Gaussian component (wij ,¹ij ,Pij ) as
+follows (cf. [3, eqs. 2—4]):
+wij = wi + wj (2)
+¹ij = wijij¹i + wjjij¹j (3)
+Pij = wijijPi + wjjijPj
++ wijijwjjij (¹i ¡ ¹j )(¹i ¡ ¹j )
+T (4)
+where we write wijij = wi
+=(wi + wj ) and wjjij =
+wj=(wi + wj ).
+C. Mixture Reduction Algorithm
+Suppose that we are given a mixture with n
+components, and we wish to approximate it by a
+mixture of m components, where m · n. In this paper,
+we focus on algorithms which operate in the following
+general way.
+While more than m components remain, choose
+the two components that in a sense to be defined
+are least dissimilar, and replace them by their
+moment-preserving merge.
+The algorithm proposed in [1, sec. 4] is of this type,
+using the dissimilarity measure to be described in
+Section IV; the algorithm proposed in [2, 3] uses an
+algorithm of this type to determine starting points for
+an optimisation procedure.
+III. KULLBACK-LEIBLER DISCRIMINATION
+If f1(x) and f2(x) are pdfs over <d, the KL
+discrimination1 of f2 from f1 is defined as
+dkl(f1,f2)= Z
+<d
+f1(x)log f1(x)
+f2(x)
+dx: (5)
+1Also referred to as cross-entropy, KL information, or KL
+divergence. However, Kullback and Leibler themselves [7] and
+several subsequent authors use the term “divergence” to refer to
+dkl(f1,f2)+ dkl(f2,f1). It is also sometimes called the KL distance,
+despite not satisfying the usual requirements for a distance measure.
+990 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+Although clearly dkl(f,f) = 0, and dkl(f,g) ¸ 0
+(cf. [8, Theorem 2.6.3], [9, Theorem 4.3.1]), in
+general it is not true that dkl(f,g)= dkl(g,f), nor that
+dkl(f,g)+ dkl(g,h) ¸ dkl(f,h).
+To give an informal motivation for KL
+discrimination, suppose that we have a stream of data
+x1,x2,::: which we assume to be independent samples
+either from f(x) or from g(x), and we wish to decide
+which. From a Bayesian perspective, the approach
+we might take is to continue drawing samples until
+the likelihood ratio Q
+i
+(f(xi
+)=g(xi
+)) exceeds some
+predefined threshold, say 100:1 in favour on one
+candidate or the other. Equivalently, we will be aiming
+to achieve a sample large enough that the logarithm of
+the likelihood ratio falls outside the bounds §log 100.
+Now suppose that (unknown to us) the data stream is
+actually coming from f(x). Then the expected value
+of the log-likelihood-ratio for a single sample point
+will be E(log(f(x)=g(x))) = dkl(f,g). Consequently,
+the expected log-likelihood-ratio for the full sample
+will exceed log 100 provided the sample size exceeds
+(log 100)=dkl(f,g). Roughly speaking, small values
+of dkl(f,g) mean that we will need large samples to
+distinguish f from g, and conversely.
+The remainder of this section introduces theorems
+about KL discrimination that we use in Section VI,
+and can be skipped on a first reading.
+THEOREM 1 Let g1(x) be the d-dimensional Gaussian
+pdf with mean vector ¹1 and positive-definite
+covariance matrix P1, and let g2(x) be the
+d-dimensional Gaussian pdf with mean vector ¹2 and
+positive-definite covariance matrix P2. Then:
+2dkl(g1,g2) = tr(P¡1
+2 [P1 ¡ P2 +(¹1 ¡ ¹2)(¹1 ¡ ¹2)
+T])
++ log det(P2)
+det(P1)
+:
+For a proof see for example [9, Theorem 7.2.8].
+THEOREM 2 Let f(x) be a pdf over d dimensions
+with well-defined mean ¹¤ and covariance matrix
+P¤, where P¤ is strictly positive-definite. As before, let
+(1,¹,P) denote the Gaussian density with mean ¹ and
+positive-definite covariance matrix P. Then the unique
+minimum value of dkl(f, (1,¹,P)) is achieved when
+¹ = ¹¤ and P = P¤.
+For a proof see the Appendix.
+THEOREM 3 If f(x), h1(x) and h2(x) are any pdfs over
+d dimensions and 0 · w · 1 then, writing w¯ for 1 ¡ w:
+dkl(wh1 + wh¯ 2,f) · wdkl(h1,f)+ wd¯ kl(h2,f)
+dkl(f,wh1 + wh¯ 2) · wdkl(f,h1)+ wd¯ kl(f,h2):
+This is a standard result. For a proof see [9,
+Theorem 4.3.2] or [8, Theorem 2.7.2].
+THEOREM 4 If f1(x), f2(x) and h(x) are any pdfs over
+d dimensions, 0 · w · 1 and w¯ =1 ¡ w, then:
+dkl(wf1 + wh¯ ,wf2 + wh¯ ) · wdkl(f1,f2):
+For a proof see the Appendix.
+IV. SALMOND’S CRITERION
+Let f(w1,¹1,P1),:::(wn,¹n,Pn)g be an n-component
+Gaussian mixture, and let ¹ and P be, respectively,
+the overall mean and the overall variance of this
+mixture. Clearly
+¹ =Xn
+i=1
+wi
+¹i
+while P can be written as P = W + B where W is the
+within-components contribution to the total variance,
+given by
+W =Xn
+i=1
+wi
+Pi
+while B is the “between-components” contribution
+given by
+B =Xn
+i=1
+wi
+(¹i ¡ ¹)(¹i ¡ ¹)
+T:
+When two components are replaced by their
+moment-preserving merge, the effect is, roughly
+speaking, to increase W and decrease B by a
+corresponding amount, leaving the total variance P
+unchanged. Salmond’s general idea [1, sec. 4] is to
+choose for merging two components i and j such that
+the increase in W is minimised. He shows that the
+change in W when components i and j are replaced
+by their moment-preserving merge is
+¢Wij = wi
+wj
+wi + wj
+(¹i ¡ ¹j )(¹i ¡ ¹j )
+T:
+However, ¢Wij is a matrix, whereas we require a
+scalar dissimilarity measure. Salmond proposes using
+the following measure:
+D2
+s (i, j) = tr(P¡1¢Wij ): (6)
+Here the trace reduces its matrix argument to a scalar,
+and the premultiplication by P¡1 ensures that the
+resulting dissimilarity measure is invariant under linear
+transformations of the state space.
+However, the dissimilarity measure defined in (6)
+has two properties that may be considered undesirable
+as a basis for choosing which components to merge.
+First, the measure depends on the means of the
+components, but not on their individual covariance
+matrices, leading to the behaviour in the following.
+EXAMPLE 1 A mixture comprises three
+two-dimensional components f(1=3,¹,P1), (1=3,
+¹ + ±¹,P1), (1=3,¹,P2)g, where ±¹ is very small
+RUNNALLS: KULLBACK-LEIBLER APPROACH TO GAUSSIAN MIXTURE REDUCTION 991
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+(e.g. ±¹ = (0:0001,0:0001)T) but P2 is very different
+from P1:
+P1 =
+μ 10:9
+0:91 ¶
+, P2 =
+μ 1 ¡0:9
+¡0:91 ¶
+:
+We wish to reduce the mixture to two components.
+Then, using (6), we choose to merge the first and
+third components, yielding a merged component
+(2=3,¹,I2), where I2 is the two-dimensional identity
+matrix.
+The reader may well consider that in this example it
+would be better to merge the first two components,
+yielding (2=3,¹ + (1=2)±¹,P1 + (1=4)±¹±¹T).
+The second drawback arises from the presence
+of the overall covariance P within (6). This has the
+implication that adding a new component to a mixture
+may alter the order in which the existing components
+are merged, as shown in the following example.
+EXAMPLE 2 A mixture over the two dimensions (x,y)
+consists of four components
+A = (0:25, (0:661,1)T,I2) (7)
+B = (0:25, (1:339,¡1)T,I2) (8)
+C = (0:25, (¡0:692,1:1)T,I2) (9)
+D = (0:25, (¡1:308,¡1:1)T,I2): (10)
+(The means of the components are shown in Fig. 1.)
+We wish to reduce this mixture to three components.
+It is readily established that the overall mean of the
+mixture is (0,0)T, and its covariance matrix is 2:105I2.
+From the latter fact, it follows that criterion (6) will
+lead us simply to merge the two components whose
+means are closest together, namely A and C.
+Now modify the original mixture by reducing the
+weights of components A to D to 0.2, and adding
+a fifth component E = (0:2, (0,¡10)T,I2). We wish
+to reduce this new mixture to three components. It
+turns out that criterion (6) now selects components
+A and B for the first merge, and components C and
+D for the second merge. This is because, although E
+is a weak candidate for either merge, its inclusion in
+the mixture has greatly increased its overall variance
+in the y-direction, meaning that (6) now weights
+differences in x more heavily than differences in y.
+V. WILLIAMS’S CRITERION
+Williams [2] and Williams and Maybeck [3]
+propose a method of Gaussian mixture reduction
+based on the ISD measure of the dissimilarity between
+two pdfs f1(x) and f2(x):
+JS =
+Z
+(f1(x) ¡ f2(x))2dx
+(cf. [3, eq. 4]. This has the important property that
+the dissimilarity between two arbitrary Gaussian
+Fig. 1. Means of components in Example 2.
+mixtures can be expressed in closed form (given in
+[3, eq. 10])–a property regrettably not shared by the
+measure proposed in the present paper.
+Their algorithm for reducing an n-component
+mixture to an m-component mixture (m · n) can be
+summarised as follows.
+1) While more than m components remain
+consider all possible operations of the following two
+kinds:
+a) deleting a component and renormalising the
+remaining mixture,
+b) replacing a pair of components with their
+moment-preserving merge,
+and in each case evaluate the ISD-dissimilarity of the
+resulting mixture from the original mixture. Apply the
+operation for which this dissimilarity is a minimum.
+2) Use the resulting m-component mixture as
+the starting point for gradient-based optimisation
+technique, to seek an m-component mixture with
+lower dissimilarity to the original mixture.
+The authors note that the optimisation at Step 2
+will seek a local minimum rather than the global
+minimum, hence the need to choose the starting point
+carefully.
+The ISD cost measure circumvents both of the
+drawbacks of Salmond’s criterion. First, the measure
+depends explicitly on the covariance matrices as well
+as the means of the components. Second, the cost
+incurred by merging two components depends only
+on the parameters of those components, and not on
+other characteristics of the mixture of which they
+form a part. Consequently, the anomalies observed
+in Examples 1 and 2 do not arise.
+However, the ISD criterion leads to puzzling
+behaviour of its own. To illustrate this, we focus
+on mixtures where the components are radially
+992 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+symmetric, i.e., the covariance matrices are multiples
+of the identity matrix. Consider first the case where
+the starting mixture is f(w,¹ ¡ c¾u,¾2Id), (w,¹ +
+c¾u,¾2Id)g, where ¹ is arbitrary and u is a
+d-dimensional unit vector. The means of the two
+components of this mixture are distance 2c¾ apart.
+In this case it follows from [3, eq. 12] that the ISD
+cost of deleting one of the components (and raising
+the other component to unit weight) is given by
+JS = 4w2
+¾d
+p(4¼)d
+hD(c) (11)
+where
+hD(c)= 1
+2 (1 ¡ exp(¡c2)) (12)
+while the cost of replacing the two components by
+their moment-preserving merge, namely (2w,¹,
+¾2(I + c2uuT)), is
+JS = 4w2
+¾d
+p(4¼)d
+hM (c) (13)
+where
+hM(c)= 1
+2
+(1 + exp(¡c2)) + 1
+p
+1+ c2
+¡ 2
+p
+2
+p
+2+ c2 expμ
+¡ c2
+2(2 + c2)
+¶
+: (14)
+The functions hM (c) and hD(c) are both zero for
+c = 0 and as c increases, both functions increase
+monotonically, tending towards 1=2 as c !1. It can
+be shown that hD(c) >hM (c) except when c is zero, so
+the deletion option is not considered further.
+In the example under consideration, ¾ acts simply
+as a scale factor, but it nevertheless appears in (13),
+raised moreover to the power d. This leads to some
+surprising behaviour in the way in which Williams’s
+algorithm selects pairwise merges, as in the following
+twelve-dimensional example. (It is not unusual in
+inertial navigation applications for the state vector to
+have 15 or more dimensions.)
+EXAMPLE 3 A mixture over the space (x1,:::x12)
+comprises four components
+A = (0:25, (¡20,¡0:5,0,:::,0)T,I12) (15)
+B = (0:25, (¡20,0:5,0,:::0)T,I12) (16)
+C = (0:25, (20,¡10,0,:::0)T,4I12) (17)
+D = (0:25, (20,10,0,:::0)T,4I12) (18)
+where in each mean vector the ellipsis ::: comprises
+eight zeroes. Note that components A and B have
+negligible probability within the region where x1 > 0,
+and C and D have negligible probability within the
+region x1 < 0.
+Assume that we wish to reduce this
+four-component mixture to three components. Now,
+according to (13) the cost of replacing components A
+and B by their moment-preserving merge is
+JS = 1
+4(4¼)6 hM (0:5) ¼ 6:39 £ 10¡12
+while the cost of replacing C and D by their
+moment-preserving merge is
+JS = 1
+4 £ 212(4¼)6 hM(5) ¼ 5:48 £ 10¡12:
+Consequently, the Williams algorithm will choose
+to merge C and D rather than merging A and B.
+This is despite the fact that mixture of A and B is
+already unimodal, and is very similar in shape to their
+moment-preserving merge. In contrast, the mixture
+of C and D is decidedly bimodal, the means of these
+components being ten standard deviations apart.
+In fact, direct numerical integration reveals that
+the KL discrimination of the mixture fA,B,CDg
+(where CD is the result of merging C and D) from the
+original mixture fA,B,C,Dg is 0.468, so (following
+the discussion at the start of Section III) it would need
+only about 10 samples from the original mixture to
+distinguish it from fA,B,CDg with a likelihood ratio
+of 100:1. In contrast, the discrimination of the mixture
+fAB,C,Dg from the original is only 7:52 £ 10¡5, so
+requiring an average of over 60000 samples to achieve
+the same likelihood ratio.
+The phenomenon illustrated by this example arises
+from the scale dependency of the ISD cost measure,
+as exhibited by the presence of the scale factor ¾ in
+the cost measure of (13). It is particularly pronounced
+in spaces of high dimensionality, and means that–at
+least in some applications–the ISD cost measure
+may not be suitable as a basis for Gaussian mixture
+reduction.
+In Section VI we present an alternative criterion
+for mixture reduction which does not exhibit scale
+dependency, and which also avoids the drawbacks of
+Salmond’s criterion.
+VI. A DISSIMILARITY MEASURE BASED ON
+KL DISCRIMINATION
+A. Motivation
+At each iteration of the algorithm outlined in
+Section IIC, we wish to choose two components from
+the mixture for merging. Our ultimate objective is to
+find a weighted mixture of m Gaussian components
+in such a way as to keep the KL discrimination
+of the m-component mixture from the original
+n-component mixture as small as possible, subject
+to being able to accomplish this with an algorithm
+that is computationally reasonably fast. A reasonable
+criterion, therefore, is to choose two components in
+such a way as to minimise the KL discrimination of
+RUNNALLS: KULLBACK-LEIBLER APPROACH TO GAUSSIAN MIXTURE REDUCTION 993
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+the mixture after the merge from the mixture before
+the merge.
+Unfortunately, there appears to be no closed-form
+expression for the KL discrimination of one
+(nontrivial) Gaussian mixture from another. (This fact
+deterred Williams [2, sec. 3.3.1.4] from pursuing a
+cost measure based on KL discrimination; were it not
+for this, he says it would be the “ideal cost function”
+for Gaussian mixture reduction.) However, Section III
+provided two theorems that enable us to put an upper
+bound on the discrimination of the mixture after the
+merge from the mixture before the merge. This leads
+us to the dissimilarity measure B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj ))
+now to be defined.
+B. Definition of B((wi
+,¹i
+,Pi
+),(wj ,¹j ,Pj ))
+Theorem 4 tells us that the discrimination of
+the mixture after merging components i and j
+from the mixture before the merge will not exceed
+wi + wj times the discrimination of the single
+Gaussian f(1,¹ij ,Pij )g from the (normalised) mixture
+f(wijij ,¹i
+,Pi
+), (wjjij ,¹j ,Pj )g. (Refer to Section IIB for
+notation.)
+Moreover Theorem 3 tells us that this
+discrimination, which we write as
+dkl(f(wijij ,¹i
+,Pi
+), (wjjij ,¹j ,Pj )g,f(1,¹ij ,Pij )g)
+will not exceed
+1
+wi + wj
+(wi
+dkl(f(1,¹i
+,Pi
+)g,f(1,¹ij ,Pij )g)
++ wjdkl(f(1,¹j ,Pj )g,f(1,¹ij ,Pij )g)):
+Putting these together, it follows that the
+discrimination of the mixture following the merge
+from the mixture before the merge will not exceed:
+B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj ))
+= wi
+dkl(f(1,¹i
+,Pi
+)g,f(1,¹ij ,Pij )g)
++ wjdkl(f(1,¹j ,Pj )g,f(1,¹ij ,Pij )g): (19)
+We now show how this upper bound
+B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj )) can be computed in practice.
+From Theorem 1, we have
+2dkl(f(1,¹i
+,Pi
+)g,f(1,¹ij ,Pij )g)
+= tr(P¡1
+ij [Pi ¡ Pij +(¹i ¡ ¹ij )(¹i ¡ ¹ij )
+T])
++ log det(Pij )
+det(Pi
+)
+= tr(P¡1
+ij [Pi ¡ Pij + w2
+jjij (¹i ¡ ¹j )(¹i ¡ ¹j )
+T])
++ log det(Pij ) ¡ log det(Pi
+):
+A corresponding expression can be obtained for
+2dkl(f(1,¹j ,Pj )g,f(1,¹ij ,Pij )g) by replacing Pi by Pj
+and wjjij by wijij .
+Consequently, substituting into (19) and using the
+fact that trace is a linear operator, we find
+2B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj ))
+= tr(P¡1
+ij ³
+Pij )+(wi + wj )log det(Pij )
+¡ wi log det(Pi
+) ¡ wj log det(Pj )
+where
+³
+Pij = wi
+Pi + wjPj ¡ (wi + wj )Pij
++
+wi
+wj
+wi + wj
+(¹i ¡ ¹j )(¹i ¡ ¹j )
+T: (20)
+If we now substitute the expression for Pij in (4) into
+(20), we find that ³
+Pij equals zero. Therefore:
+B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj ))
+= 1
+2 [(wi + wj )log det(Pij )
+¡ wi log det(Pi
+) ¡ wj log det(Pj )]: (21)
+C. Properties of B(i, j)
+In the remainder of this paper we write B(i, j) as a
+shorthand for B((wi
+,¹i
+,Pi
+), (wj ,¹j ,Pj )).
+First of all, it is clear that the function is
+symmetric: B(i, j)= B(j,i).
+In one dimension, with Pi =(¾2
+i ), Pj =(¾2
+j ), (21)
+becomes
+2B(i, j)
+wi + wj
+= log"
+wijij Ã
+¾2
+i
+¾2
+j
+!wjjij
++ wjjij Ã¾2
+j
+¾2
+i
+!wijij
++ wijijwjjij
+(¹i ¡ ¹j )
+2
+¾2wijij
+i ¾2wjjij
+j
+#
+(22)
+showing that in this case B(i, j) depends only on the
+weights wi
+, wj and on the dimensionless quantities
+¾2
+i =¾2
+j and (¹i ¡ ¹j )=(¾wijij
+i ¾wjjij
+j ).
+This conclusion can be extended to more than
+one dimension using a simultaneous diagonalisation
+procedure. Since Pi and Pj are both positive definite,
+by a small variation of the procedure described in
+[10, sec. 1c.3(ii)] we can find a square unitary2 matrix
+Uij and diagonal matrices Di and Dj , with all their
+diagonal elements positive, such that:
+Pi = U¡1
+ij Di
+U¡T
+ij , Pj = U¡1
+ij DjU¡T
+ij : (23)
+Substituting from these equations into (4) we get
+Pij = wijijU¡1
+ij Di
+U¡T
+ij + wjjijU¡1
+ij DjU¡T
+ij
++ wijijwjjij (¹i ¡ ¹j )(¹i ¡ ¹j )
+T
+= U¡1
+ij (wijijDi + wjjijDj + wijijwjjijuijuT
+ij )U¡T
+ij
+(24)
+2i.e., a matrix with determinant unity. Note that the notation U
+stands for “unitary”: Uij is not in general upper triangular.
+994 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+where we have written uij for Uij (¹i ¡ ¹j ). Now,
+substituting from (23) and (24) into (21) and using
+the fact that det(AB) = detA £ detB, we get
+2B(i, j)
+wi + wj
+= log det(wijijDi + wjjijDj + wijijwjjijuijuT
+ij )
+¡ wijij log det(Di
+) ¡ wjjij log det(Dj )
+= log det(wijijDi + wjjijDj + wijijwjjijuijuT
+ij )
+¡ log det(Dwijij
+i ) ¡ log det(Dwjjij
+j )
+= log det(D¡wijij
+i D¡wjjij
+j
+£ [wijijDi + wjjijDj + wijijwjjijuijuT
+ij ])
+= log det(wijij (Di
+D¡1
+j )
+wjjij + wjjij (DjD¡1
+i )
+wijij
++ wijijwjjijD¡wijij
+i D¡wjjij
+j uijuT
+ij ) (25)
+where the notation D® denotes the diagonal matrix
+whose elements are the corresponding elements of D
+raised to the power ®. Thus B(i, j) depends only on
+the weights wi
+, wj and the dimensionless quantities
+Di
+D¡1
+j and D¡wijij=2
+i D¡wjjij=2
+j uij .
+By inspection of (25) it can be seen that B(i, j)=0
+if and only if at least one of the following three
+conditions holds: 1) wi = 0, 2) wj = 0, or 3) ¹i =
+¹j and Pi = Pj . A counterexample to the triangle
+inequality is given (in one dimension) by putting
+w1 = w2 = w3 =1=3, ¹1 = ¹2 = ¹3 and ¾3 =2¾2 =4¾1;
+then from (22) we have B(1,2) = B(2,3) ¼ 0:07 but
+B(1,3) ¼ 0:25.
+VII. DISCUSSION
+We propose that, in each iteration of the algorithm
+outlined in Section IIC, we select for merging
+two components i and j, i 6= j, such that B(i, j)
+is minimised. The dissimilarity measure B(i, j)
+as given by (21) is reasonably easy to compute,
+with computational complexity at most O(d3).
+Consequently, if our task is to reduce a mixture of n
+components to a mixture with cn components, where
+c< 1 is a constant, this will have total computational
+complexity of O(n3d3).
+This criterion has qualitatively the right properties.
+Roughly speaking, it will tend to select for merging:
+1) components with low weights. Note how the
+weights appear outside the logarithms in (21), and so
+can have a dominant effect,
+2) components whose means are close together in
+relation to their variances, as measured by the length
+of the vector D¡wijij=2
+i D¡wjjij=2
+j uij (cf. (25)),
+3) components whose covariance matrices are
+similar, in the sense that the term Di
+D¡1
+j in (25) is
+close to the identity matrix.
+The B(i, j) criterion avoids the drawbacks of
+Salmond’s criterion, in that 1) it depends explicitly
+on the covariance matrices of components i and j, and
+will avoid merging components where these are very
+different, and 2) adding a new component to a mixture
+cannot alter the order in which existing components
+are merged. Nor does the B(i, j) criterion exhibit the
+scale dependency of the ISD measure; for example,
+corresponding to (13), we get simply
+B(i, j)= wlog(1 + c2)
+which does not depend on ¾, or indeed on
+d. Consequently, in Example 3 we have
+B(C,D)=B(A,B) ¼ 14:6, so A would certainly be
+merged with B in preference to merging C and D.
+We make no claims for optimality for the resulting
+algorithm, but it is straightforward, and at each
+iteration we know that the KL discrimination of the
+postiteration mixture from the preiteration mixture
+cannot exceed B(i, j).
+The fact that B(i, j) is merely an upper bound on
+the KL discrimination, rather than an exact value,
+is admittedly a drawback. Moreover, since KL
+discrimination does not satisfy the triangle inequality,
+there is no simple way of bounding the discrimination
+that arises over the course of two or more iterations of
+the algorithm. However, obtaining a direct estimate of
+the KL bound would appear to require a numerical
+method, e.g. numerical integration. Worse, this
+integration would need to be carried out multiple
+times: O(n3) times if, as above, our task is to reduce
+n components to cn components. In many applications
+this will be computationally prohibitive. A possible
+compromise approach would be to use the B(i, j)
+criterion to compile a shortlist of possible component
+merges, selection from within this shortlist being by
+direct numerical integration.
+VIII. A PRACTICAL EXAMPLE
+This section compares the operation of Salmond’s
+criterion, the ISD measure, and the merging criterion
+introduced in Section VI as applied to reducing a
+Gaussian mixture over 15 dimensions from its original
+16 components down to four components. This
+dataset arises from an application to terrain-referenced
+navigation, specifically from the simulation run
+previously reported in [5, Fig. 7].
+The state vector comprises three elements
+of position error (north, up, and down), three
+components of velocity error, three platform
+misalignment angles, three accelerometer biases,
+and three gyro drift terms. However, for ease of
+visualisation, we illustrate here the algorithms’
+operation by examining the marginal distribution over
+the two horizontal components of position error.
+Fig. 2(a) shows the starting mixture. Each
+Gaussian component is represented by an elliptical
+RUNNALLS: KULLBACK-LEIBLER APPROACH TO GAUSSIAN MIXTURE REDUCTION 995
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+Fig. 2. Comparison of reduction algorithms applied to 16-component mixture over 15 dimensions. (a) Original mixture. (b) Salmond
+reduction. (c) Williams-Maybeck reduction. (d) KL bound reduction.
+contour enclosing 50% of its probability volume. In
+each ellipse, a sector is shown shaded: the proportion
+of the area of the ellipse thus shaded represents the
+component’s weight within the mixture. The thicker
+curves in the figure are two contours of the mixture
+as a whole: the dashed line encloses 95% of the
+mixture’s volume, while the solid line encloses 50%
+of its volume (within two regions).
+The mixture represents the navigation
+system’s state estimate just a few seconds after
+terrain-referenced navigation started. Consequently
+there is still considerable uncertainty about the
+aircraft’s position: the graticule in the figure
+comprises 1 km squares.
+Fig. 2(b), (c), and (d) show the result of reducing
+this mixture to four components using the algorithms
+considered earlier in the paper. In Fig. 2(b), the
+reduction uses Salmond’s criterion. Fig. 2(c) shows
+the result of applying the algorithm described in
+[3, sec. 4], except that (for comparability with the
+other algorithms) only pairwise merges of components
+are considered: i.e., the option of deleting components
+996 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+Fig. 3. KL discrimination of reduced mixture with respect to
+original mixture.
+entirely is eschewed. Finally Fig. 2(d) shows the result
+of applying the B(i, j) criterion. It is noted that the
+Williams-Maybeck reduction preserves the shape of
+the 50% mixture contour well (except for the loss of
+its secondary peak), but creates the greatest distortion
+of the 95% contour. In contrast, the reduction using
+B(i, j) is the best at preserving the shape of the 95%
+contour, but causes greater distortion to the 50%
+contour. This doubtless reflects the fact that the
+Williams-Maybeck criterion is aiming to minimise
+absolute differences of the reduced pdf from the
+original, where the KL bound aims to avoid large
+ratio errors. The behaviour of Salmond’s criterion is
+intermediate between the others, though interestingly
+it is the only one to preserve the secondary peak in
+the 50% contour (although shifting it somewhat to the
+north).
+Fig. 3 considers the KL discrimination of
+the reduced mixture with respect to the original
+mixture, and shows how it evolves as the merging
+process progresses. Results for Salmond’s
+criterion are shown as hollow circles, for the
+Williams-Maybeck measure as triangles, and
+for the B(i, j) criterion as solid disks. The KL
+discrimination was calculated using Monte Carlo
+integration using 100,000 points drawn from the
+original mixture; to improve comparability, the
+same points were used for each integration. The
+figure includes §2¾ tolerance bounds for each
+plotted point.
+From the figure, it is evident that there is
+very little difference in the performance of the
+algorithms as they reduce the mixture down to 11
+components. At this stage, the KL discrimination is
+about 0.013 for each algorithm, which means that
+it will require about 350 samples from the “true”
+mixture to distinguish it from the reduced one with
+an expected log-likelihood-ratio of log 100. As the
+number of components is further reduced down
+to four, the discrimination increases more rapidly,
+reaching 0.51 for the Salmond criterion, 0.55 for the
+Williams-Maybeck criterion, and 0.30 for the B(i, j)
+criterion, corresponding to sample sizes of 9, 8, and
+15, respectively.
+IX. CONCLUSION
+This paper has examined two algorithms proposed
+in the literature for reducing a Gaussian mixture
+to a mixture with fewer components, namely those
+due to Salmond [1] and to Williams and Maybeck
+[2, 3]. An element of both of these algorithms is
+successively to merge pairs of components, at each
+stage replacing the merged pair by a single Gaussian
+component with the same moments up to the second
+order.
+It has been shown that each of these algorithms
+can give rise to anomalous behaviour in the following
+certain circumstances.
+1) Salmond’s algorithm chooses for merging the
+pair of components whose means are closest together,
+even if their covariance matrices are very different.
+2) In Salmond’s algorithm, adding a new
+component to a mixture can alter the order in which
+existing components are merged, even if–indeed,
+especially if–the new component is far remote from
+the existing components and is therefore not itself a
+candidate for merging.
+3) The Williams algorithm has a tendency to
+select for merging a pair of components with large
+variances, even if their means are much further apart
+(in relation to their standard deviations) than another
+pair of components with smaller variances. This effect
+is particularly pronounced with state vectors of high
+dimension.
+The paper also proposed a new algorithm, again
+based on pairwise merging of components, but in
+which the choice of components for merging is
+based on an easily-computed upper bound of the KL
+discrimination of the postmerge mixture with respect
+to the premerge mixture, as defined in (21). It has
+been shown that this criterion avoids the anomalies
+described above.
+An indicative example has been presented, using a
+dataset derived from terrain-referenced navigation, in
+which it is required to reduce a 16-component mixture
+over 15 dimensions down to four components.
+The final mixture arrived at by each of the three
+algorithms has been illustrated, along with data on the
+KL discrimination of the reduced mixture with respect
+to the original mixture, showing how this grows as the
+reduction process proceeds. In the example, the final
+RUNNALLS: KULLBACK-LEIBLER APPROACH TO GAUSSIAN MIXTURE REDUCTION 997
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+KL discrimination was over 30% lower using the new
+algorithm than with either of the others.
+Further work is desirable to compare at greater
+length the performance of the algorithms considered
+here within particular application scenarios. A possible
+approach to this would be to repeat analyses along
+the lines of Section VIII for a large sample of mixture
+reduction problems within the particular application
+area.
+APPENDIX. PROOFS OF THEOREMS
+In each proof we use the standard inequality
+logx · x ¡ 1.
+THEOREM 2PROOF Using (5) it is straightforward to
+show that
+2dkl(f, (1,¹,P))
+=2Z
+<d
+f(x)logf(x)dx + d log 2¼
++ log detP +
+Z
+<d
+(x ¡ ¹)
+TP¡1(x ¡ ¹)f(x)dx
+=2Z
+<d
+f(x)logf(x)dx + d log 2¼
++ log detP + tr·
+P¡1
+Z
+<d
+(x ¡ ¹)(x ¡ ¹)
+Tf(x)dx
+¸
+where we have used the standard identity vTMv =
+tr(MvvT) (cf. [10,p: 34]). Now, writing ¢¹ = ¹ ¡ ¹¤
+we have
+Z
+<d
+(x ¡ ¹)(x ¡ ¹)
+Tf(x)dx = P¤ + ¢¹¢¹T:
+Consequently, if ¸1,:::¸d are the eigenvalues of P¡1P¤,
+we have
+2[dkl(f, (1,¹,P)) ¡ dkl(f, (1,¹¤,P¤))]
+= log detP ¡ log detP¤
++ tr[P¡1(P¤ + ¢¹¢¹T)] ¡ tr[P¡1 ¤ P¤]
+= ¡log det(P¡1P¤)
++ tr(P¡1P¤) + tr(P¡1¢¹¢¹T) ¡ d
+= ¡logY
+d
+i=1
+¸i +
+X
+d
+i=1
+¸i ¡ d + tr(P¡1¢¹¢¹T)
+=X
+d
+i=1
+(¡log¸i + ¸i ¡ 1) + tr(P¡1¢¹¢¹T)
+¸ 0
+with equality only if ¢¹ =0 and ¸i =1 for i = 1,:::d,
+i.e., if P¡1P¤ = I. This proves the theorem.
+THEOREM 4PROOF The proof is similar to that of
+[9, Theorem 4:3:3]. We have
+wdkl(f1,f2) ¡ dkl(wf1 + wh¯ ,wf2 + wh¯ )
+= w
+Z
+<d
+f1(x)log f1(x)
+f2(x)
+dx
+¡
+Z
+<d
+(wf1(x)+ wh¯ (x))log wf1(x)+ wh¯ (x)
+wf2(x)+ wh¯ (x)
+dx
+=
+Z
+<d
+wf1(x)log f1(x)[wf2(x)+ wh¯ (x)]
+f2(x)[wf1(x)+ wh¯ (x)]dx
++
+Z
+<d
+wh¯ (x)log wf2(x)+ wh¯ (x)
+wf1(x)+ wh¯ (x)
+dx
+¸
+Z
+<d
+wf1(x)
+·
+1 ¡ f2(x)[wf1(x)+ wh¯ (x)]
+f1(x)[wf2(x)+ wh¯ (x)]¸
+dx
++
+Z
+<d
+wh¯ (x)
+·
+1 ¡ wf1(x)+ wh¯ (x)
+wf2(x)+ wh¯ (x)
+¸
+dx
+=1 ¡
+Z
+<d
+(wf2(x)+ wh¯ (x))wf1(x)+ wh¯ (x)
+wf2(x)+ wh¯ (x)
+dx
+=0:
+ACKNOWLEDGMENT
+The author would like to thank David Salmond for
+helpful comments on a draft of this paper.
+REFERENCES
+[1] Salmond, D. J.
+Mixture reduction algorithms for target tracking in clutter.
+Proceedings of SPIE, Signal and Data Processing of Small
+Targets, vol. 1305, 1990, 434—445.
+[2] Williams, J. L.
+Gaussian mixture reduction for tracking multiple
+maneuvering targets in clutter.
+Master’s thesis, M.S.E.E. Thesis, Air Force Institute of
+Technology, Wright-Patterson Air Force Base, OH, 2003.
+[3] Williams, J. L., and Maybeck, P. S.
+Cost-function-based Gaussian mixture reduction.
+In Sixth International Conference on Information Fusion,
+ISIF, 2003.
+[4] Blackman, S., and Popoli, R.
+Design and Analysis of Modern Tracking Systems.
+Norwood, MA: Artech House, 1999.
+[5] Groves, P. D., Handley, R. J., and Runnalls, A. R.
+Optimising the integration of terrain-referenced
+navigation with INS and GPS.
+In Proceedings of Institute of Navigation National
+GNSS2004, Long Beach, CA, Sept. 2004, 1048—1059.
+[6] Runnalls, A. R., Groves, P. D., and Handley, R. J.
+Terrain-referenced navigation using the IGMAP data
+fusion algorithm.
+In 61st Annual Meeting of the Institute of Navigation,
+Institute of Navigation, Fairfax, VA, June 2005, 976—987.
+[7] Kullback, S., and Leibler, R. A.
+On information and sufficiency.
+Annals of Mathematical Statistics, 22 (1951), 79—86.
+[8] Cover, T. M., and Thomas, J. A.
+Elements of Information Theory.
+New York: Wiley, 1991.
+998 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 43, NO. 3 JULY 2007
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply.
+[9] Blahut, R. E.
+Principles and Practice of Information Theory.
+Reading, MA: Addison-Wesley, 1987.
+[10] Rao, C. R.
+Linear Statistical Inference and its Applications (2nd ed.).
+New York: Wiley, 1973.
+Andrew R. Runnalls received his M.A. and Ph.D. degrees from Cambridge
+University, and was a Research Fellow of Gonville and Caius College. For
+ten years he was with the guidance systems division of GEC Avionics at
+Rochester, UK, where he played a key part in the development of the SPARTAN
+terrain-referenced navigation system, which was flight-trialled in F16, Tornado,
+A6 and other aircraft. He joined the Computing Laboratory of the University
+of Kent in 1988, where he has continued to work on statistical data fusion
+techniques, with particular interests in terrain-referenced navigation and maritime
+tracking. He is a Fellow of the Royal Institute of Navigation.
+RUNNALLS: KULLBACK-LEIBLER APPROACH TO GAUSSIAN MIXTURE REDUCTION 999
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on May 27,2026 at 01:54:06 UTC from IEEE Xplore. Restrictions apply. 

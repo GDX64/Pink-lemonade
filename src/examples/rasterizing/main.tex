@@ -416,6 +416,40 @@ In a density heatmap the quantity that must be conserved is the total weight ---
 The weighted merge strategy addresses this directly: the sole criterion for collapsing points is screen-space proximity, and the total weight is always conserved in the merged centroid. No information about the magnitude of the signal is lost, only spatial resolution that is already below the pixel threshold and therefore invisible.
 
 
+\section{Mathematical Basis for Gaussian Merging}
+\label{sec:gaussian-merging}
+
+This section formalizes the merge operation used by our downsampler and relates it to the KL-based Gaussian mixture reduction criterion of Runnalls \cite{4383588}.
+
+Each visible sample is modeled as one Gaussian-mixture component
+\begin{equation}
+\left(w_i, \mu_i, P_i\right),
+\end{equation}
+where $w_i$ is its scalar weight (volume), $\mu_i \in \mathbb{R}^2$ is its chart-space position, and $P_i$ is its kernel covariance.
+
+Given two components $i$ and $j$, the moment-preserving merge replaces them with one component
+\begin{equation}
+w_{ij} = w_i + w_j,
+\end{equation}
+\begin{equation}
+\mu_{ij} = \frac{w_i}{w_i + w_j}\mu_i + \frac{w_j}{w_i + w_j}\mu_j,
+\end{equation}
+\begin{equation}
+P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j
++ \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
+\end{equation}
+
+These equations preserve zeroth, first, and second moments of the merged pair, so total weight, weighted mean, and covariance are conserved locally.
+
+Runnalls derives a pair-selection score from an upper bound on KL discrimination after a merge:
+\begin{equation}
+B(i,j)=\frac{1}{2}\Big[(w_i+w_j)\log\det(P_{ij})-w_i\log\det(P_i)-w_j\log\det(P_j)\Big].
+\end{equation}
+Minimizing $B(i,j)$ prefers merges that combine low-weight components, nearby means, and similar covariances, while avoiding pathological behavior of earlier criteria \cite{4383588}.
+
+Our renderer uses a linear-time screen-space merge for interactive performance, but it follows the same principles. In practice, kernels share the same base radius, so $P_i \approx P_j \approx \sigma^2 I$ before merging, and the only growth term in $P_{ij}$ is the outer product of the centroid displacement. Therefore, keeping points close in screen space keeps covariance inflation low, which is consistent with the KL-bound objective while remaining fast enough to run on every pan/zoom update.
+
+
 \section{GPU Rendering Pipeline}
 \label{sec:pipeline}
 
@@ -452,6 +486,70 @@ An optional quantization step maps the normalized value to a discrete number of 
 \subsection{Complexity}
 
 Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and tonemapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.
+
+\subsection{Mean Squared Error Analysis}
+
+Let $F(x,y)$ denote the reference density field obtained from full KDE (no merging), and let $\hat{F}(x,y)$ denote the field produced by the weighted-merge approximation. Over the heatmap domain $\Omega$ with $M$ pixels, we measure approximation quality with
+\begin{equation}
+\mathrm{MSE}=\frac{1}{M}\sum_{(x,y)\in\Omega}\left(\hat{F}(x,y)-F(x,y)\right)^2,
+\end{equation}
+and its scale-normalized form
+\begin{equation}
+\mathrm{NRMSE}=\frac{\sqrt{\mathrm{MSE}}}{\max_{(x,y)\in\Omega}F(x,y)-\min_{(x,y)\in\Omega}F(x,y)}.
+\end{equation}
+
+To isolate the effect of merging (rather than tonemapping), MSE is computed on the raw linear HDR accumulation buffer before opacity thresholding and colormap mapping. In this setting, each merged cluster replaces multiple nearby kernels by one weighted representative; therefore the local error grows with centroid displacement and decreases with larger kernel bandwidth.
+
+In practice, the merge threshold $\tau$ induces the expected trade-off: increasing $\tau$ reduces the number of submitted kernels and improves frame time, but increases MSE due to stronger spatial averaging. We therefore treat $\tau$ as a quality knob and select the largest value that keeps NRMSE below a target tolerance for the current viewport.
+
+Because the merge is recomputed in screen space after each pan/zoom update, the error is also view-dependent. This is desirable: when zoomed out, multiple nearby events become perceptually indistinguishable and can be merged with low MSE impact; when zoomed in, clusters naturally split and the approximation converges to the full KDE.
+
+\subsection{Two-Gaussian Analytical Error Model}
+
+For intuition, consider two isotropic 2D Gaussians with equal weights and equal standard deviation $\sigma$, centered at $\pm\Delta/2$ (so their separation is $\lVert\Delta\rVert$). Let
+\begin{equation}
+\rho = \frac{\lVert\Delta\rVert}{\sigma}
+\end{equation}
+be the separation measured in sigmas.
+
+The exact pair is
+\begin{equation}
+f(x)=\frac{1}{2}\,\mathcal{N}\!\left(x; -\frac{\Delta}{2},\sigma^2I\right)+\frac{1}{2}\,\mathcal{N}\!\left(x; +\frac{\Delta}{2},\sigma^2I\right),
+\end{equation}
+and its moment-preserving single-Gaussian merge is
+\begin{equation}
+g(x)=\mathcal{N}\!\left(x;0,\sigma_m^2 I\right),\qquad \sigma_m^2=\sigma^2\left(1+\frac{\rho^2}{4}\right).
+\end{equation}
+
+A closed-form integrated squared error (ISE) is
+\begin{equation}
+\mathrm{ISE}(\rho)=\int_{\mathbb{R}^2}\left(f(x)-g(x)\right)^2dx
+=\frac{1}{8\pi\sigma^2}\,\Psi(\rho),
+\end{equation}
+with
+\begin{equation}
+\Psi(\rho)=1+e^{-\rho^2/4}+\frac{2}{1+\rho^2/4}
+-\frac{8}{2+\rho^2/4}\exp\!\left(-\frac{\rho^2}{8(2+\rho^2/4)}\right).
+\end{equation}
+In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{article}.
+
+This gives an analytical error curve versus distance-in-sigmas. For a heatmap region of area $|\Omega|$ in chart coordinates, a practical approximation is
+\begin{equation}
+\mathrm{MSE}(\rho) \approx \frac{\mathrm{ISE}(\rho)}{|\Omega|},
+\end{equation}
+or, on a discrete grid, replacing $|\Omega|$ by the number of pixels.
+
+For small separations ($\rho \ll 1$), $\Psi(\rho)$ grows from zero with low-order polynomial behavior, explaining why nearby kernels can be merged with little error; for large separations, the error rises quickly, which justifies capping the merge threshold in sigma units.
+
+As a concrete operating point, setting merge distance equal to one standard deviation gives $\rho=1$ and
+\begin{equation}
+\Psi(1) \approx 0.01539.
+\end{equation}
+Therefore
+\begin{equation}
+\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
+\end{equation}
+which is small in practice and supports using a merge threshold on the order of $\sigma$ when prioritizing low approximation error.
 
 \subsection{Limitations}
 
