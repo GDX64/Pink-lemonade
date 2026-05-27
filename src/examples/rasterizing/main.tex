@@ -348,7 +348,7 @@ Fax: (888) 555--1212}}
 % As a general rule, do not put math, special symbols or citations
 % in the abstract
 \begin{abstract}
-A timeseries is typically visualized as a two-dimensional line chart of time against value. When a third scalar dimension is available --- such as traded volume at each price event --- a line chart provides no means to encode it, and the information is lost. We present a pipeline that encodes this third dimension as a weighted Kernel Density Estimation (KDE) density field rendered as a heatmap, allowing all three dimensions to be read simultaneously from a single chart. At the scale of hundreds of thousands of points, neither CPU-based KDE nor a na\"{i}ve GPU implementation achieves the frame budget required for real-time pan and zoom. We address this with a kernel-merging approximation that collapses spatially proximate points into single weighted kernels before GPU submission, reducing the number of kernel evaluations to screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- renders a perceptually calibrated density heatmap at interactive framerates with no server-side pre-aggregation.
+A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
 \end{abstract}
 
 % no keywords
@@ -369,15 +369,11 @@ A timeseries is typically visualized as a two-dimensional line chart of time aga
 \section{Motivation}
 \label{sec:motivation}
 
-A timeseries associates two values --- a timestamp and a measured quantity --- and a line chart is the natural way to display that relationship. Many real-world timeseries carry a meaningful third scalar at each observation: traded volume in financial markets, signal amplitude in sensor data, event severity in telemetry. This third dimension cannot be encoded on a conventional line chart without resorting to separate panels or lossy aggregations such as bar charts, which break the continuity of the series.
+A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Related interactive KDE systems have been explored by Lampe and Hauser \cite{5742387}; Gaussian-mixture rendering has also been used for large particle datasets \cite{article}.
 
-Kernel Density Estimation offers a principled way to incorporate the third dimension. By treating each observation as a weighted Gaussian kernel placed at its (time, value) coordinates, the superposition of all kernels forms a continuous density field over the two-dimensional chart space. Regions where observations are dense and heavily weighted accumulate high density; sparse or lightly weighted regions accumulate little. Mapping this field to a colormap produces a heatmap that encodes all three dimensions simultaneously --- time on the horizontal axis, value on the vertical axis, and the third scalar as color intensity. Interactive KDE-based visualization of streaming data has been explored by Lampe and Hauser \cite{5742387}, who also address the challenge of adapting kernel bandwidth to viewport settings; our work targets the additional constraint of a weighted third dimension and a fixed offline dataset rather than a live stream. Gaussian mixture representations for large-scale particle data have similarly been leveraged for rendering by Peng et al.\ \cite{article}.
+The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw; with strong overlap, fragment work can reach billions of evaluations per frame.
 
-The practical obstacle is scale. A single trading session for an active instrument routinely produces hundreds of thousands of tick events. Evaluating a Gaussian kernel for each point at each pixel on the CPU is computationally intractable for real-time interaction: the cost grows as $O(N \times W \times H)$, where $N$ is the point count and $W \times H$ is the screen resolution. Moving the kernel splatting to the GPU reduces constant factors substantially, but a na\"{i}ve implementation --- one draw call per point, each covering a kernel-sized screen region --- still fails to meet the frame budget at this data scale when the view changes and all kernels must be re-evaluated.
-
-A na\"{i}ve GPU implementation faces a severe overdraw problem. Each Gaussian kernel spans a screen-aligned quad whose area scales with the square of the kernel radius; a kernel of radius 50 pixels covers roughly 30\,000 pixels, every one of which must be shaded and blended. With hundreds of thousands of kernels and significant spatial overlap between them, the total number of fragment shader invocations can reach into the billions per frame --- well beyond what any GPU can sustain at interactive rates.
-
-We address this with a \textit{kernel-merging approximation}. Points that project within a configurable screen-space threshold of one another are collapsed into a single representative kernel whose weight is the sum of the constituent weights. Because the merge is performed in screen space and re-run on each view change, the number of kernels submitted to the GPU is bounded by the pixel resolution of the display rather than by the size of the dataset. The approximation error is negligible when the threshold is kept near the kernel radius: merged points are perceptually indistinguishable from the exact superposition of their individual kernels. The result is a three-stage GPU pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- that renders a perceptually calibrated density heatmap at interactive framerates across the full range of zoom levels.
+We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/tonemapping pipeline supports interactive, perceptually calibrated density maps.
 
 
 \section{Data Preparation}
@@ -397,15 +393,9 @@ Because data is sorted by time, only points falling within the current view wind
 
 \subsection{Weighted Merge}
 
-The visible points are passed through a \textit{weighted merge} downsampler before GPU upload. The algorithm scans points left to right, maintaining an open cluster. When a new point arrives, it computes the hypothetical weighted centroid that would result from absorbing the point into the cluster. If both the earliest cluster point and the incoming point remain within a configurable screen-space threshold of that centroid, the point is absorbed and the centroid is updated. Otherwise the cluster is flushed as a single output point and a new cluster begins.
+Visible points are downsampled by a \textit{weighted merge} pass before GPU upload. Scanning left-to-right, the algorithm maintains one open cluster and tests whether the next point can be absorbed while keeping both the earliest point and the candidate within a screen-space threshold of the updated weighted centroid. If not, it flushes the cluster and starts a new one.
 
-The centroid of each output point carries the summed weight of all its constituents, conserving the total signal: a merged cluster renders with a proportionally brighter splat than any individual constituent would. This weight-conserving merge is analogous in spirit to Gaussian mixture reduction techniques \cite{4383588}, which similarly collapse components while preserving aggregate statistics, though our criterion is spatial proximity in screen space rather than a KL-divergence bound.
-
-Checking the earliest cluster point --- rather than just the current centroid --- guards against gradual centroid drift, which would otherwise allow clusters to grow larger than the threshold over many small steps.
-
-Because the data is sorted by the time axis, candidate neighbors for merging always arrive in order and a point can only join the current open cluster or trigger the start of a new one. No backtracking or reordering is needed, and each point is visited exactly once. The algorithm therefore runs in $O(N)$ time over the visible subset, which is critical given that the merge must complete within a single frame budget to support smooth interaction.
-
-Smooth pan and zoom are a first-class requirement of the system. As the user navigates, the set of visible points and their screen-space projections change continuously, so the merge is re-run on every view change. Abrupt discontinuities in the density field --- caused by points entering or leaving the view, or by the merge threshold splitting or joining clusters differently --- would produce jarring visual jumps that undermine the user's spatial intuition. The $O(N)$ merge is fast enough to re-run each frame, ensuring that the heatmap evolves gradually as the view moves rather than snapping between discrete states.
+Each merged point keeps the sum of constituent weights, preserving total signal. The earliest-point check prevents centroid drift from slowly violating the threshold. Since points are time-sorted, each point is visited once with no backtracking, yielding $O(N)$ time over the visible subset. The merge is recomputed on each pan/zoom event to keep transitions smooth.
 
 \subsection{Why Shape-Preserving Simplification Is Insufficient}
 
@@ -419,7 +409,7 @@ The weighted merge strategy addresses this directly: the sole criterion for coll
 \section{Mathematical Basis for Gaussian Merging}
 \label{sec:gaussian-merging}
 
-This section formalizes the merge operation used by our downsampler and relates it to the KL-based Gaussian mixture reduction criterion of Runnalls \cite{4383588}.
+This section formalizes our merge operation and relates it to the KL-based reduction criterion of Runnalls \cite{4383588}.
 
 Each visible sample is modeled as one Gaussian-mixture component
 \begin{equation}
@@ -439,15 +429,13 @@ P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j
 + \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
 \end{equation}
 
-These equations preserve zeroth, first, and second moments of the merged pair, so total weight, weighted mean, and covariance are conserved locally.
+These equations preserve zeroth, first, and second moments, conserving local weight, mean, and covariance.
 
-Runnalls derives a pair-selection score from an upper bound on KL discrimination after a merge:
-\begin{equation}
-B(i,j)=\frac{1}{2}\Big[(w_i+w_j)\log\det(P_{ij})-w_i\log\det(P_i)-w_j\log\det(P_j)\Big].
-\end{equation}
-Minimizing $B(i,j)$ prefers merges that combine low-weight components, nearby means, and similar covariances, while avoiding pathological behavior of earlier criteria \cite{4383588}.
+Our renderer uses a linear-time screen-space merge. With a shared base radius, $P_i \approx P_j \approx \sigma^2 I$ before merging, and covariance growth is dominated by centroid separation. Keeping points close in screen space therefore limits covariance inflation while preserving interactive speed.
 
-Our renderer uses a linear-time screen-space merge for interactive performance, but it follows the same principles. In practice, kernels share the same base radius, so $P_i \approx P_j \approx \sigma^2 I$ before merging, and the only growth term in $P_{ij}$ is the outer product of the centroid displacement. Therefore, keeping points close in screen space keeps covariance inflation low, which is consistent with the KL-bound objective while remaining fast enough to run on every pan/zoom update.
+\subsection{Why Merging in Pixel Space}
+
+Our goal is perceptual: to help users estimate how much aggregated activity is present in each visible region of the chart. Because this judgment is made on what is currently shown on screen, aggregation should be computed in screen (pixel) space rather than only in data space. Merging in pixel space aligns the approximation with the displayed resolution, so contributions that are visually indistinguishable are combined, while separable structures remain distinct.
 
 
 \section{GPU Rendering Pipeline}
@@ -498,11 +486,7 @@ and its scale-normalized form
 \mathrm{NRMSE}=\frac{\sqrt{\mathrm{MSE}}}{\max_{(x,y)\in\Omega}F(x,y)-\min_{(x,y)\in\Omega}F(x,y)}.
 \end{equation}
 
-To isolate the effect of merging (rather than tonemapping), MSE is computed on the raw linear HDR accumulation buffer before opacity thresholding and colormap mapping. In this setting, each merged cluster replaces multiple nearby kernels by one weighted representative; therefore the local error grows with centroid displacement and decreases with larger kernel bandwidth.
-
-In practice, the merge threshold $\tau$ induces the expected trade-off: increasing $\tau$ reduces the number of submitted kernels and improves frame time, but increases MSE due to stronger spatial averaging. We therefore treat $\tau$ as a quality knob and select the largest value that keeps NRMSE below a target tolerance for the current viewport.
-
-Because the merge is recomputed in screen space after each pan/zoom update, the error is also view-dependent. This is desirable: when zoomed out, multiple nearby events become perceptually indistinguishable and can be merged with low MSE impact; when zoomed in, clusters naturally split and the approximation converges to the full KDE.
+To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
 
 \subsection{Two-Gaussian Analytical Error Model}
 
@@ -531,15 +515,13 @@ with
 \Psi(\rho)=1+e^{-\rho^2/4}+\frac{2}{1+\rho^2/4}
 -\frac{8}{2+\rho^2/4}\exp\!\left(-\frac{\rho^2}{8(2+\rho^2/4)}\right).
 \end{equation}
-In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{article}.
+In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
 
-This gives an analytical error curve versus distance-in-sigmas. For a heatmap region of area $|\Omega|$ in chart coordinates, a practical approximation is
+For a heatmap region of area $|\Omega|$, a practical approximation is
 \begin{equation}
 \mathrm{MSE}(\rho) \approx \frac{\mathrm{ISE}(\rho)}{|\Omega|},
 \end{equation}
-or, on a discrete grid, replacing $|\Omega|$ by the number of pixels.
-
-For small separations ($\rho \ll 1$), $\Psi(\rho)$ grows from zero with low-order polynomial behavior, explaining why nearby kernels can be merged with little error; for large separations, the error rises quickly, which justifies capping the merge threshold in sigma units.
+or, on a discrete grid, replacing $|\Omega|$ by pixel count. Small $\rho$ yields low error; large $\rho$ increases error quickly, motivating sigma-scaled merge thresholds.
 
 As a concrete operating point, setting merge distance equal to one standard deviation gives $\rho=1$ and
 \begin{equation}
@@ -549,7 +531,7 @@ Therefore
 \begin{equation}
 \mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
 \end{equation}
-which is small in practice and supports using a merge threshold on the order of $\sigma$ when prioritizing low approximation error.
+This small value supports using merge thresholds on the order of $\sigma$ when low approximation error is required.
 
 \subsection{Limitations}
 
@@ -567,7 +549,7 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
 \section{Conclusion}
 \label{sec:conclusion}
 
-We described an interactive density heatmap pipeline for weighted timeseries data. The central insight is that three GPU passes --- additive Gaussian accumulation onto a floating-point texture, parallel max-reduction for dynamic range normalization, and perceptual tonemapping with a tunable colormap --- are sufficient to render a fully interactive density visualization at the scale of financial tick data. Adaptive weighted-merge downsampling prior to each frame bounds the GPU work to screen resolution, ensuring performance scales with visible data rather than total data.
+We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and perceptual tonemapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
 
 
 
