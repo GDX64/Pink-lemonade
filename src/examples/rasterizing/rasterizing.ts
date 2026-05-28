@@ -4,11 +4,16 @@ import { GaussianChart, type LoadedData } from "./gaussian-chart";
 const DATA_KIND = "random";
 
 export async function rasterizingExample() {
+  await createChart1();
+  await createChart1();
+}
+
+async function createChart1() {
   const data = await loadData();
   const container = document.createElement("div");
-  container.style.width = "100%";
-  container.style.height = "100%";
-  container.style.position = "absolute";
+  container.style.width = "100vw";
+  container.style.height = "50vh";
+  container.style.position = "relative";
   document.body.appendChild(container);
   const chart = new GaussianChart({
     data,
@@ -19,7 +24,7 @@ export async function rasterizingExample() {
 
 async function loadData(): Promise<LoadedData> {
   if (DATA_KIND === "random") {
-    const points = createNoiseData(100_000);
+    const points = createNoiseData(100_000, 12345);
     const nFiltered = points.length;
     if (nFiltered === 0) {
       return { n: 0, dataF64: new Float64Array(0), xMin: 0, xScale: 1 };

@@ -26,6 +26,9 @@ export type GaussianChartOptions = {
 };
 
 type GaussianChartState = {
+  showHeatmap: boolean;
+  showTimescale: boolean;
+  pixelRatio: number;
   sigmaSize: number;
   quantSteps: number;
   opacityCut: number;
@@ -91,19 +94,25 @@ export class GaussianChart {
   constructor(options: GaussianChartOptions) {
     const { data, container } = options;
     this.container = container;
+    if (getComputedStyle(this.container).position === "static") {
+      this.container.style.position = "relative";
+    }
     this.n = data.n;
     this.dataF64 = data.dataF64;
     this.xMin = data.xMin;
     this.xScale = data.xScale;
     this.state = {
-      sigmaSize: 17,
+      showHeatmap: true,
+      showTimescale: true,
+      pixelRatio: window.devicePixelRatio,
+      sigmaSize: 8,
       quantSteps: 0,
       opacityCut: 0.03,
-      mergeThreshold: 20,
+      mergeThreshold: 8,
       paletteLevel: 0.5,
       showLine: true,
-      lineOpacity: 0.55,
-      lineWidth: 0.75,
+      lineOpacity: 1,
+      lineWidth: 1,
       paletteColors: { ...DEFAULT_PALETTE_COLORS },
     };
     this.controls = {
@@ -182,6 +191,8 @@ export class GaussianChart {
     this.chartCanvas = new ChartCanvas(this.container, this.xMin, this.xScale, {
       getPaletteLevel: () => this.state.paletteLevel,
       getOpacityCut: () => this.state.opacityCut,
+      getShowTimescale: () => this.state.showTimescale,
+      getPixelRatio: () => this.state.pixelRatio,
       getShowLine: () => this.state.showLine,
       getLineOpacity: () => this.state.lineOpacity,
       getLineWidth: () => this.state.lineWidth,
@@ -200,7 +211,24 @@ export class GaussianChart {
 
   private setupGui() {
     const gui = new GUI({ title: "Render Controls" });
+    this.container.appendChild(gui.domElement);
+    gui.domElement.style.position = "absolute";
+    gui.domElement.style.top = "0px";
     gui.domElement.style.right = `${AXIS_Y_W}px`;
+    gui.domElement.style.zIndex = "3";
+    gui
+      .add(this.state, "showHeatmap")
+      .name("Show heatmap")
+      .onChange((v: boolean) => {
+        this.canvas.style.opacity = v ? "1" : "0";
+      });
+    gui.add(this.state, "showTimescale").name("Show timescale");
+    gui
+      .add(this.state, "pixelRatio", 0.5, 4, 0.25)
+      .name("Pixel ratio")
+      .onChange(() => {
+        this.handleResize();
+      });
     this.fpsController = gui.add(this.controls, "fps").name("FPS").disable();
     gui.add(this.controls, "totalPoints").name("Total points").disable();
     this.renderedPointsController = gui
@@ -299,6 +327,8 @@ export class GaussianChart {
 
     this.viewManager.tick(dt);
 
+    const pixelRatio = this.getEffectivePixelRatio();
+
     updateUniform(
       this.gpu.device,
       this.uniformBuffer,
@@ -308,7 +338,7 @@ export class GaussianChart {
       this.viewManager.getViewMaxY(),
       this.hdrW,
       this.hdrH,
-      this.state.sigmaSize,
+      this.state.sigmaSize * pixelRatio,
     );
 
     this.gpu.device.queue.writeBuffer(
@@ -347,6 +377,7 @@ export class GaussianChart {
         viewMaxY,
         this.hdrW,
         this.hdrH,
+        this.state.mergeThreshold * pixelRatio,
       );
       this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, merged);
       this.lastMergedCount = merged.length / 3;
@@ -450,6 +481,7 @@ export class GaussianChart {
     viewMaxY: number,
     screenW: number,
     screenH: number,
+    mergeThresholdPx: number,
   ): Float32Array {
     const toSX = (x: number) =>
       ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
@@ -464,7 +496,7 @@ export class GaussianChart {
       strategy: "merge",
       toSX,
       toSY,
-      mergeThreshold: this.state.mergeThreshold,
+      mergeThreshold: mergeThresholdPx,
       threshold: 1000,
     });
 
@@ -493,6 +525,7 @@ export class GaussianChart {
   private createCanvas() {
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "position:absolute;top:0;left:0;background:#ffffff;";
+    canvas.style.opacity = this.state.showHeatmap ? "1" : "0";
     this.container.appendChild(canvas);
     this.resizeHeatmapCanvas(canvas);
     return canvas;
@@ -513,10 +546,15 @@ export class GaussianChart {
     const { cssW, cssH } = this.getContainerCssSize();
     const heatmapCssW = Math.max(1, cssW - AXIS_Y_W);
     const heatmapCssH = Math.max(1, cssH - AXIS_X_H);
+    const pixelRatio = this.getEffectivePixelRatio();
     canvas.style.width = `${heatmapCssW}px`;
     canvas.style.height = `${heatmapCssH}px`;
-    canvas.width = Math.round(heatmapCssW * devicePixelRatio);
-    canvas.height = Math.round(heatmapCssH * devicePixelRatio);
+    canvas.width = Math.round(heatmapCssW * pixelRatio);
+    canvas.height = Math.round(heatmapCssH * pixelRatio);
+  }
+
+  private getEffectivePixelRatio(): number {
+    return Math.max(0.25, this.state.pixelRatio);
   }
 }
 

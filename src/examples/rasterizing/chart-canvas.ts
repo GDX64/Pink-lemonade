@@ -5,6 +5,8 @@ const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 export type ChartCanvasStyleAccessors = {
   getPaletteLevel: () => number;
   getOpacityCut: () => number;
+  getShowTimescale: () => boolean;
+  getPixelRatio: () => number;
   getShowLine: () => boolean;
   getLineOpacity: () => number;
   getLineWidth: () => number;
@@ -140,7 +142,7 @@ export class ChartCanvas {
     viewMinY: number,
     viewMaxY: number,
   ) {
-    const dpr = devicePixelRatio;
+    const dpr = Math.max(0.25, this.styleAccessors.getPixelRatio());
     const cssW = Math.max(1, this.container.clientWidth);
     const cssH = Math.max(1, this.container.clientHeight);
     const w = Math.round(cssW * dpr);
@@ -161,7 +163,9 @@ export class ChartCanvas {
 
     ctx.translate(0, CHART_PAD_Y);
     this.drawLinePlot(hmW, hmH, viewMinX, viewMaxX, viewMinY, viewMaxY);
-    this.drawXAxis(hmW, hmH, cssH - CHART_PAD_Y * 2, viewMinX, viewMaxX);
+    if (this.styleAccessors.getShowTimescale()) {
+      this.drawXAxis(hmW, hmH, cssH - CHART_PAD_Y * 2, viewMinX, viewMaxX);
+    }
     this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
     ctx.restore();
 

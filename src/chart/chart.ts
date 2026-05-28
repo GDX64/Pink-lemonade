@@ -1,6 +1,10 @@
-export function gausianNoise(mean: number, stdDev: number): number {
-  let u1 = nextRandom();
-  let u2 = nextRandom();
+export function gausianNoise(
+  mean: number,
+  stdDev: number,
+  gen: () => number,
+): number {
+  let u1 = gen();
+  let u2 = gen();
   let z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
   return z0 * stdDev + mean;
 }
@@ -174,16 +178,17 @@ export function drawSplatKernelSeries(
   return { density, scaleX, scaleY };
 }
 
-export function createNoiseData(N: number): [number, number][] {
+export function createNoiseData(N: number, seed: number): [number, number][] {
   const mean = 0;
   const stdDev = 1;
-  let acc = gausianNoise(mean, stdDev);
+  const gen = createGen(seed);
+  let acc = gausianNoise(mean, stdDev, gen);
   let timeAcc = 0;
   const data: [number, number][] = [[timeAcc, acc]];
   for (let i = 1; i < N; i++) {
-    acc += gausianNoise(mean, stdDev);
+    acc += gausianNoise(mean, stdDev, gen);
     timeAcc += Math.abs(
-      gausianNoise(mean, stdDev) *
+      gausianNoise(mean, stdDev, gen) *
         Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4),
     );
     data.push([timeAcc, acc]);
@@ -324,7 +329,7 @@ function* pseudoRandomGen(seed: number): Generator<number> {
   }
 }
 
-const gen = pseudoRandomGen(12345);
-function nextRandom(): number {
-  return gen.next().value;
+function createGen(seed = 12345): () => number {
+  const localGen = pseudoRandomGen(seed);
+  return () => localGen.next().value;
 }
