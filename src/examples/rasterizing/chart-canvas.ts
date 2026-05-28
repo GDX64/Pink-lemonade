@@ -25,6 +25,7 @@ function formatTimestamp(ms: number): string {
 }
 
 export class ChartCanvas {
+  private readonly container: HTMLElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly styleAccessors: ChartCanvasStyleAccessors;
@@ -52,17 +53,19 @@ export class ChartCanvas {
   private legendBarLeft = 0;
 
   constructor(
+    container: HTMLElement,
     xMin: number,
     xScale: number,
     styleAccessors: ChartCanvasStyleAccessors,
   ) {
+    this.container = container;
     this.xMin = xMin;
     this.xScale = xScale;
     this.styleAccessors = styleAccessors;
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
-      "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;";
-    document.body.appendChild(this.canvas);
+      "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;";
+    this.container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
     this.bindLevelDrag();
   }
@@ -115,7 +118,7 @@ export class ChartCanvas {
 
     window.addEventListener("pointermove", (e) => {
       if (this.isDraggingLevel) return;
-      document.body.style.cursor = hitTest(e.clientX, e.clientY)
+      this.container.style.cursor = hitTest(e.clientX, e.clientY)
         ? "ns-resize"
         : "";
     });
@@ -138,8 +141,8 @@ export class ChartCanvas {
     viewMaxY: number,
   ) {
     const dpr = devicePixelRatio;
-    const cssW = window.innerWidth;
-    const cssH = window.innerHeight;
+    const cssW = Math.max(1, this.container.clientWidth);
+    const cssH = Math.max(1, this.container.clientHeight);
     const w = Math.round(cssW * dpr);
     const h = Math.round(cssH * dpr);
     if (this.canvas.width !== w || this.canvas.height !== h) {

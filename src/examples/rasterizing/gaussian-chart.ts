@@ -20,6 +20,11 @@ export type LoadedData = {
   xScale: number;
 };
 
+export type GaussianChartOptions = {
+  data: LoadedData;
+  container: HTMLElement;
+};
+
 type GaussianChartState = {
   sigmaSize: number;
   quantSteps: number;
@@ -37,6 +42,7 @@ type GaussianChartState = {
 };
 
 export class GaussianChart {
+  private readonly container: HTMLElement;
   private readonly n: number;
   private readonly dataF64: Float64Array;
   private readonly xMin: number;
@@ -82,7 +88,9 @@ export class GaussianChart {
   private fpsController: any;
   private renderedPointsController: any;
 
-  constructor(data: LoadedData) {
+  constructor(options: GaussianChartOptions) {
+    const { data, container } = options;
+    this.container = container;
     this.n = data.n;
     this.dataF64 = data.dataF64;
     this.xMin = data.xMin;
@@ -111,7 +119,10 @@ export class GaussianChart {
   async start(): Promise<void> {
     this.canvas = this.createCanvas();
     this.gpu = await initWebGPU(this.canvas);
-    this.accumulationPipeline = createAccumulationPipeline(this.gpu.device);
+    this.accumulationPipeline = createAccumulationPipeline(
+      this.gpu.device,
+      this.getHeatmapCssHeight(),
+    );
     this.reductionPipeline = createReductionPipeline(this.gpu.device);
     this.tonemapPipeline = createTonemapPipeline(
       this.gpu.device,
@@ -168,7 +179,7 @@ export class GaussianChart {
     this.viewManager = new ViewManager(this.dataF64);
     this.viewManager.bindCanvas(this.canvas);
 
-    this.chartCanvas = new ChartCanvas(this.xMin, this.xScale, {
+    this.chartCanvas = new ChartCanvas(this.container, this.xMin, this.xScale, {
       getPaletteLevel: () => this.state.paletteLevel,
       getOpacityCut: () => this.state.opacityCut,
       getShowLine: () => this.state.showLine,
@@ -482,19 +493,30 @@ export class GaussianChart {
   private createCanvas() {
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "position:absolute;top:0;left:0;background:#ffffff;";
-    document.body.appendChild(canvas);
+    this.container.appendChild(canvas);
     this.resizeHeatmapCanvas(canvas);
     return canvas;
   }
 
+  private getContainerCssSize() {
+    const cssW = Math.max(1, this.container.clientWidth);
+    const cssH = Math.max(1, this.container.clientHeight);
+    return { cssW, cssH };
+  }
+
+  private getHeatmapCssHeight() {
+    const { cssH } = this.getContainerCssSize();
+    return Math.max(1, cssH - AXIS_X_H);
+  }
+
   private resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
-    const cssW = window.innerWidth - AXIS_Y_W;
-    const cssH = window.innerHeight - AXIS_X_H;
-    canvas.style.width = `${cssW}px`;
-    canvas.style.height = `${cssH}px`;
-    canvas.style.top = "0px";
-    canvas.width = Math.round(cssW * devicePixelRatio);
-    canvas.height = Math.round(cssH * devicePixelRatio);
+    const { cssW, cssH } = this.getContainerCssSize();
+    const heatmapCssW = Math.max(1, cssW - AXIS_Y_W);
+    const heatmapCssH = Math.max(1, cssH - AXIS_X_H);
+    canvas.style.width = `${heatmapCssW}px`;
+    canvas.style.height = `${heatmapCssH}px`;
+    canvas.width = Math.round(heatmapCssW * devicePixelRatio);
+    canvas.height = Math.round(heatmapCssH * devicePixelRatio);
   }
 }
 
@@ -519,8 +541,11 @@ function createHDRTexture(device: GPUDevice, width: number, height: number) {
   });
 }
 
-function createAccumulationPipeline(device: GPUDevice) {
-  const padFrac = CHART_PAD_Y / (window.innerHeight - AXIS_X_H);
+function createAccumulationPipeline(
+  device: GPUDevice,
+  heatmapCssHeight: number,
+) {
+  const padFrac = CHART_PAD_Y / Math.max(1, heatmapCssHeight);
   const module = device.createShaderModule({
     code: /* wgsl */ `
       struct Uniforms {
