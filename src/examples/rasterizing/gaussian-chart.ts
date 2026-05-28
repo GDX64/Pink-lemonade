@@ -1,0 +1,785 @@
+import GUI from "lil-gui";
+import { ChartCanvas } from "./chart-canvas";
+import { downsample } from "./downsampling";
+import { lowerBound, upperBound, ViewManager } from "./view-manager";
+
+const AXIS_Y_W = 70; // px reserved on the right for the Y axis
+const AXIS_X_H = 30; // px reserved on the bottom for the X axis
+const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
+
+const DEFAULT_PALETTE_COLORS = {
+  c0: "#d1edff",
+  c1: "#feffb8",
+  c2: "#f28787",
+};
+
+export type LoadedData = {
+  n: number;
+  dataF64: Float64Array;
+  xMin: number;
+  xScale: number;
+};
+
+type GaussianChartState = {
+  sigmaSize: number;
+  quantSteps: number;
+  opacityCut: number;
+  mergeThreshold: number;
+  paletteLevel: number;
+  showLine: boolean;
+  lineOpacity: number;
+  lineWidth: number;
+  paletteColors: {
+    c0: string;
+    c1: string;
+    c2: string;
+  };
+};
+
+export class GaussianChart {
+  private readonly n: number;
+  private readonly dataF64: Float64Array;
+  private readonly xMin: number;
+  private readonly xScale: number;
+  private readonly state: GaussianChartState;
+
+  private canvas!: HTMLCanvasElement;
+  private gpu!: Awaited<ReturnType<typeof initWebGPU>>;
+  private accumulationPipeline!: GPURenderPipeline;
+  private reductionPipeline!: GPUComputePipeline;
+  private tonemapPipeline!: GPURenderPipeline;
+  private quadBuffer!: GPUBuffer;
+  private instanceBuffer!: GPUBuffer;
+  private uniformBuffer!: GPUBuffer;
+  private statsBuffer!: GPUBuffer;
+  private statsReadbackBuffer!: GPUBuffer;
+  private colorBuffer!: GPUBuffer;
+  private accBindGroup!: GPUBindGroup;
+  private hdrTexture!: GPUTexture;
+  private reductionBindGroup!: GPUBindGroup;
+  private tonemapBindGroup!: GPUBindGroup;
+  private viewManager!: ViewManager;
+  private chartCanvas!: ChartCanvas;
+
+  private hdrW = 0;
+  private hdrH = 0;
+  private lastViewMinX = NaN;
+  private lastViewMaxX = NaN;
+  private lastViewMinY = NaN;
+  private lastViewMaxY = NaN;
+  private readbackPending = false;
+  private lastMergedCount = 0;
+  private lastTime = 0;
+  private fpsAccTime = 0;
+  private frameCount = 0;
+
+  private readonly controls: {
+    sigmaSize: number;
+    fps: string;
+    totalPoints: number;
+    renderedPoints: number;
+  };
+  private fpsController: any;
+  private renderedPointsController: any;
+
+  constructor(data: LoadedData) {
+    this.n = data.n;
+    this.dataF64 = data.dataF64;
+    this.xMin = data.xMin;
+    this.xScale = data.xScale;
+    this.state = {
+      sigmaSize: 17,
+      quantSteps: 0,
+      opacityCut: 0.03,
+      mergeThreshold: 20,
+      paletteLevel: 0.5,
+      showLine: true,
+      lineOpacity: 0.55,
+      lineWidth: 0.75,
+      paletteColors: { ...DEFAULT_PALETTE_COLORS },
+    };
+    this.controls = {
+      sigmaSize: this.state.sigmaSize,
+      fps: "0.0",
+      totalPoints: this.n,
+      renderedPoints: 0,
+    };
+    this.fpsController = null;
+    this.renderedPointsController = null;
+  }
+
+  async start(): Promise<void> {
+    this.canvas = this.createCanvas();
+    this.gpu = await initWebGPU(this.canvas);
+    this.accumulationPipeline = createAccumulationPipeline(this.gpu.device);
+    this.reductionPipeline = createReductionPipeline(this.gpu.device);
+    this.tonemapPipeline = createTonemapPipeline(
+      this.gpu.device,
+      this.gpu.format,
+    );
+
+    const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
+      this.gpu.device,
+      this.n,
+    );
+    this.quadBuffer = quadBuffer;
+    this.instanceBuffer = instanceBuffer;
+    this.uniformBuffer = uniformBuffer;
+
+    this.statsBuffer = this.gpu.device.createBuffer({
+      size: 4,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+    });
+    this.statsReadbackBuffer = this.gpu.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    this.colorBuffer = this.gpu.device.createBuffer({
+      size: 64,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.writePaletteToBuffer();
+
+    this.accBindGroup = this.gpu.device.createBindGroup({
+      layout: this.accumulationPipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
+    });
+
+    this.hdrW = this.canvas.width;
+    this.hdrH = this.canvas.height;
+    this.hdrTexture = createHDRTexture(this.gpu.device, this.hdrW, this.hdrH);
+    this.reductionBindGroup = createReductionBindGroup(
+      this.gpu.device,
+      this.reductionPipeline,
+      this.hdrTexture,
+      this.statsBuffer,
+    );
+    this.tonemapBindGroup = createTonemapBindGroup(
+      this.gpu.device,
+      this.tonemapPipeline,
+      this.hdrTexture,
+      this.statsBuffer,
+      this.colorBuffer,
+    );
+
+    this.viewManager = new ViewManager(this.dataF64);
+    this.viewManager.bindCanvas(this.canvas);
+
+    this.chartCanvas = new ChartCanvas(this.xMin, this.xScale, {
+      getPaletteLevel: () => this.state.paletteLevel,
+      getOpacityCut: () => this.state.opacityCut,
+      getShowLine: () => this.state.showLine,
+      getLineOpacity: () => this.state.lineOpacity,
+      getLineWidth: () => this.state.lineWidth,
+      getHeatmapColor: (v) => this.heatmapColor(v),
+    });
+    this.chartCanvas.setOnLevelChange((v) => {
+      this.state.paletteLevel = v;
+      this.writePaletteToBuffer();
+    });
+
+    this.setupGui();
+    this.lastTime = performance.now();
+    this.render();
+    window.addEventListener("resize", this.handleResize);
+  }
+
+  private setupGui() {
+    const gui = new GUI({ title: "Render Controls" });
+    gui.domElement.style.right = `${AXIS_Y_W}px`;
+    this.fpsController = gui.add(this.controls, "fps").name("FPS").disable();
+    gui.add(this.controls, "totalPoints").name("Total points").disable();
+    this.renderedPointsController = gui
+      .add(this.controls, "renderedPoints")
+      .name("Rendered points")
+      .disable();
+
+    gui
+      .add(this.controls, "sigmaSize", 1, 50, 1)
+      .name("Kernel sigma (px)")
+      .onChange((v: number) => {
+        this.state.sigmaSize = v;
+      });
+    gui
+      .add(this.state, "quantSteps", 0, 32, 1)
+      .name("Quantize steps")
+      .onChange((v: number) => {
+        this.state.quantSteps = v;
+        this.writePaletteToBuffer();
+      });
+    gui
+      .add(this.state, "opacityCut", 0.001, 0.15, 0.001)
+      .name("Opacity cut")
+      .onChange((v: number) => {
+        this.state.opacityCut = v;
+        this.writePaletteToBuffer();
+      });
+    gui
+      .add(this.state, "mergeThreshold", 2, 50, 1)
+      .name("Merge threshold (px)")
+      .onChange((v: number) => {
+        this.state.mergeThreshold = v;
+        this.lastViewMinX = NaN;
+      });
+
+    const colorFolder = gui.addFolder("Color map");
+    colorFolder
+      .add(this.state, "paletteLevel", 0.01, 0.99, 0.01)
+      .name("Mid level")
+      .onChange((v: number) => {
+        this.state.paletteLevel = v;
+        this.writePaletteToBuffer();
+      });
+    colorFolder
+      .addColor(this.state.paletteColors, "c0")
+      .name("Low")
+      .onChange(() => this.writePaletteToBuffer());
+    colorFolder
+      .addColor(this.state.paletteColors, "c1")
+      .name("Mid")
+      .onChange(() => this.writePaletteToBuffer());
+    colorFolder
+      .addColor(this.state.paletteColors, "c2")
+      .name("High")
+      .onChange(() => this.writePaletteToBuffer());
+
+    const lineFolder = gui.addFolder("Line chart");
+    lineFolder.add(this.state, "showLine").name("Show line");
+    lineFolder.add(this.state, "lineOpacity", 0.01, 1, 0.01).name("Opacity");
+    lineFolder.add(this.state, "lineWidth", 0.25, 5, 0.25).name("Line width");
+  }
+
+  private scheduleReadback() {
+    if (this.readbackPending) return;
+    this.readbackPending = true;
+    const encoder = this.gpu.device.createCommandEncoder();
+    encoder.copyBufferToBuffer(
+      this.statsBuffer,
+      0,
+      this.statsReadbackBuffer,
+      0,
+      4,
+    );
+    this.gpu.device.queue.submit([encoder.finish()]);
+    this.statsReadbackBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const val =
+        new Uint32Array(this.statsReadbackBuffer.getMappedRange())[0] ?? 1;
+      this.statsReadbackBuffer.unmap();
+      this.readbackPending = false;
+      this.chartCanvas.setMaxVal(val);
+    });
+  }
+
+  private render = () => {
+    const now = performance.now();
+    const dt = (now - this.lastTime) / 1000;
+    this.lastTime = now;
+    this.frameCount++;
+    this.fpsAccTime += dt;
+    if (this.fpsAccTime >= 0.5) {
+      this.controls.fps = `${(this.frameCount / this.fpsAccTime).toFixed(1)} fps`;
+      this.fpsController.updateDisplay();
+      this.frameCount = 0;
+      this.fpsAccTime = 0;
+    }
+
+    this.viewManager.tick(dt);
+
+    updateUniform(
+      this.gpu.device,
+      this.uniformBuffer,
+      this.viewManager.getViewMinX(),
+      this.viewManager.getViewMaxX(),
+      this.viewManager.getViewMinY(),
+      this.viewManager.getViewMaxY(),
+      this.hdrW,
+      this.hdrH,
+      this.state.sigmaSize,
+    );
+
+    this.gpu.device.queue.writeBuffer(
+      this.statsBuffer,
+      0,
+      new Uint32Array([0]),
+    );
+    const encoder = this.gpu.device.createCommandEncoder();
+
+    const accPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.hdrTexture.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+    });
+
+    const viewMinX = this.viewManager.getViewMinX();
+    const viewMaxX = this.viewManager.getViewMaxX();
+    const viewMinY = this.viewManager.getViewMinY();
+    const viewMaxY = this.viewManager.getViewMaxY();
+
+    if (
+      viewMinX !== this.lastViewMinX ||
+      viewMaxX !== this.lastViewMaxX ||
+      viewMinY !== this.lastViewMinY ||
+      viewMaxY !== this.lastViewMaxY
+    ) {
+      const merged = this.mergePoints(
+        viewMinX,
+        viewMaxX,
+        viewMinY,
+        viewMaxY,
+        this.hdrW,
+        this.hdrH,
+      );
+      this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, merged);
+      this.lastMergedCount = merged.length / 3;
+      this.controls.renderedPoints = this.lastMergedCount;
+      this.renderedPointsController.updateDisplay();
+      this.chartCanvas.setMergedPoints(merged);
+      this.lastViewMinX = viewMinX;
+      this.lastViewMaxX = viewMaxX;
+      this.lastViewMinY = viewMinY;
+      this.lastViewMaxY = viewMaxY;
+    }
+
+    accPass.setPipeline(this.accumulationPipeline);
+    accPass.setBindGroup(0, this.accBindGroup);
+    accPass.setVertexBuffer(0, this.quadBuffer);
+    accPass.setVertexBuffer(1, this.instanceBuffer);
+    accPass.draw(6, this.lastMergedCount);
+    accPass.end();
+
+    const reductionPass = encoder.beginComputePass();
+    reductionPass.setPipeline(this.reductionPipeline);
+    reductionPass.setBindGroup(0, this.reductionBindGroup);
+    reductionPass.dispatchWorkgroups(
+      Math.ceil(this.hdrW / 8),
+      Math.ceil(this.hdrH / 8),
+    );
+    reductionPass.end();
+
+    const tonemapPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.gpu.context.getCurrentTexture().createView(),
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+    });
+    tonemapPass.setPipeline(this.tonemapPipeline);
+    tonemapPass.setBindGroup(0, this.tonemapBindGroup);
+    tonemapPass.draw(3);
+    tonemapPass.end();
+
+    this.gpu.device.queue.submit([encoder.finish()]);
+    this.scheduleReadback();
+    this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
+    requestAnimationFrame(this.render);
+  };
+
+  private readonly handleResize = () => {
+    this.resizeHeatmapCanvas(this.canvas);
+    this.hdrW = this.canvas.width;
+    this.hdrH = this.canvas.height;
+    this.lastViewMinX = NaN;
+    this.hdrTexture.destroy();
+    this.hdrTexture = createHDRTexture(this.gpu.device, this.hdrW, this.hdrH);
+    this.reductionBindGroup = createReductionBindGroup(
+      this.gpu.device,
+      this.reductionPipeline,
+      this.hdrTexture,
+      this.statsBuffer,
+    );
+    this.tonemapBindGroup = createTonemapBindGroup(
+      this.gpu.device,
+      this.tonemapPipeline,
+      this.hdrTexture,
+      this.statsBuffer,
+      this.colorBuffer,
+    );
+  };
+
+  private writePaletteToBuffer() {
+    const data = new Float32Array(16);
+    const [r0, g0, b0] = hexToLinear(this.state.paletteColors.c0);
+    const [r1, g1, b1] = hexToLinear(this.state.paletteColors.c1);
+    const [r2, g2, b2] = hexToLinear(this.state.paletteColors.c2);
+    data.set([
+      r0,
+      g0,
+      b0,
+      0,
+      r1,
+      g1,
+      b1,
+      0,
+      r2,
+      g2,
+      b2,
+      0,
+      this.state.quantSteps,
+      this.state.opacityCut,
+      this.state.paletteLevel,
+      0,
+    ]);
+    this.gpu.device.queue.writeBuffer(this.colorBuffer, 0, data);
+  }
+
+  private mergePoints(
+    viewMinX: number,
+    viewMaxX: number,
+    viewMinY: number,
+    viewMaxY: number,
+    screenW: number,
+    screenH: number,
+  ): Float32Array {
+    const toSX = (x: number) =>
+      ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
+    const toSY = (y: number) =>
+      ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
+
+    const startIdx = lowerBound(this.dataF64, viewMinX);
+    const endIdx = upperBound(this.dataF64, viewMaxX);
+
+    const merged = downsample({
+      points: this.dataF64.slice(startIdx * 3, endIdx * 3),
+      strategy: "merge",
+      toSX,
+      toSY,
+      mergeThreshold: this.state.mergeThreshold,
+      threshold: 1000,
+    });
+
+    return new Float32Array(merged);
+  }
+
+  private heatmapColor(value: number): [number, number, number] {
+    const x = Math.min(Math.max(value, 0), 1);
+    const [r0, g0, b0] = hexToLinear(this.state.paletteColors.c0);
+    const [r1, g1, b1] = hexToLinear(this.state.paletteColors.c1);
+    const [r2, g2, b2] = hexToLinear(this.state.paletteColors.c2);
+    const c0 = [r0, g0, b0];
+    const c1 = [r1, g1, b1];
+    const c2 = [r2, g2, b2];
+    const t1 = smoothstep(0.0, this.state.paletteLevel, x);
+    const t2 = smoothstep(this.state.paletteLevel, 1.0, x);
+    const mid = c0.map((v, i) => v + (c1[i]! - v) * t1);
+    const rgb = mid.map((v, i) => v + (c2[i]! - v) * t2);
+    return [
+      Math.round(rgb[0]! * 255),
+      Math.round(rgb[1]! * 255),
+      Math.round(rgb[2]! * 255),
+    ];
+  }
+
+  private createCanvas() {
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "position:absolute;top:0;left:0;background:#ffffff;";
+    document.body.appendChild(canvas);
+    this.resizeHeatmapCanvas(canvas);
+    return canvas;
+  }
+
+  private resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
+    const cssW = window.innerWidth - AXIS_Y_W;
+    const cssH = window.innerHeight - AXIS_X_H;
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    canvas.style.top = "0px";
+    canvas.width = Math.round(cssW * devicePixelRatio);
+    canvas.height = Math.round(cssH * devicePixelRatio);
+  }
+}
+
+async function initWebGPU(canvas: HTMLCanvasElement) {
+  if (!navigator.gpu) throw new Error("WebGPU not supported");
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("No WebGPU adapter found");
+  const device = await adapter.requestDevice({
+    requiredFeatures: ["float32-blendable"],
+  });
+  const context = canvas.getContext("webgpu")!;
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: "premultiplied" });
+  return { device, context, format };
+}
+
+function createHDRTexture(device: GPUDevice, width: number, height: number) {
+  return device.createTexture({
+    size: [width, height],
+    format: "r32float",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+}
+
+function createAccumulationPipeline(device: GPUDevice) {
+  const padFrac = CHART_PAD_Y / (window.innerHeight - AXIS_X_H);
+  const module = device.createShaderModule({
+    code: /* wgsl */ `
+      struct Uniforms {
+        viewMinX: f32, viewMaxX: f32,
+        minY: f32, maxY: f32,
+        screenWidth: f32, screenHeight: f32,
+        sigmaSize: f32, _pad: f32,
+      };
+
+      @group(0) @binding(0) var<uniform> u: Uniforms;
+
+      struct VertexOut {
+        @builtin(position) pos: vec4f,
+        @location(0) offset: vec2f,
+        @location(1) weight: f32,
+      };
+
+      @vertex
+      fn vs_main(
+        @location(0) quadOffset: vec2f,
+        @location(1) point: vec2f,
+        @location(2) weight: f32,
+      ) -> VertexOut {
+        if (point.x < u.viewMinX || point.x > u.viewMaxX) {
+          return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0), 0.0);
+        }
+
+        let padFrac = ${padFrac.toFixed(6)}f;
+        let scale = 1.0 - 2.0 * padFrac;
+        let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
+        let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
+        let kernelSize = u.sigmaSize * 3.0 * 2.0;
+        let r = vec2f(kernelSize / u.screenWidth, kernelSize / u.screenHeight);
+        return VertexOut(
+          vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
+          quadOffset,
+          weight,
+        );
+      }
+
+      @fragment
+      fn fs_main(@location(0) offset: vec2f, @location(1) weight: f32) -> @location(0) f32 {
+        let d2 = dot(offset, offset);
+        let result = exp(- d2 * 4.5);
+        return result * weight;
+      }
+    `,
+  });
+
+  return device.createRenderPipeline({
+    layout: "auto",
+    vertex: {
+      module,
+      entryPoint: "vs_main",
+      buffers: [
+        {
+          arrayStride: 8,
+          stepMode: "vertex",
+          attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }],
+        },
+        {
+          arrayStride: 12,
+          stepMode: "instance",
+          attributes: [
+            { shaderLocation: 1, offset: 0, format: "float32x2" },
+            { shaderLocation: 2, offset: 8, format: "float32" },
+          ],
+        },
+      ],
+    },
+    fragment: {
+      module,
+      entryPoint: "fs_main",
+      targets: [
+        {
+          format: "r32float",
+          blend: {
+            color: { srcFactor: "one", dstFactor: "one", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one", operation: "add" },
+          },
+        },
+      ],
+    },
+    primitive: { topology: "triangle-list" },
+  });
+}
+
+function createReductionPipeline(device: GPUDevice) {
+  const module = device.createShaderModule({
+    code: /* wgsl */ `
+      @group(0) @binding(0) var hdr: texture_2d<f32>;
+      @group(0) @binding(1) var<storage, read_write> stats: array<atomic<u32>, 1>;
+
+      @compute @workgroup_size(8, 8)
+      fn cs_main(@builtin(global_invocation_id) gid: vec3u) {
+        let size = textureDimensions(hdr);
+        if (gid.x >= size.x || gid.y >= size.y) { return; }
+
+        let val = textureLoad(hdr, gid.xy, 0).r;
+        if (val <= 0.0) { return; }
+
+        atomicMax(&stats[0], u32(ceil(val)));
+      }
+    `,
+  });
+
+  return device.createComputePipeline({
+    layout: "auto",
+    compute: { module, entryPoint: "cs_main" },
+  });
+}
+
+function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
+  const module = device.createShaderModule({
+    code: /* wgsl */ `
+      struct Palette { c0: vec4f, c1: vec4f, c2: vec4f, steps: f32, opacityCut: f32, level: f32, _p3: f32 };
+
+      @group(0) @binding(0) var hdr: texture_2d<f32>;
+      @group(0) @binding(1) var<storage, read> stats: array<u32, 1>;
+      @group(0) @binding(2) var<uniform> palette: Palette;
+
+      @vertex
+      fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+        var positions = array<vec2f, 3>(
+          vec2f(-1.0, -1.0),
+          vec2f( 3.0, -1.0),
+          vec2f(-1.0,  3.0),
+        );
+        return vec4f(positions[vi], 0.0, 1.0);
+      }
+
+      fn mapColor(value: f32) -> vec3f {
+        let x = clamp(value, 0.0, 1.0);
+        let t1 = smoothstep(0.0, palette.level, x);
+        let t2 = smoothstep(palette.level, 1.0, x);
+        return mix(mix(palette.c0.rgb, palette.c1.rgb, t1), palette.c2.rgb, t2);
+      }
+
+      @fragment
+      fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+        let accum = textureLoad(hdr, vec2i(pos.xy), 0).r;
+
+        let maxVal = f32(stats[0]);
+        var t = clamp(accum / maxVal, 0.0, 1.0);
+        let opacity = step(palette.opacityCut, t);
+        if palette.steps > 1.0 {
+          t = floor(t * palette.steps) / (palette.steps - 1.0);
+        }
+
+        let rgb = mapColor(t) * opacity;
+        return vec4f(rgb, opacity);
+      }
+    `,
+  });
+
+  return device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module, entryPoint: "vs_main" },
+    fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+}
+
+function createReductionBindGroup(
+  device: GPUDevice,
+  pipeline: GPUComputePipeline,
+  hdrTexture: GPUTexture,
+  statsBuffer: GPUBuffer,
+) {
+  return device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: hdrTexture.createView() },
+      { binding: 1, resource: { buffer: statsBuffer } },
+    ],
+  });
+}
+
+function createTonemapBindGroup(
+  device: GPUDevice,
+  pipeline: GPURenderPipeline,
+  hdrTexture: GPUTexture,
+  statsBuffer: GPUBuffer,
+  colorBuffer: GPUBuffer,
+) {
+  return device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: hdrTexture.createView() },
+      { binding: 1, resource: { buffer: statsBuffer } },
+      { binding: 2, resource: { buffer: colorBuffer } },
+    ],
+  });
+}
+
+function hexToLinear(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255];
+}
+
+// prettier-ignore
+const QUAD_CORNERS = new Float32Array([
+  -1, -1,   1, -1,  -1,  1,
+  -1,  1,   1, -1,   1,  1,
+]);
+
+function uploadData(device: GPUDevice, pointCount: number) {
+  const quadBuffer = device.createBuffer({
+    size: QUAD_CORNERS.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
+
+  const instanceBuffer = device.createBuffer({
+    size: pointCount * 3 * 4,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+
+  const uniformBuffer = device.createBuffer({
+    size: 8 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(
+    uniformBuffer,
+    0,
+    new Float32Array([0, 1, 0, 1, 1, 1, 0, 0]),
+  );
+
+  return { quadBuffer, instanceBuffer, uniformBuffer };
+}
+
+function updateUniform(
+  device: GPUDevice,
+  uniformBuffer: GPUBuffer,
+  viewMinX: number,
+  viewMaxX: number,
+  minY: number,
+  maxY: number,
+  width: number,
+  height: number,
+  kernelSz: number,
+) {
+  device.queue.writeBuffer(
+    uniformBuffer,
+    0,
+    new Float32Array([
+      viewMinX,
+      viewMaxX,
+      minY,
+      maxY,
+      width,
+      height,
+      kernelSz,
+      0,
+    ]),
+  );
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(Math.max((x - edge0) / (edge1 - edge0), 0), 1);
+  return t * t * (3 - 2 * t);
+}
