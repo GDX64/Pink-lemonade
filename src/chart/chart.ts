@@ -187,10 +187,8 @@ export function createNoiseData(N: number, seed: number): [number, number][] {
   const data: [number, number][] = [[timeAcc, acc]];
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev, gen);
-    timeAcc += Math.abs(
-      gausianNoise(mean, stdDev, gen) *
-        Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4),
-    );
+    const s = Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4);
+    timeAcc += Math.abs(gausianNoise(mean, stdDev, gen) * s ** 2);
     data.push([timeAcc, acc]);
   }
   return data;

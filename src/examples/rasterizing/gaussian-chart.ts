@@ -257,7 +257,7 @@ export class GaussianChart {
         this.writePaletteToBuffer();
       });
     gui
-      .add(this.state, "mergeThreshold", 2, 50, 1)
+      .add(this.state, "mergeThreshold", 0, 50, 1)
       .name("Merge threshold (px)")
       .onChange((v: number) => {
         this.state.mergeThreshold = v;
