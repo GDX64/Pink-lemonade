@@ -27,7 +27,9 @@ export type GaussianChartOptions = {
 
 type GaussianChartState = {
   showHeatmap: boolean;
+  heatmapRenderMode: "composited" | "overlay";
   showTimescale: boolean;
+  showYAxis: boolean;
   pixelRatio: number;
   sigmaSize: number;
   quantSteps: number;
@@ -103,7 +105,9 @@ export class GaussianChart {
     this.xScale = data.xScale;
     this.state = {
       showHeatmap: true,
+      heatmapRenderMode: "overlay",
       showTimescale: true,
+      showYAxis: true,
       pixelRatio: window.devicePixelRatio,
       sigmaSize: 8,
       quantSteps: 0,
@@ -186,22 +190,27 @@ export class GaussianChart {
     );
 
     this.viewManager = new ViewManager(this.dataF64);
-    this.viewManager.bindCanvas(this.canvas);
 
     this.chartCanvas = new ChartCanvas(this.container, this.xMin, this.xScale, {
+      getShowHeatmap: () =>
+        this.state.showHeatmap && this.state.heatmapRenderMode === "composited",
       getPaletteLevel: () => this.state.paletteLevel,
       getOpacityCut: () => this.state.opacityCut,
       getShowTimescale: () => this.state.showTimescale,
+      getShowYAxis: () => this.state.showYAxis,
       getPixelRatio: () => this.state.pixelRatio,
       getShowLine: () => this.state.showLine,
       getLineOpacity: () => this.state.lineOpacity,
       getLineWidth: () => this.state.lineWidth,
       getHeatmapColor: (v) => this.heatmapColor(v),
     });
+    this.chartCanvas.setHeatmapSource(this.canvas);
+    this.viewManager.bindCanvas(this.chartCanvas.getCanvasElement());
     this.chartCanvas.setOnLevelChange((v) => {
       this.state.paletteLevel = v;
       this.writePaletteToBuffer();
     });
+    this.syncHeatmapPresentation();
 
     this.setupGui();
     this.lastTime = performance.now();
@@ -219,10 +228,16 @@ export class GaussianChart {
     gui
       .add(this.state, "showHeatmap")
       .name("Show heatmap")
-      .onChange((v: boolean) => {
-        this.canvas.style.opacity = v ? "1" : "0";
-      });
+      .onChange(() => this.syncHeatmapPresentation());
+    gui
+      .add(this.state, "heatmapRenderMode", ["composited", "overlay"])
+      .name("Heatmap mode")
+      .onChange(() => this.syncHeatmapPresentation());
     gui.add(this.state, "showTimescale").name("Show timescale");
+    gui
+      .add(this.state, "showYAxis")
+      .name("Show Y axis")
+      .onChange(() => this.handleResize());
     gui
       .add(this.state, "pixelRatio", 0.5, 4, 0.25)
       .name("Pixel ratio")
@@ -524,11 +539,27 @@ export class GaussianChart {
 
   private createCanvas() {
     const canvas = document.createElement("canvas");
-    canvas.style.cssText = "position:absolute;top:0;left:0;background:#ffffff;";
-    canvas.style.opacity = this.state.showHeatmap ? "1" : "0";
-    this.container.appendChild(canvas);
+    canvas.style.cssText =
+      "position:absolute;top:0;left:0;pointer-events:none;z-index:0;";
     this.resizeHeatmapCanvas(canvas);
     return canvas;
+  }
+
+  private syncHeatmapPresentation() {
+    const shouldOverlay =
+      this.state.heatmapRenderMode === "overlay" && this.state.showHeatmap;
+    if (shouldOverlay) {
+      if (!this.canvas.parentElement) {
+        this.container.appendChild(this.canvas);
+      }
+      this.canvas.style.opacity = "1";
+      return;
+    }
+
+    this.canvas.style.opacity = "0";
+    if (this.canvas.parentElement === this.container) {
+      this.container.removeChild(this.canvas);
+    }
   }
 
   private getContainerCssSize() {
@@ -544,7 +575,8 @@ export class GaussianChart {
 
   private resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
     const { cssW, cssH } = this.getContainerCssSize();
-    const heatmapCssW = Math.max(1, cssW - AXIS_Y_W);
+    const axisYWidth = this.state.showYAxis ? AXIS_Y_W : 0;
+    const heatmapCssW = Math.max(1, cssW - axisYWidth);
     const heatmapCssH = Math.max(1, cssH - AXIS_X_H);
     const pixelRatio = this.getEffectivePixelRatio();
     canvas.style.width = `${heatmapCssW}px`;
@@ -555,6 +587,10 @@ export class GaussianChart {
 
   private getEffectivePixelRatio(): number {
     return Math.max(0.25, this.state.pixelRatio);
+  }
+
+  exportImage(type?: string, quality?: number): string {
+    return this.chartCanvas.toDataURL(type, quality);
   }
 }
 

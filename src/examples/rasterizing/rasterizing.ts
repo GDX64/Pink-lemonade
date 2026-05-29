@@ -5,14 +5,13 @@ const DATA_KIND = "random";
 
 export async function rasterizingExample() {
   await createChart1();
-  await createChart1();
 }
 
 async function createChart1() {
   const data = await loadData();
   const container = document.createElement("div");
   container.style.width = "100vw";
-  container.style.height = "50vh";
+  container.style.height = "100vh";
   container.style.position = "relative";
   document.body.appendChild(container);
   const chart = new GaussianChart({

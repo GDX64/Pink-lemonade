@@ -3,9 +3,11 @@ const AXIS_X_H = 30; // px reserved on the bottom for the X axis
 const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 
 export type ChartCanvasStyleAccessors = {
+  getShowHeatmap: () => boolean;
   getPaletteLevel: () => number;
   getOpacityCut: () => number;
   getShowTimescale: () => boolean;
+  getShowYAxis: () => boolean;
   getPixelRatio: () => number;
   getShowLine: () => boolean;
   getLineOpacity: () => number;
@@ -31,6 +33,7 @@ export class ChartCanvas {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly styleAccessors: ChartCanvasStyleAccessors;
+  private heatmapSource: HTMLCanvasElement | null = null;
   private mergedPoints: Float32Array = new Float32Array(0);
   private maxVal = 1;
   private readonly xMin: number;
@@ -45,11 +48,7 @@ export class ChartCanvas {
   private static readonly TICKS_X = 8;
   private static readonly TICKS_Y = 6;
   private static readonly FONT = "11px monospace";
-  private static readonly LEGEND_TITLE_H = 25;
-  private static readonly LEGEND_W =
-    ChartCanvas.BAR_W + ChartCanvas.PAD + ChartCanvas.LABEL_W;
-  private static readonly LEGEND_H =
-    ChartCanvas.BAR_H + ChartCanvas.PAD * 2 + ChartCanvas.LEGEND_TITLE_H;
+  private static readonly LEGEND_TITLE_H = 0;
 
   private legendBarTop = 0;
   private legendBarLeft = 0;
@@ -66,7 +65,7 @@ export class ChartCanvas {
     this.styleAccessors = styleAccessors;
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
-      "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;";
+      "position:absolute;inset:0;width:100%;height:100%;pointer-events:auto;z-index:1;";
     this.container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
     this.bindLevelDrag();
@@ -74,6 +73,18 @@ export class ChartCanvas {
 
   setOnLevelChange(cb: (level: number) => void) {
     this.onLevelChange = cb;
+  }
+
+  setHeatmapSource(canvas: HTMLCanvasElement) {
+    this.heatmapSource = canvas;
+  }
+
+  getCanvasElement(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  toDataURL(type?: string, quality?: number): string {
+    return this.canvas.toDataURL(type, quality);
   }
 
   private bindLevelDrag() {
@@ -112,7 +123,7 @@ export class ChartCanvas {
     const stopDrag = (e: PointerEvent) => {
       if (!this.isDraggingLevel) return;
       this.isDraggingLevel = false;
-      this.canvas.style.pointerEvents = "none";
+      this.canvas.style.pointerEvents = "auto";
       this.canvas.releasePointerCapture(e.pointerId);
     };
     this.canvas.addEventListener("pointerup", stopDrag);
@@ -152,13 +163,19 @@ export class ChartCanvas {
       this.canvas.height = h;
     }
 
-    const hmW = cssW - AXIS_Y_W;
+    const axisYWidth = this.styleAccessors.getShowYAxis() ? AXIS_Y_W : 0;
+    const hmW = cssW - axisYWidth;
     const hmH = cssH - AXIS_X_H - CHART_PAD_Y * 2;
 
     const { ctx } = this;
     ctx.clearRect(0, 0, w, h);
     ctx.save();
     ctx.scale(dpr, dpr);
+
+    if (this.styleAccessors.getShowHeatmap() && this.heatmapSource) {
+      ctx.drawImage(this.heatmapSource, 0, 0, hmW, cssH - AXIS_X_H);
+    }
+
     ctx.save();
 
     ctx.translate(0, CHART_PAD_Y);
@@ -166,7 +183,9 @@ export class ChartCanvas {
     if (this.styleAccessors.getShowTimescale()) {
       this.drawXAxis(hmW, hmH, cssH - CHART_PAD_Y * 2, viewMinX, viewMaxX);
     }
-    this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
+    if (this.styleAccessors.getShowYAxis()) {
+      this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
+    }
     ctx.restore();
 
     this.drawLegend(cssW, cssH);
@@ -321,7 +340,7 @@ export class ChartCanvas {
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText("Satoshi", PAD, 0);
+    // ctx.fillText("Satoshi", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 
