@@ -287,7 +287,7 @@
 % not capitalized unless they are the first or last word of the title.
 % Linebreaks \\ can be used within to get better formatting as desired.
 % Do not put math or special symbols in the title.
-\title{GPU-Accelerated Density Heatmap Rendering for Large-Scale Financial Timeseries}
+\title{GPU-Accelerated Density Heatmap Rendering for Large-Scale Timeseries}
 
 
 % author names and affiliations
@@ -610,6 +610,13 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
     \centering
     \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
   \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\Delta\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
+    \label{fig:placeholder}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{figs/quantization.png}
+    \caption{Using quantization and controlling opacity cut threshold increases the contrast between hot and cold areas}
     \label{fig:placeholder}
 \end{figure}
 

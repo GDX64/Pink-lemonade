@@ -109,10 +109,10 @@ export class GaussianChart {
       showTimescale: true,
       showYAxis: true,
       pixelRatio: window.devicePixelRatio,
-      sigmaSize: 8,
+      sigmaSize: 16,
       quantSteps: 0,
       opacityCut: 0.03,
-      mergeThreshold: 8,
+      mergeThreshold: 16,
       paletteLevel: 0.5,
       showLine: true,
       lineOpacity: 1,
@@ -764,7 +764,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         var t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = step(palette.opacityCut, t);
+        let opacity = smoothstep(0.0, palette.opacityCut, t);
         if palette.steps > 1.0 {
           t = floor(t * palette.steps) / (palette.steps - 1.0);
         }
