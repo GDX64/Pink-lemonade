@@ -371,11 +371,20 @@ A timeseries is usually shown as time versus value, leaving any third scalar (fo
 \section{Motivation}
 \label{sec:motivation}
 
-A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Related interactive KDE systems have been explored by Lampe and Hauser \cite{5742387}; Gaussian-mixture rendering has also been used for large particle datasets \cite{article}.
+A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
 
 The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw; with strong overlap, fragment work can reach billions of evaluations per frame.
 
 We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/tonemapping pipeline supports interactive, perceptually calibrated density maps.
+
+\section{Related Work}
+\label{sec:related-work}
+
+Lampe and Hauser \cite{5742387} introduced an interactive KDE framework for streaming data visualization, including viewport-adaptive bandwidth selection and a GPU implementation for interactive updates under pan and zoom. Their work established a practical foundation for coupling KDE with interactive visual analytics.
+
+More recently, Peng et al. \cite{article} presented a GMM-based splatting pipeline for large-scale particle simulations, where Gaussian components are rendered directly from a compressed representation to avoid expensive reconstruction. That work demonstrates the viability of Gaussian-mixture primitives for high-throughput visualization and informs our use of Gaussian-based accumulation in a performance-critical pipeline.
+
+Our approach is most closely related to these two lines of work, combining the interactive KDE perspective for exploratory analysis \cite{5742387} with Gaussian-mixture rendering ideas from large-scale particle visualization \cite{article}, while targeting weighted financial timeseries heatmaps and screen-space merge control.
 
 
 \section{Data Preparation}
