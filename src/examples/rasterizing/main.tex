@@ -426,10 +426,15 @@ w_{ij} = w_i + w_j,
 \begin{equation}
 \mu_{ij} = \frac{w_i}{w_i + w_j}\mu_i + \frac{w_j}{w_i + w_j}\mu_j,
 \end{equation}
+\begingroup
+\small
 \begin{equation}
-P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j
+\begin{aligned}
+P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j 
 + \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
+\end{aligned}
 \end{equation}
+\endgroup
 
 These equations preserve zeroth, first, and second moments, conserving local weight, mean, and covariance.
 
@@ -458,7 +463,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \node[stage, below=of raw] (clip) {CPU view-range clipping (binary search)};
     \node[stage, below=of clip] (merge) {CPU weighted merge ($\tau$ in pixel space)};
     \node[io, below=of merge] (inst) {Merged kernels (instance buffer upload)};
-    \node[stage, below=of inst] (acc) {Pass 1: Accumulation (additive KDE into HDR density texture)};
+    \node[stage, below=of inst] (acc) {Pass 1: Accumulation (additive blending KDE into HDR density texture)};
     \node[stage, below=of acc] (red) {Pass 2: Reduction (parallel max to compute global $\max(F)$)};
     \node[stage, below=of red] (tone) {Pass 3: Tonemapping (normalization, colormap, opacity threshold)};
     \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
