@@ -151,6 +151,8 @@
 % *** ALIGNMENT PACKAGES ***
 %
 \usepackage{array}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 % Frank Mittelbach's and David Carlisle's array.sty patches and improves
 % the standard LaTeX2e array and tabular environments to provide better
 % appearance and additional user controls. As the default LaTeX2e table
@@ -443,6 +445,39 @@ Our goal is perceptual: to help users estimate how much aggregated activity is p
 
 The rendering pipeline consists of three GPU passes submitted together per frame.
 
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    node distance=4.5mm,
+    stage/.style={draw, rounded corners=1.5pt, align=center, minimum height=9mm, text width=0.56\linewidth},
+    io/.style={draw, align=center, minimum height=8mm, text width=0.56\linewidth},
+    arrow/.style={-Latex, line width=0.5pt}
+  ]
+    \node[io] (raw) {Raw points $(t,p,w)$};
+    \node[stage, below=of raw] (clip) {CPU view-range clipping (binary search)};
+    \node[stage, below=of clip] (merge) {CPU weighted merge ($\tau$ in pixel space)};
+    \node[io, below=of merge] (inst) {Merged kernels (instance buffer upload)};
+    \node[stage, below=of inst] (acc) {Pass 1: Accumulation (additive KDE into HDR density texture)};
+    \node[stage, below=of acc] (red) {Pass 2: Reduction (parallel max to compute global $\max(F)$)};
+    \node[stage, below=of red] (tone) {Pass 3: Tonemapping (normalization, colormap, opacity threshold)};
+    \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
+
+    \draw[arrow] (raw) -- (clip);
+    \draw[arrow] (clip) -- (merge);
+    \draw[arrow] (merge) -- (inst);
+    \draw[arrow] (inst) -- (acc);
+    \draw[arrow] (acc) -- (red);
+    \draw[arrow] (red) -- (tone);
+    \draw[arrow] (tone) -- (out);
+
+    \draw[arrow] (red.east) -- ++(5mm,0) |- node[pos=0.75, right, align=left]{max buffer} (tone.east);
+    \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
+  \end{tikzpicture}
+  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline: additive KDE accumulation in HDR, global-maximum reduction, and perceptual tonemapping. The reduction output is consumed both by the tonemapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
+  \label{fig:pipeline-overview}
+\end{figure}
+
 \subsection{Pass 1 --- Accumulation}
 
 The first pass performs KDE directly on the GPU. Each downsampled point is rendered as a small screen-aligned quad that splats a Gaussian kernel onto a high-dynamic-range (HDR) floating-point texture using additive blending. Because each fragment simply adds its contribution to the running sum, no explicit synchronization is needed: hardware blending accumulates the KDE density field correctly even when kernels overlap.
@@ -547,11 +582,22 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
 
 \begin{figure}
     \centering
-    \includegraphics[width=1.0\linewidth]{figs/gaussians_merge_2.png}
-    \caption{Enter Caption}
+    \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
+  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\Delta\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
     \label{fig:placeholder}
 \end{figure}
 
+\begin{figure*}[t]
+  \centering
+  \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
+    \includegraphics[width=\linewidth]{full_image.png}%
+  }\\[0.5em]
+  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 773 kernels while preserving the dominant density structures.]{%
+    \includegraphics[width=\linewidth]{figs/approx_image.png}%
+  }
+  \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology.}
+  \label{fig:kde-full-vs-merged}
+\end{figure*}
 
 \section{Conclusion}
 \label{sec:conclusion}
@@ -562,16 +608,6 @@ We presented an interactive density-heatmap pipeline for weighted timeseries dat
 
 
 % conference papers do not normally have an appendix
-
-
-% use section* for acknowledgment
-\section*{Acknowledgment}
-
-
-The authors would like to thank the open-source WebGPU community for tooling and reference implementations that informed this work.
-
-
-
 
 
 % trigger a \newpage just before the given reference
