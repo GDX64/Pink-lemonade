@@ -64,10 +64,12 @@ function mergePass(
     }
     const variance = 1 + weightedSqDistSum / Math.max(clusterW, 1e-12);
 
+    const w = clusterW / variance; // we must make this adjust to preserve the total mass of the cluster
+
     const o = count * 4;
     out[o] = clusterX;
     out[o + 1] = clusterY;
-    out[o + 2] = clusterW;
+    out[o + 2] = w;
     out[o + 3] = variance;
     count++;
     hasCluster = false;
