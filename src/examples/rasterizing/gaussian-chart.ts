@@ -34,7 +34,7 @@ type GaussianChartState = {
   sigmaSize: number;
   quantSteps: number;
   opacityCut: number;
-  mergeThreshold: number;
+  mergeThresholdSigmas: number;
   paletteLevel: number;
   showLine: boolean;
   lineOpacity: number;
@@ -114,7 +114,7 @@ export class GaussianChart {
       sigmaSize: 16,
       quantSteps: 0,
       opacityCut: 0.03,
-      mergeThreshold: 16,
+      mergeThresholdSigmas: 1,
       paletteLevel: 0.5,
       showLine: true,
       lineOpacity: 1,
@@ -263,6 +263,7 @@ export class GaussianChart {
       .name("Kernel sigma (px)")
       .onChange((v: number) => {
         this.state.sigmaSize = v;
+        this.lastViewMinX = NaN; // force re-merge of points
       });
     gui
       .add(this.state, "quantSteps", 0, 32, 1)
@@ -279,10 +280,10 @@ export class GaussianChart {
         this.writePaletteToBuffer();
       });
     gui
-      .add(this.state, "mergeThreshold", 0, 50, 1)
-      .name("Merge threshold (px)")
+      .add(this.state, "mergeThresholdSigmas", 0, 3, 0.05)
+      .name("Merge threshold (sigma)")
       .onChange((v: number) => {
-        this.state.mergeThreshold = v;
+        this.state.mergeThresholdSigmas = v;
         this.lastViewMinX = NaN;
       });
 
@@ -403,7 +404,7 @@ export class GaussianChart {
         viewMaxY,
         this.hdrW,
         this.hdrH,
-        this.state.mergeThreshold * pixelRatio,
+        this.state.mergeThresholdSigmas * this.state.sigmaSize * pixelRatio,
       );
       this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, merged);
       this.lastMergedCount = merged.length / 3;
