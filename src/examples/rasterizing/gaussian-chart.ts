@@ -39,6 +39,8 @@ type GaussianChartState = {
   showLine: boolean;
   lineOpacity: number;
   lineWidth: number;
+  showGaussianQuads: boolean;
+  showGaussian3SigmaCircle: boolean;
   paletteColors: {
     c0: string;
     c1: string;
@@ -117,6 +119,8 @@ export class GaussianChart {
       showLine: true,
       lineOpacity: 1,
       lineWidth: 1,
+      showGaussianQuads: false,
+      showGaussian3SigmaCircle: false,
       paletteColors: { ...DEFAULT_PALETTE_COLORS },
     };
     this.controls = {
@@ -202,6 +206,9 @@ export class GaussianChart {
       getShowLine: () => this.state.showLine,
       getLineOpacity: () => this.state.lineOpacity,
       getLineWidth: () => this.state.lineWidth,
+      getShowGaussianQuads: () => this.state.showGaussianQuads,
+      getShowGaussian3SigmaCircle: () => this.state.showGaussian3SigmaCircle,
+      getGaussianSigmaSize: () => this.state.sigmaSize,
       getHeatmapColor: (v) => this.heatmapColor(v),
     });
     this.chartCanvas.setHeatmapSource(this.canvas);
@@ -304,6 +311,10 @@ export class GaussianChart {
     lineFolder.add(this.state, "showLine").name("Show line");
     lineFolder.add(this.state, "lineOpacity", 0.01, 1, 0.01).name("Opacity");
     lineFolder.add(this.state, "lineWidth", 0.25, 5, 0.25).name("Line width");
+    lineFolder.add(this.state, "showGaussianQuads").name("Show gaussian quads");
+    lineFolder
+      .add(this.state, "showGaussian3SigmaCircle")
+      .name("Show gaussian 3 sigma circle");
   }
 
   private scheduleReadback() {
@@ -663,6 +674,7 @@ function createAccumulationPipeline(
       @fragment
       fn fs_main(@location(0) offset: vec2f, @location(1) weight: f32) -> @location(0) f32 {
         let d2 = dot(offset, offset);
+        if(d2 > 1.0) { discard; }
         let result = exp(- d2 * 4.5);
         return result * weight;
       }

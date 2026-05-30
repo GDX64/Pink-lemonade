@@ -12,6 +12,9 @@ export type ChartCanvasStyleAccessors = {
   getShowLine: () => boolean;
   getLineOpacity: () => number;
   getLineWidth: () => number;
+  getShowGaussianQuads: () => boolean;
+  getShowGaussian3SigmaCircle: () => boolean;
+  getGaussianSigmaSize: () => number;
   getHeatmapColor: (value: number) => [number, number, number];
 };
 
@@ -212,15 +215,56 @@ export class ChartCanvas {
     ctx.rect(0, 0, hmW, hmH);
     ctx.clip();
 
+    const pts = this.mergedPoints;
+    const n = pts.length / 3;
+
+    if (this.styleAccessors.getShowGaussianQuads()) {
+      const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
+      const quadHalfSizePx = sigmaPx * 3;
+      if (quadHalfSizePx > 0) {
+        const quadSizePx = quadHalfSizePx * 2;
+        ctx.strokeStyle = "rgba(255, 0, 0, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const sx = toScreenX(pts[i * 3]!);
+          const sy = toScreenY(pts[i * 3 + 1]!);
+          ctx.rect(
+            sx - quadHalfSizePx + 0.5,
+            sy - quadHalfSizePx + 0.5,
+            quadSizePx,
+            quadSizePx,
+          );
+        }
+        ctx.stroke();
+      }
+    }
+
+    if (this.styleAccessors.getShowGaussian3SigmaCircle()) {
+      const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
+      const circleRadiusPx = sigmaPx * 3;
+      if (circleRadiusPx > 0) {
+        ctx.strokeStyle = "rgba(0, 89, 255, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const sx = toScreenX(pts[i * 3]!);
+          const sy = toScreenY(pts[i * 3 + 1]!);
+          ctx.moveTo(sx + circleRadiusPx, sy);
+          ctx.arc(sx, sy, circleRadiusPx, 0, Math.PI * 2);
+        }
+        ctx.stroke();
+      }
+    }
+
     if (!this.styleAccessors.getShowLine()) {
       ctx.restore();
       return;
     }
+
     ctx.strokeStyle = `rgba(0,0,0,${this.styleAccessors.getLineOpacity()})`;
     ctx.lineWidth = this.styleAccessors.getLineWidth();
     ctx.beginPath();
-    const pts = this.mergedPoints;
-    const n = pts.length / 3;
     for (let i = 0; i < n; i++) {
       const sx = toScreenX(pts[i * 3]!);
       const sy = toScreenY(pts[i * 3 + 1]!);

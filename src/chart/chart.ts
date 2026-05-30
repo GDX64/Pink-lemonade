@@ -183,12 +183,12 @@ export function createNoiseData(N: number, seed: number): [number, number][] {
   const stdDev = 1;
   const gen = createGen(seed);
   let acc = gausianNoise(mean, stdDev, gen);
-  let timeAcc = 0;
+  let timeAcc = Date.now();
   const data: [number, number][] = [[timeAcc, acc]];
   for (let i = 1; i < N; i++) {
     acc += gausianNoise(mean, stdDev, gen);
     const s = Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4);
-    timeAcc += Math.abs(gausianNoise(mean, stdDev, gen) * s ** 2);
+    timeAcc += Math.abs(gausianNoise(mean, stdDev, gen) * s ** 2) * 1000;
     data.push([timeAcc, acc]);
   }
   return data;
