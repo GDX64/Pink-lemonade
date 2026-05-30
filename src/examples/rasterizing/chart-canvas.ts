@@ -216,19 +216,21 @@ export class ChartCanvas {
     ctx.clip();
 
     const pts = this.mergedPoints;
-    const n = pts.length / 3;
+    const n = pts.length / 4;
 
     if (this.styleAccessors.getShowGaussianQuads()) {
       const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
-      const quadHalfSizePx = sigmaPx * 3;
-      if (quadHalfSizePx > 0) {
-        const quadSizePx = quadHalfSizePx * 2;
+      if (sigmaPx > 0) {
         ctx.strokeStyle = "rgba(255, 0, 0, 0.35)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const sx = toScreenX(pts[i * 3]!);
-          const sy = toScreenY(pts[i * 3 + 1]!);
+          const p = i * 4;
+          const sx = toScreenX(pts[p]!);
+          const sy = toScreenY(pts[p + 1]!);
+          const variance = Math.max(pts[p + 3]!, 1e-6);
+          const quadHalfSizePx = sigmaPx * Math.sqrt(variance) * 3;
+          const quadSizePx = quadHalfSizePx * 2;
           ctx.rect(
             sx - quadHalfSizePx + 0.5,
             sy - quadHalfSizePx + 0.5,
@@ -242,14 +244,16 @@ export class ChartCanvas {
 
     if (this.styleAccessors.getShowGaussian3SigmaCircle()) {
       const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
-      const circleRadiusPx = sigmaPx * 3;
-      if (circleRadiusPx > 0) {
+      if (sigmaPx > 0) {
         ctx.strokeStyle = "rgba(0, 89, 255, 0.35)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const sx = toScreenX(pts[i * 3]!);
-          const sy = toScreenY(pts[i * 3 + 1]!);
+          const p = i * 4;
+          const sx = toScreenX(pts[p]!);
+          const sy = toScreenY(pts[p + 1]!);
+          const variance = Math.max(pts[p + 3]!, 1e-6);
+          const circleRadiusPx = sigmaPx * Math.sqrt(variance) * 3;
           ctx.moveTo(sx + circleRadiusPx, sy);
           ctx.arc(sx, sy, circleRadiusPx, 0, Math.PI * 2);
         }
@@ -266,8 +270,9 @@ export class ChartCanvas {
     ctx.lineWidth = this.styleAccessors.getLineWidth();
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
-      const sx = toScreenX(pts[i * 3]!);
-      const sy = toScreenY(pts[i * 3 + 1]!);
+      const p = i * 4;
+      const sx = toScreenX(pts[p]!);
+      const sy = toScreenY(pts[p + 1]!);
       if (i === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }

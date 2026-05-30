@@ -428,6 +428,22 @@ Each visible sample is modeled as one Gaussian-mixture component
 \end{equation}
 where $w_i$ is its scalar weight (volume), $\mu_i \in \mathbb{R}^2$ is its chart-space position, and $P_i$ is its kernel covariance.
 
+For a set of $N$ components, the moment-preserving single-Gaussian approximation is
+\begin{equation}
+w = \sum_{i=1}^{N} w_i,
+\end{equation}
+\begin{equation}
+\mu = \frac{1}{w}\sum_{i=1}^{N} w_i\mu_i,
+\end{equation}
+\begin{equation}
+P = \frac{1}{w}\sum_{i=1}^{N} w_i\left[P_i + (\mu_i-\mu)(\mu_i-\mu)^T\right].
+\end{equation}
+In one dimension, this covariance reduces to the scalar variance
+\begin{equation}
+\sigma^2 = \frac{1}{w}\sum_{i=1}^{N} w_i\left[\sigma_i^2 + (\mu_i-\mu)^2\right].
+\end{equation}
+These equations preserve the zeroth (total mass), first (centroid), and second (covariance) moments of the mixture.
+
 Given two components $i$ and $j$, the moment-preserving merge replaces them with one component
 \begin{equation}
 w_{ij} = w_i + w_j,
@@ -436,16 +452,15 @@ w_{ij} = w_i + w_j,
 \mu_{ij} = \frac{w_i}{w_i + w_j}\mu_i + \frac{w_j}{w_i + w_j}\mu_j,
 \end{equation}
 \begingroup
-\small
+\scriptsize
 \begin{equation}
 \begin{aligned}
-P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j \\
-& + \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
+P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j + \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
 \end{aligned}
 \end{equation}
 \endgroup
 
-These equations preserve zeroth, first, and second moments, conserving local weight, mean, and covariance.
+The two-component equations above are the $N=2$ special case of the general formulation.
 
 Our renderer uses a linear-time screen-space merge. With a shared base radius, $P_i \approx P_j \approx \sigma^2 I$ before merging, and covariance growth is dominated by centroid separation. Keeping points close in screen space therefore limits covariance inflation while preserving interactive speed.
 

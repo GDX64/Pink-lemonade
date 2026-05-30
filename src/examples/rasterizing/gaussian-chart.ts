@@ -404,13 +404,18 @@ export class GaussianChart {
         viewMaxY,
         this.hdrW,
         this.hdrH,
-        this.state.mergeThresholdSigmas * this.state.sigmaSize * pixelRatio,
+        this.state.mergeThresholdSigmas,
+        this.state.sigmaSize * pixelRatio,
       );
-      this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, merged);
-      this.lastMergedCount = merged.length / 3;
+      this.gpu.device.queue.writeBuffer(
+        this.instanceBuffer,
+        0,
+        merged.gpuInstances,
+      );
+      this.lastMergedCount = merged.count;
       this.controls.renderedPoints = this.lastMergedCount;
       this.renderedPointsController.updateDisplay();
-      this.chartCanvas.setMergedPoints(merged);
+      this.chartCanvas.setMergedPoints(merged.gpuInstances);
       this.lastViewMinX = viewMinX;
       this.lastViewMaxX = viewMaxX;
       this.lastViewMinY = viewMinY;
@@ -508,12 +513,16 @@ export class GaussianChart {
     viewMaxY: number,
     screenW: number,
     screenH: number,
-    mergeThresholdPx: number,
-  ): Float32Array {
+    mergeThreshold: number,
+    sigmaSizePx: number,
+  ): {
+    gpuInstances: Float32Array;
+    count: number;
+  } {
     const toSX = (x: number) =>
-      ((x - viewMinX) / (viewMaxX - viewMinX)) * screenW;
+      (((x - viewMinX) / (viewMaxX - viewMinX)) * screenW) / sigmaSizePx;
     const toSY = (y: number) =>
-      ((y - viewMinY) / (viewMaxY - viewMinY)) * screenH;
+      (((y - viewMinY) / (viewMaxY - viewMinY)) * screenH) / sigmaSizePx;
 
     const startIdx = lowerBound(this.dataF64, viewMinX);
     const endIdx = upperBound(this.dataF64, viewMaxX);
@@ -523,11 +532,26 @@ export class GaussianChart {
       strategy: "merge",
       toSX,
       toSY,
-      mergeThreshold: mergeThresholdPx,
-      threshold: 1000,
+      mergeThreshold,
     });
 
-    return new Float32Array(merged);
+    // merge strategy returns [x, y, w, variance].
+    const count = merged.length / 4;
+    const gpuInstances = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const mi = i * 4;
+      const gi = i * 4;
+      const x = merged[mi]!;
+      const y = merged[mi + 1]!;
+      const w = merged[mi + 2]!;
+      const variance = merged[mi + 3]!;
+      gpuInstances[gi] = x;
+      gpuInstances[gi + 1] = y;
+      gpuInstances[gi + 2] = w;
+      gpuInstances[gi + 3] = variance;
+    }
+
+    return { gpuInstances, count };
   }
 
   private heatmapColor(value: number): [number, number, number] {
@@ -654,6 +678,7 @@ function createAccumulationPipeline(
         @location(0) quadOffset: vec2f,
         @location(1) point: vec2f,
         @location(2) weight: f32,
+        @location(3) variance: f32,
       ) -> VertexOut {
         if (point.x < u.viewMinX || point.x > u.viewMaxX) {
           return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0), 0.0);
@@ -663,7 +688,8 @@ function createAccumulationPipeline(
         let scale = 1.0 - 2.0 * padFrac;
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
-        let kernelSize = u.sigmaSize * 3.0 * 2.0;
+        let sigmaScale = sqrt(max(variance, 1e-6));
+        let kernelSize = (u.sigmaSize * sigmaScale) * 3.0 * 2.0;
         let r = vec2f(kernelSize / u.screenWidth, kernelSize / u.screenHeight);
         return VertexOut(
           vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
@@ -694,11 +720,12 @@ function createAccumulationPipeline(
           attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }],
         },
         {
-          arrayStride: 12,
+          arrayStride: 16,
           stepMode: "instance",
           attributes: [
             { shaderLocation: 1, offset: 0, format: "float32x2" },
             { shaderLocation: 2, offset: 8, format: "float32" },
+            { shaderLocation: 3, offset: 12, format: "float32" },
           ],
         },
       ],
@@ -847,7 +874,7 @@ function uploadData(device: GPUDevice, pointCount: number) {
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
   const instanceBuffer = device.createBuffer({
-    size: pointCount * 3 * 4,
+    size: pointCount * 4 * 4,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
