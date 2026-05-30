@@ -350,7 +350,7 @@ Fax: (888) 555--1212}}
 % As a general rule, do not put math, special symbols or citations
 % in the abstract
 \begin{abstract}
-A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
+A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- uses instanced drawing for Gaussian splats and produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
 \end{abstract}
 
 % no keywords
@@ -457,7 +457,7 @@ Our goal is perceptual: to help users estimate how much aggregated activity is p
 \section{GPU Rendering Pipeline}
 \label{sec:pipeline}
 
-The rendering pipeline consists of three GPU passes submitted together per frame.
+The rendering pipeline consists of three GPU passes submitted together per frame. In Pass 1, Gaussian kernels are rasterized with instanced drawing (one instance per merged kernel) from a single quad mesh.
 
 \begin{figure}[t]
   \centering
@@ -472,15 +472,17 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \node[stage, below=of raw] (clip) {CPU view-range clipping (binary search)};
     \node[stage, below=of clip] (merge) {CPU weighted merge ($\tau$ in pixel space)};
     \node[io, below=of merge] (inst) {Merged kernels (instance buffer upload)};
-    \node[stage, below=of inst] (acc) {Pass 1: Accumulation (additive KDE into HDR density texture)};
-    \node[stage, below=of acc] (red) {Pass 2: Reduction (parallel max to compute global $\max(F)$)};
+    \node[stage, below=of inst] (vs) {Pass 1a: Vertex shader (instanced screen-aligned quads, one instance per kernel)};
+    \node[stage, below=of vs] (acc) {Pass 1b: Fragment shader accumulation (quad rasterization + additive blending into HDR KDE texture)};
+    \node[stage, below=of acc] (red) {Pass 2: Compute shader reduction (parallel max to compute global $\max(F)$)};
     \node[stage, below=of red] (tone) {Pass 3: Tonemapping (normalization, colormap, opacity threshold)};
     \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
 
     \draw[arrow] (raw) -- (clip);
     \draw[arrow] (clip) -- (merge);
     \draw[arrow] (merge) -- (inst);
-    \draw[arrow] (inst) -- (acc);
+    \draw[arrow] (inst) -- (vs);
+    \draw[arrow] (vs) -- (acc);
     \draw[arrow] (acc) -- (red);
     \draw[arrow] (red) -- (tone);
     \draw[arrow] (tone) -- (out);
@@ -488,7 +490,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \draw[arrow] (red.east) -- ++(5mm,0) |- node[pos=0.75, right, align=left]{max buffer} (tone.east);
     \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
   \end{tikzpicture}
-  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline: additive KDE accumulation in HDR, global-maximum reduction, and perceptual tonemapping. The reduction output is consumed both by the tonemapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
+  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs perceptual tonemapping. The reduction output is consumed both by the tonemapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
   \label{fig:pipeline-overview}
 \end{figure}
 
@@ -506,7 +508,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
 
 \subsection{Pass 1 --- Accumulation}
 
-The first pass performs KDE directly on the GPU. Each downsampled point is rendered as a small screen-aligned quad that splats a Gaussian kernel onto a high-dynamic-range (HDR) floating-point texture using additive blending. Because each fragment simply adds its contribution to the running sum, no explicit synchronization is needed: hardware blending accumulates the KDE density field correctly even when kernels overlap.
+The first pass performs KDE directly on the GPU. Each downsampled point is rendered with \emph{instanced drawing}: one draw call emits many instances of a small screen-aligned quad, and each instance splats one Gaussian kernel onto a high-dynamic-range (HDR) floating-point texture using additive blending. Because each fragment simply adds its contribution to the running sum, no explicit synchronization is needed: hardware blending accumulates the KDE density field correctly even when kernels overlap.
 
 The kernel radius is configurable in screen pixels. The quad is sized to cover the full extent of the kernel --- three standard deviations in each direction --- so that effectively all of the kernel mass is captured. Inside the quad, each fragment evaluates the Gaussian as a function of its distance from the point center, scaled by the point's weight. Points outside the current view window are discarded before reaching the rasterizer.
 
