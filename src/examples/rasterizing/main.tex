@@ -422,21 +422,31 @@ The weighted merge strategy addresses this directly: the sole criterion for coll
 
 This section formalizes our merge operation and relates it to the KL-based reduction criterion of Runnalls \cite{4383588}.
 
+At the component level, we use the full matrix-form weighted Gaussian
+\begin{equation}
+\mathcal{N}(\overrightarrow{\boldsymbol{x}}; A, \overrightarrow{\boldsymbol{\mu}}, \overrightarrow{\mathbf{P}}) = A\,\exp\!\left(-\frac{1}{2}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})^T \overrightarrow{\mathbf{P}}^{-1}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})\right),
+\end{equation}
+with amplitude defined from total weight as
+\begin{equation}
+A(w)=\frac{w}{\sqrt{(2\pi)^d\det(\overrightarrow{\mathbf{P}})}},
+\end{equation}
+where $\overrightarrow{\boldsymbol{x}}\in\mathbb{R}^d$, $\overrightarrow{\boldsymbol{\mu}}\in\mathbb{R}^d$, and $\overrightarrow{\mathbf{P}}\in\mathbb{R}^{d\times d}$ is symmetric positive definite.
+
 Each visible sample is modeled as one Gaussian-mixture component
 \begin{equation}
-\left(w_i, \mu_i, P_i\right),
+\left(w_i, \overrightarrow{\boldsymbol{\mu}}_i, \overrightarrow{\mathbf{P}}_i\right),
 \end{equation}
-where $w_i$ is its scalar weight (volume), $\mu_i \in \mathbb{R}^2$ is its chart-space position, and $P_i$ is its kernel covariance.
+where $w_i$ is its scalar weight (volume), $\overrightarrow{\boldsymbol{\mu}}_i \in \mathbb{R}^2$ is its chart-space position, and $\overrightarrow{\mathbf{P}}_i$ is its kernel covariance.
 
 For a set of $N$ components, the moment-preserving single-Gaussian approximation is
 \begin{equation}
 w = \sum_{i=1}^{N} w_i,
 \end{equation}
 \begin{equation}
-\mu = \frac{1}{w}\sum_{i=1}^{N} w_i\mu_i,
+\overrightarrow{\boldsymbol{\mu}} = \frac{1}{w}\sum_{i=1}^{N} w_i\overrightarrow{\boldsymbol{\mu}}_i,
 \end{equation}
 \begin{equation}
-P = \frac{1}{w}\sum_{i=1}^{N} w_i\left[P_i + (\mu_i-\mu)(\mu_i-\mu)^T\right].
+\overrightarrow{\mathbf{P}} = \frac{1}{w}\sum_{i=1}^{N} w_i\left[\overrightarrow{\mathbf{P}}_i + (\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}})(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}})^T\right].
 \end{equation}
 In one dimension, this covariance reduces to the scalar variance
 \begin{equation}
@@ -449,20 +459,26 @@ Given two components $i$ and $j$, the moment-preserving merge replaces them with
 w_{ij} = w_i + w_j,
 \end{equation}
 \begin{equation}
-\mu_{ij} = \frac{w_i}{w_i + w_j}\mu_i + \frac{w_j}{w_i + w_j}\mu_j,
+\overrightarrow{\boldsymbol{\mu}}_{ij} = \frac{w_i}{w_i + w_j}\overrightarrow{\boldsymbol{\mu}}_i + \frac{w_j}{w_i + w_j}\overrightarrow{\boldsymbol{\mu}}_j,
 \end{equation}
 \begingroup
 \scriptsize
 \begin{equation}
 \begin{aligned}
-P_{ij} = \frac{w_i}{w_i + w_j}P_i + \frac{w_j}{w_i + w_j}P_j + \frac{w_i w_j}{(w_i + w_j)^2}(\mu_i-\mu_j)(\mu_i-\mu_j)^T.
+\overrightarrow{\mathbf{P}}_{ij} = \frac{w_i}{w_i + w_j}\overrightarrow{\mathbf{P}}_i + \frac{w_j}{w_i + w_j}\overrightarrow{\mathbf{P}}_j + \frac{w_i w_j}{(w_i + w_j)^2}(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}}_j)(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}}_j)^T.
 \end{aligned}
 \end{equation}
 \endgroup
 
 The two-component equations above are the $N=2$ special case of the general formulation.
 
-Our renderer uses a linear-time screen-space merge. With a shared base radius, $P_i \approx P_j \approx \sigma^2 I$ before merging, and covariance growth is dominated by centroid separation. Keeping points close in screen space therefore limits covariance inflation while preserving interactive speed.
+For the merged Gaussian component, the peak amplitude in 2D can be written from its total weight and covariance determinant as
+\begin{equation}
+A = \frac{w}{2\pi\sqrt{\det(\overrightarrow{\mathbf{P}})}},
+\end{equation}
+which follows from the normalization constant of a weighted Gaussian density.
+
+
 
 \subsection{Why Merging in Pixel Space}
 
@@ -527,20 +543,30 @@ The first pass performs KDE directly on the GPU. Each downsampled point is rende
 
 The kernel radius is configurable in screen pixels. The quad is sized to cover the full extent of the kernel --- three standard deviations in each direction --- so that effectively all of the kernel mass is captured. Inside the quad, each fragment evaluates the Gaussian as a function of its distance from the point center, scaled by the point's weight. Points outside the current view window are discarded before reaching the rasterizer.
 
-For each merged kernel, we keep its center $\mu\in\mathbb{R}^2$, weight $w$, and covariance $P\in\mathbb{R}^{2\times 2}$. In the vertex shader, we build a Cholesky factor $L$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
+For an isotropic 2D Gaussian, the truncation error outside a disk of radius $R$ is (via radial form of the Gaussian \cite{Bishop2006})
 \begin{equation}
-P = LL^T,
+\varepsilon_{2}(R,\sigma)=\exp\left(-\frac{R^2}{2\sigma^2}\right).
+\end{equation}
+Setting $R=3\sigma$ gives
+\begin{equation}
+\varepsilon_{2}(3\sigma,\sigma)=\exp\left(-\frac{9}{2}\right)\approx 0.011109,
+\end{equation}
+that is, about $1.11\%$ omitted mass. For our purposes, this error level is acceptable.
+
+For each merged kernel, we keep its center $\overrightarrow{\boldsymbol{\mu}}\in\mathbb{R}^2$, weight $w$, and covariance $\overrightarrow{\mathbf{P}}\in\mathbb{R}^{2\times 2}$. In the vertex shader, we build a Cholesky factor $\overrightarrow{\mathbf{L}}$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
+\begin{equation}
+\overrightarrow{\mathbf{P}} = \overrightarrow{\mathbf{L}}\overrightarrow{\mathbf{L}}^T,
 \end{equation}
 with
 \begin{equation}
-P=
+\overrightarrow{\mathbf{P}}=
 \begin{bmatrix}
 \sigma_x^2 & \sigma_{xy} \\
 \sigma_{xy} & \sigma_y^2
 \end{bmatrix}
 \end{equation}
 \begin{equation}
-L=
+\overrightarrow{\mathbf{L}}=
 \begin{bmatrix}
 \ell_{00} & 0 \\
 \ell_{10} & \ell_{11}
@@ -555,23 +581,23 @@ L=
 \begin{equation}
 \ell_{11}=\sqrt{\sigma_y^2-\ell_{10}^2}
 \end{equation}
-Starting from standardized quad coordinates $z\in[-3,3]^2$, the shader computes
+Starting from standardized quad coordinates $\overrightarrow{\boldsymbol{z}}\in[-3,3]^2$, the shader computes
 \begin{equation}
-x = \mu + sLz,
+\overrightarrow{\boldsymbol{x}} = \overrightarrow{\boldsymbol{\mu}} + s\overrightarrow{\mathbf{L}}\overrightarrow{\boldsymbol{z}},
 \end{equation}
 where $s$ is the user-controlled kernel size (in pixels). This is the explicit linear map that turns an isotropic footprint into an oriented anisotropic ellipse in screen space.
 
-The fragment shader does not need to invert $P$ per pixel. Instead, it receives $z$ as a varying from the vertex stage, and rasterization hardware linearly interpolates $z$ across the two triangles of the quad. Therefore each fragment already has the local standardized coordinates needed for the quadratic form
+The fragment shader does not need to invert $\overrightarrow{\mathbf{P}}$ per pixel. Instead, it receives $\overrightarrow{\boldsymbol{z}}$ as a varying from the vertex stage, and rasterization hardware linearly interpolates $\overrightarrow{\boldsymbol{z}}$ across the two triangles of the quad. Therefore each fragment already has the local standardized coordinates needed for the quadratic form
 \begin{equation}
-d_M^2 = z^Tz,
+d_M^2 = \overrightarrow{\boldsymbol{z}}^T\overrightarrow{\boldsymbol{z}},
 \end{equation}
 which is equivalent to the Mahalanobis distance in screen coordinates:
 \begin{equation}
-d_M^2 = (x-\mu)^T (s^2P)^{-1}(x-\mu).
+d_M^2 = (\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})^T (s^2\overrightarrow{\mathbf{P}})^{-1}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}}).
 \end{equation}
 The kernel value is then evaluated as
 \begin{equation}
-K(x)=\exp\left(-\frac{1}{2}d_M^2\right),
+K(\overrightarrow{\boldsymbol{x}})=\exp\left(-\frac{1}{2}d_M^2\right),
 \end{equation}
 and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
 
@@ -614,24 +640,24 @@ To isolate merge effects, MSE is measured on the linear HDR accumulation buffer 
 
 \subsection{Two-Gaussian Analytical Error Model}
 
-For intuition, consider two isotropic 2D Gaussians with equal weights and equal standard deviation $\sigma$, centered at $\pm\Delta/2$ (so their separation is $\lVert\Delta\rVert$). Let
+For intuition, consider two isotropic 2D Gaussians with equal weights and equal standard deviation $\sigma$, centered at $\pm\overrightarrow{\boldsymbol{\Delta}}/2$ (so their separation is $\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert$). Let
 \begin{equation}
-\rho = \frac{\lVert\Delta\rVert}{\sigma}
+\rho = \frac{\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert}{\sigma}
 \end{equation}
 be the separation measured in sigmas.
 
 The exact pair is
 \begin{equation}
-f(x)=\frac{1}{2}\,\mathcal{N}\!\left(x; -\frac{\Delta}{2},\sigma^2I\right)+\frac{1}{2}\,\mathcal{N}\!\left(x; +\frac{\Delta}{2},\sigma^2I\right),
+f(\overrightarrow{\boldsymbol{x}})=\frac{1}{2}\,\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}}; -\frac{\overrightarrow{\boldsymbol{\Delta}}}{2},\sigma^2\overrightarrow{\mathbf{I}}\right)+\frac{1}{2}\,\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}}; +\frac{\overrightarrow{\boldsymbol{\Delta}}}{2},\sigma^2\overrightarrow{\mathbf{I}}\right),
 \end{equation}
 and its moment-preserving single-Gaussian merge is
 \begin{equation}
-g(x)=\mathcal{N}\!\left(x;0,\sigma_m^2 I\right),\qquad \sigma_m^2=\sigma^2\left(1+\frac{\rho^2}{4}\right).
+g(\overrightarrow{\boldsymbol{x}})=\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}};0,\sigma_m^2 \overrightarrow{\mathbf{I}}\right),\qquad \sigma_m^2=\sigma^2\left(1+\frac{\rho^2}{4}\right).
 \end{equation}
 
 A closed-form integrated squared error (ISE) is
 \begin{equation}
-\mathrm{ISE}(\rho)=\int_{\mathbb{R}^2}\left(f(x)-g(x)\right)^2dx
+\mathrm{ISE}(\rho)=\int_{\mathbb{R}^2}\left(f(\overrightarrow{\boldsymbol{x}})-g(\overrightarrow{\boldsymbol{x}})\right)^2d\overrightarrow{\boldsymbol{x}}
 =\frac{1}{8\pi\sigma^2}\,\Psi(\rho),
 \end{equation}
 with
@@ -672,7 +698,7 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
 \begin{figure}
     \centering
     \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
-  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\Delta\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
+  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
     \label{fig:placeholder}
 \end{figure}
 
