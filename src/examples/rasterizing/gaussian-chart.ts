@@ -6,6 +6,7 @@ import { lowerBound, upperBound, ViewManager } from "./view-manager";
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 30; // px reserved on the bottom for the X axis
 const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
+const N_SIGMA_TRUNCATE = 3; // number of sigmas to cover with the quad
 
 const DEFAULT_PALETTE_COLORS = {
   c0: "#d1edff",
@@ -73,6 +74,7 @@ export class GaussianChart {
   private tonemapBindGroup!: GPUBindGroup;
   private viewManager!: ViewManager;
   private chartCanvas!: ChartCanvas;
+  private destroyed = false;
 
   private hdrW = 0;
   private hdrH = 0;
@@ -131,6 +133,11 @@ export class GaussianChart {
     };
     this.fpsController = null;
     this.renderedPointsController = null;
+
+    setTimeout(async () => {
+      const integral = await this.integrate();
+      console.log({ integral });
+    }, 1000);
   }
 
   async start(): Promise<void> {
@@ -209,6 +216,7 @@ export class GaussianChart {
       getShowGaussianQuads: () => this.state.showGaussianQuads,
       getShowGaussian3SigmaCircle: () => this.state.showGaussian3SigmaCircle,
       getGaussianSigmaSize: () => this.state.sigmaSize,
+      getGaussianTruncateNSigma: () => N_SIGMA_TRUNCATE,
       getHeatmapColor: (v) => this.heatmapColor(v),
     });
     this.chartCanvas.setHeatmapSource(this.canvas);
@@ -315,7 +323,7 @@ export class GaussianChart {
     lineFolder.add(this.state, "showGaussianQuads").name("Show gaussian quads");
     lineFolder
       .add(this.state, "showGaussian3SigmaCircle")
-      .name("Show gaussian 3 sigma circle");
+      .name(`Show gaussian ${N_SIGMA_TRUNCATE} sigma circle`);
   }
 
   private scheduleReadback() {
@@ -339,7 +347,7 @@ export class GaussianChart {
     });
   }
 
-  private render = () => {
+  private render() {
     const now = performance.now();
     const dt = (now - this.lastTime) / 1000;
     this.lastTime = now;
@@ -455,8 +463,68 @@ export class GaussianChart {
     this.gpu.device.queue.submit([encoder.finish()]);
     this.scheduleReadback();
     this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
-    requestAnimationFrame(this.render);
-  };
+  }
+
+  async setupRenderLoop() {
+    while (true) {
+      if (this.destroyed) {
+        break;
+      }
+      await new Promise(requestAnimationFrame);
+      this.render();
+    }
+  }
+
+  private async integrate(): Promise<number> {
+    const width = this.hdrW;
+    const height = this.hdrH;
+    if (width <= 0 || height <= 0) return 0;
+
+    const bytesPerPixel = 4; // r32float
+    const unalignedBytesPerRow = width * bytesPerPixel;
+    const bytesPerRow = Math.ceil(unalignedBytesPerRow / 256) * 256;
+    const copySize = bytesPerRow * height;
+
+    const readbackBuffer = this.gpu.device.createBuffer({
+      size: copySize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const encoder = this.gpu.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: this.hdrTexture },
+      {
+        buffer: readbackBuffer,
+        bytesPerRow,
+        rowsPerImage: height,
+      },
+      {
+        width,
+        height,
+        depthOrArrayLayers: 1,
+      },
+    );
+    this.gpu.device.queue.submit([encoder.finish()]);
+
+    await readbackBuffer.mapAsync(GPUMapMode.READ);
+    const mapped = readbackBuffer.getMappedRange();
+    const data = new Float32Array(mapped);
+    const strideFloats = bytesPerRow / bytesPerPixel;
+
+    let sum = 0;
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * strideFloats;
+      for (let x = 0; x < width; x++) {
+        sum += data[rowStart + x] ?? 0;
+      }
+    }
+
+    readbackBuffer.unmap();
+    readbackBuffer.destroy();
+    const sigmaSize = this.state.sigmaSize * this.getEffectivePixelRatio();
+    const scaleFactor = sigmaSize ** 2;
+    return sum / scaleFactor;
+  }
 
   private readonly handleResize = () => {
     this.resizeHeatmapCanvas(this.canvas);
@@ -653,7 +721,10 @@ function createHDRTexture(device: GPUDevice, width: number, height: number) {
   return device.createTexture({
     size: [width, height],
     format: "r32float",
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    usage:
+      GPUTextureUsage.RENDER_ATTACHMENT |
+      GPUTextureUsage.TEXTURE_BINDING |
+      GPUTextureUsage.COPY_SRC,
   });
 }
 
@@ -662,6 +733,8 @@ function createAccumulationPipeline(
   heatmapCssHeight: number,
 ) {
   const padFrac = CHART_PAD_Y / Math.max(1, heatmapCssHeight);
+  const nSigma = N_SIGMA_TRUNCATE.toFixed(6);
+  const nSigma2 = (N_SIGMA_TRUNCATE * N_SIGMA_TRUNCATE).toFixed(6);
   const module = device.createShaderModule({
     code: /* wgsl */ `
       struct Uniforms {
@@ -696,8 +769,8 @@ function createAccumulationPipeline(
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
 
-        // z is in standardized Gaussian space; clip is at 3-sigma bounds.
-        let z = quadOffset * 3.0;
+        // z is in standardized Gaussian space; clip is at N_SIGMA_TRUNCATE bounds.
+        let z = quadOffset * ${nSigma}f;
 
         // Build Cholesky factor L such that P = L * transpose(L).
         let p00 = max(pRow0.x, 1e-6);
@@ -729,7 +802,7 @@ function createAccumulationPipeline(
       @fragment
       fn fs_main(@location(0) z: vec2f, @location(1) weight: f32) -> @location(0) f32 {
         let d2 = dot(z, z);
-        if (d2 > 9.0) { discard; }
+        if (d2 > ${nSigma2}f) { discard; }
         let result = exp(-0.5 * d2);
         return result * weight;
       }

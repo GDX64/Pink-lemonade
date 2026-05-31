@@ -15,6 +15,7 @@ export type ChartCanvasStyleAccessors = {
   getShowGaussianQuads: () => boolean;
   getShowGaussian3SigmaCircle: () => boolean;
   getGaussianSigmaSize: () => number;
+  getGaussianTruncateNSigma: () => number;
   getHeatmapColor: (value: number) => [number, number, number];
 };
 
@@ -220,6 +221,10 @@ export class ChartCanvas {
 
     if (this.styleAccessors.getShowGaussianQuads()) {
       const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
+      const nSigma = Math.max(
+        0,
+        this.styleAccessors.getGaussianTruncateNSigma(),
+      );
       if (sigmaPx > 0) {
         ctx.strokeStyle = "rgba(255, 0, 0, 0.35)";
         ctx.lineWidth = 1;
@@ -236,7 +241,7 @@ export class ChartCanvas {
             Math.max((p00 - p11) * (p00 - p11) + 4 * p01 * p01, 0),
           );
           const lambdaMax = Math.max(0.5 * (trace + detTerm), 1e-6);
-          const quadHalfSizePx = sigmaPx * Math.sqrt(lambdaMax) * 3;
+          const quadHalfSizePx = sigmaPx * Math.sqrt(lambdaMax) * nSigma;
           const quadSizePx = quadHalfSizePx * 2;
           ctx.rect(
             sx - quadHalfSizePx + 0.5,
@@ -251,6 +256,10 @@ export class ChartCanvas {
 
     if (this.styleAccessors.getShowGaussian3SigmaCircle()) {
       const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
+      const nSigma = Math.max(
+        0,
+        this.styleAccessors.getGaussianTruncateNSigma(),
+      );
       if (sigmaPx > 0) {
         ctx.strokeStyle = "rgba(0, 89, 255, 0.35)";
         ctx.lineWidth = 1;
@@ -267,7 +276,7 @@ export class ChartCanvas {
             Math.max((p00 - p11) * (p00 - p11) + 4 * p01 * p01, 0),
           );
           const lambdaMax = Math.max(0.5 * (trace + detTerm), 1e-6);
-          const circleRadiusPx = sigmaPx * Math.sqrt(lambdaMax) * 3;
+          const circleRadiusPx = sigmaPx * Math.sqrt(lambdaMax) * nSigma;
           ctx.moveTo(sx + circleRadiusPx, sy);
           ctx.arc(sx, sy, circleRadiusPx, 0, Math.PI * 2);
         }

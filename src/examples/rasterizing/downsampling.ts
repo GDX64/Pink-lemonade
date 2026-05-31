@@ -73,7 +73,7 @@ function mergePass(
     const p11 = 1 + weightedYY * invW;
 
     const detOfP = p00 * p11 - p01 * p10 || 1e-12;
-    const w = clusterW / Math.sqrt(detOfP);
+    const w = clusterW / (2 * Math.PI * Math.sqrt(detOfP));
     const o = count * 7;
     out[o] = clusterX;
     out[o + 1] = clusterY;
