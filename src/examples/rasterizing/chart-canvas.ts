@@ -56,6 +56,11 @@ export class ChartCanvas {
 
   private legendBarTop = 0;
   private legendBarLeft = 0;
+  private onWindowPointerDown: (e: PointerEvent) => void;
+  private onCanvasPointerMove: (e: PointerEvent) => void;
+  private onCanvasPointerUp: (e: PointerEvent) => void;
+  private onCanvasPointerCancel: (e: PointerEvent) => void;
+  private onWindowPointerMove: (e: PointerEvent) => void;
 
   constructor(
     container: HTMLElement,
@@ -72,7 +77,28 @@ export class ChartCanvas {
       "position:absolute;inset:0;width:100%;height:100%;pointer-events:auto;z-index:1;";
     this.container.appendChild(this.canvas);
     this.ctx = this.canvas.getContext("2d")!;
+
+    this.onWindowPointerDown = () => {};
+    this.onCanvasPointerMove = () => {};
+    this.onCanvasPointerUp = () => {};
+    this.onCanvasPointerCancel = () => {};
+    this.onWindowPointerMove = () => {};
     this.bindLevelDrag();
+  }
+
+  destroy() {
+    window.removeEventListener("pointerdown", this.onWindowPointerDown);
+    this.canvas.removeEventListener("pointermove", this.onCanvasPointerMove);
+    this.canvas.removeEventListener("pointerup", this.onCanvasPointerUp);
+    this.canvas.removeEventListener(
+      "pointercancel",
+      this.onCanvasPointerCancel,
+    );
+    window.removeEventListener("pointermove", this.onWindowPointerMove);
+    this.container.style.cursor = "";
+    if (this.canvas.parentElement === this.container) {
+      this.container.removeChild(this.canvas);
+    }
   }
 
   setOnLevelChange(cb: (level: number) => void) {
@@ -111,18 +137,20 @@ export class ChartCanvas {
       return Math.min(1, Math.max(0, 1 - relY / (BAR_H - 1)));
     };
 
-    window.addEventListener("pointerdown", (e) => {
+    this.onWindowPointerDown = (e: PointerEvent) => {
       if (!hitTest(e.clientX, e.clientY)) return;
       this.isDraggingLevel = true;
       this.canvas.style.pointerEvents = "auto";
       this.canvas.setPointerCapture(e.pointerId);
       e.stopPropagation();
-    });
+    };
+    window.addEventListener("pointerdown", this.onWindowPointerDown);
 
-    this.canvas.addEventListener("pointermove", (e) => {
+    this.onCanvasPointerMove = (e: PointerEvent) => {
       if (!this.isDraggingLevel) return;
       this.onLevelChange?.(levelFromY(e.clientY));
-    });
+    };
+    this.canvas.addEventListener("pointermove", this.onCanvasPointerMove);
 
     const stopDrag = (e: PointerEvent) => {
       if (!this.isDraggingLevel) return;
@@ -130,15 +158,18 @@ export class ChartCanvas {
       this.canvas.style.pointerEvents = "auto";
       this.canvas.releasePointerCapture(e.pointerId);
     };
-    this.canvas.addEventListener("pointerup", stopDrag);
-    this.canvas.addEventListener("pointercancel", stopDrag);
+    this.onCanvasPointerUp = stopDrag;
+    this.onCanvasPointerCancel = stopDrag;
+    this.canvas.addEventListener("pointerup", this.onCanvasPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onCanvasPointerCancel);
 
-    window.addEventListener("pointermove", (e) => {
+    this.onWindowPointerMove = (e: PointerEvent) => {
       if (this.isDraggingLevel) return;
       this.container.style.cursor = hitTest(e.clientX, e.clientY)
         ? "ns-resize"
         : "";
-    });
+    };
+    window.addEventListener("pointermove", this.onWindowPointerMove);
   }
 
   setMergedPoints(points: Float32Array) {

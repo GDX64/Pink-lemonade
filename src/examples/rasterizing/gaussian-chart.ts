@@ -96,6 +96,8 @@ export class GaussianChart {
   };
   private fpsController: any;
   private renderedPointsController: any;
+  private gui: GUI | null = null;
+  private integrateTimeoutId: number | null = null;
 
   constructor(options: GaussianChartOptions) {
     const { data, container } = options;
@@ -134,10 +136,50 @@ export class GaussianChart {
     this.fpsController = null;
     this.renderedPointsController = null;
 
-    setTimeout(async () => {
+    this.integrateTimeoutId = window.setTimeout(async () => {
+      if (this.destroyed) return;
       const integral = await this.integrate();
       console.log({ integral });
     }, 1000);
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    if (this.integrateTimeoutId !== null) {
+      window.clearTimeout(this.integrateTimeoutId);
+      this.integrateTimeoutId = null;
+    }
+
+    window.removeEventListener("resize", this.handleResize);
+
+    if (this.gui) {
+      this.gui.destroy();
+      this.gui = null;
+    }
+
+    if (this.chartCanvas) {
+      this.chartCanvas.destroy();
+    }
+
+    if (this.canvas && this.canvas.parentElement === this.container) {
+      this.container.removeChild(this.canvas);
+    }
+
+    try {
+      this.statsReadbackBuffer?.unmap();
+    } catch {
+      // Ignore: buffer may not be currently mapped.
+    }
+
+    this.quadBuffer?.destroy();
+    this.instanceBuffer?.destroy();
+    this.uniformBuffer?.destroy();
+    this.statsBuffer?.destroy();
+    this.statsReadbackBuffer?.destroy();
+    this.colorBuffer?.destroy();
+    this.hdrTexture?.destroy();
   }
 
   async start(): Promise<void> {
@@ -235,6 +277,7 @@ export class GaussianChart {
 
   private setupGui() {
     const gui = new GUI({ title: "Render Controls" });
+    this.gui = gui;
     this.container.appendChild(gui.domElement);
     gui.domElement.style.position = "absolute";
     gui.domElement.style.top = "0px";
@@ -327,7 +370,7 @@ export class GaussianChart {
   }
 
   private scheduleReadback() {
-    if (this.readbackPending) return;
+    if (this.readbackPending || this.destroyed) return;
     this.readbackPending = true;
     const encoder = this.gpu.device.createCommandEncoder();
     encoder.copyBufferToBuffer(
@@ -339,6 +382,15 @@ export class GaussianChart {
     );
     this.gpu.device.queue.submit([encoder.finish()]);
     this.statsReadbackBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      if (this.destroyed) {
+        this.readbackPending = false;
+        try {
+          this.statsReadbackBuffer.unmap();
+        } catch {
+          // Ignore race with destroy.
+        }
+        return;
+      }
       const val =
         new Uint32Array(this.statsReadbackBuffer.getMappedRange())[0] ?? 1;
       this.statsReadbackBuffer.unmap();
@@ -348,6 +400,7 @@ export class GaussianChart {
   }
 
   private render() {
+    if (this.destroyed) return;
     const now = performance.now();
     const dt = (now - this.lastTime) / 1000;
     this.lastTime = now;
@@ -527,6 +580,7 @@ export class GaussianChart {
   }
 
   private readonly handleResize = () => {
+    if (this.destroyed) return;
     this.resizeHeatmapCanvas(this.canvas);
     this.hdrW = this.canvas.width;
     this.hdrH = this.canvas.height;
