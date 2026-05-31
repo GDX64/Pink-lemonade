@@ -178,18 +178,23 @@ export function drawSplatKernelSeries(
   return { density, scaleX, scaleY };
 }
 
-export function createNoiseData(N: number, seed: number): [number, number][] {
+export function createNoiseData(
+  N: number,
+  seed: number,
+): [number, number, number][] {
   const mean = 0;
   const stdDev = 1;
   const gen = createGen(seed);
   let acc = gausianNoise(mean, stdDev, gen);
   let timeAcc = Date.now();
-  const data: [number, number][] = [[timeAcc, acc]];
-  for (let i = 1; i < N; i++) {
+  const data: [number, number, number][] = [];
+  for (let i = 0; i < N; i++) {
     acc += gausianNoise(mean, stdDev, gen);
-    const s = Math.sin((i / N) * Math.PI * 2 * 2 + Math.PI / 4);
-    timeAcc += Math.abs(gausianNoise(mean, stdDev, gen) * s ** 2) * 1000;
-    data.push([timeAcc, acc]);
+    timeAcc += 1000;
+    const s =
+      Math.sin((i / N) * Math.PI * 2) + gausianNoise(mean, stdDev, gen) / 10;
+    const w = Math.abs(s * s * s * 100);
+    data.push([timeAcc, acc, w]);
   }
   return data;
 }

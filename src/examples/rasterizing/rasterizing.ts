@@ -1,7 +1,7 @@
 import { createNoiseData } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
 
-const DATA_KIND = "random";
+const DATA_KIND = "";
 
 export async function rasterizingExample() {
   await createChart1();
@@ -46,7 +46,7 @@ async function loadData(): Promise<LoadedData> {
       const [time, price] = points[i]!;
       dataF64[i * 3] = (time - xMin) / xScale;
       dataF64[i * 3 + 1] = price;
-      dataF64[i * 3 + 2] = 1;
+      dataF64[i * 3 + 2] = points[i]![2] || 1; // weight
     }
     return { n: nFiltered, dataF64, xMin, xScale };
   }

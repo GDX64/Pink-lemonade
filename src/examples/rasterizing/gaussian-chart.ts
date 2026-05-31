@@ -37,6 +37,7 @@ type GaussianChartState = {
   mergeThresholdSigmas: number;
   paletteLevel: number;
   showLine: boolean;
+  showScatter: boolean;
   lineOpacity: number;
   lineWidth: number;
   showGaussianQuads: boolean;
@@ -57,6 +58,7 @@ export class GaussianChart {
   readonly state: GaussianChartState;
 
   private canvas!: HTMLCanvasElement;
+  private fullChartSize: { cssW: number; cssH: number } = { cssW: 0, cssH: 0 };
   private gpu!: Awaited<ReturnType<typeof initWebGPU>>;
   private accumulationPipeline!: GPURenderPipeline;
   private reductionPipeline!: GPUComputePipeline;
@@ -118,6 +120,7 @@ export class GaussianChart {
       mergeThresholdSigmas: 1,
       paletteLevel: 0.5,
       showLine: true,
+      showScatter: false,
       lineOpacity: 1,
       lineWidth: 1,
       showGaussianQuads: false,
@@ -242,6 +245,7 @@ export class GaussianChart {
       getShowYAxis: () => this.state.showYAxis,
       getPixelRatio: () => this.state.pixelRatio,
       getShowLine: () => this.state.showLine,
+      getShowScatter: () => this.state.showScatter,
       getLineOpacity: () => this.state.lineOpacity,
       getLineWidth: () => this.state.lineWidth,
       getShowGaussianQuads: () => this.state.showGaussianQuads,
@@ -250,10 +254,7 @@ export class GaussianChart {
       getGaussianTruncateNSigma: () => N_SIGMA_TRUNCATE,
       getHeatmapColor: (v) => this.heatmapColor(v),
       size: () => {
-        const { width, height } = this.canvas;
-        const cssW = Math.round(width / this.getEffectivePixelRatio());
-        const cssH = Math.round(height / this.getEffectivePixelRatio());
-        return { cssW, cssH };
+        return this.fullChartSize;
       },
     });
     this.chartCanvas.setHeatmapSource(this.canvas);
@@ -368,6 +369,7 @@ export class GaussianChart {
 
     const lineFolder = gui.addFolder("Line chart");
     lineFolder.add(this.state, "showLine").name("Show line");
+    lineFolder.add(this.state, "showScatter").name("Show scatter");
     lineFolder.add(this.state, "lineOpacity", 0.01, 1, 0.01).name("Opacity");
     lineFolder.add(this.state, "lineWidth", 0.25, 5, 0.25).name("Line width");
     lineFolder.add(this.state, "showGaussianQuads").name("Show gaussian quads");
@@ -823,6 +825,7 @@ export class GaussianChart {
   }
 
   private resizeHeatmapCanvas(size: { cssH: number; cssW: number }) {
+    this.fullChartSize = size;
     const { cssH, cssW } = size;
     const axisYWidth = this.state.showYAxis ? AXIS_Y_W : 0;
     const heatmapCssW = Math.max(1, cssW - axisYWidth);

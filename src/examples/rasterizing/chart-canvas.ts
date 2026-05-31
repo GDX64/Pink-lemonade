@@ -10,6 +10,7 @@ export type ChartCanvasStyleAccessors = {
   getShowYAxis: () => boolean;
   getPixelRatio: () => number;
   getShowLine: () => boolean;
+  getShowScatter: () => boolean;
   getLineOpacity: () => number;
   getLineWidth: () => number;
   getShowGaussianQuads: () => boolean;
@@ -315,22 +316,42 @@ export class ChartCanvas {
       }
     }
 
-    if (!this.styleAccessors.getShowLine()) {
+    if (
+      !this.styleAccessors.getShowLine() &&
+      !this.styleAccessors.getShowScatter()
+    ) {
       ctx.restore();
       return;
     }
 
-    ctx.strokeStyle = `rgba(0,0,0,${this.styleAccessors.getLineOpacity()})`;
-    ctx.lineWidth = this.styleAccessors.getLineWidth();
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const p = i * 7;
-      const sx = toScreenX(pts[p]!);
-      const sy = toScreenY(pts[p + 1]!);
-      if (i === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
+    if (this.styleAccessors.getShowLine()) {
+      ctx.strokeStyle = `rgba(0,0,0,${this.styleAccessors.getLineOpacity()})`;
+      ctx.lineWidth = this.styleAccessors.getLineWidth();
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const p = i * 7;
+        const sx = toScreenX(pts[p]!);
+        const sy = toScreenY(pts[p + 1]!);
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
+
+    if (this.styleAccessors.getShowScatter()) {
+      const alpha = this.styleAccessors.getLineOpacity();
+      const radius = Math.max(1, this.styleAccessors.getLineWidth() * 1.5);
+      ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+      for (let i = 0; i < n; i++) {
+        const p = i * 7;
+        const sx = toScreenX(pts[p]!);
+        const sy = toScreenY(pts[p + 1]!);
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     ctx.restore();
   }
 
