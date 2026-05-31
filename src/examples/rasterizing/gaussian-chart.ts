@@ -99,6 +99,7 @@ export class GaussianChart {
   private renderedPointsController: any;
   private gui: GUI | null = null;
   private integrateTimeoutId: number | null = null;
+  private selectionIntegrateToken = 0;
 
   constructor(options: GaussianChartOptions) {
     const { data } = options;
@@ -262,6 +263,25 @@ export class GaussianChart {
     this.chartCanvas.setOnLevelChange((v) => {
       this.state.paletteLevel = v;
       this.writePaletteToBuffer();
+    });
+    this.chartCanvas.setOnSelectionChange((region) => {
+      this.selectionIntegrateToken++;
+      const token = this.selectionIntegrateToken;
+
+      if (this.integrateTimeoutId !== null) {
+        window.clearTimeout(this.integrateTimeoutId);
+        this.integrateTimeoutId = null;
+      }
+
+      if (!region) {
+        this.chartCanvas.setSelectionIntegral(null);
+        return;
+      }
+
+      this.chartCanvas.setSelectionIntegral(null);
+      this.integrateTimeoutId = window.setTimeout(() => {
+        void this.computeSelectionIntegral(region, token);
+      }, 300);
     });
     this.syncHeatmapPresentation();
 
@@ -539,7 +559,22 @@ export class GaussianChart {
     }
   }
 
-  private async integrate(): Promise<{
+  private async computeSelectionIntegral(
+    region: { x: number; y: number; width: number; height: number },
+    token: number,
+  ) {
+    if (this.destroyed || token !== this.selectionIntegrateToken) return;
+    const result = await this.integrate(region);
+    if (this.destroyed || token !== this.selectionIntegrateToken) return;
+    this.chartCanvas.setSelectionIntegral(result?.integral ?? null);
+  }
+
+  async integrate(region?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): Promise<{
     integral: number;
     actualSum: number;
     errorPercent: number;
@@ -547,6 +582,37 @@ export class GaussianChart {
     const width = this.hdrW;
     const height = this.hdrH;
     if (width <= 0 || height <= 0) return null;
+
+    let x0 = 0;
+    let y0 = 0;
+    let x1 = width;
+    let y1 = height;
+
+    if (region) {
+      const axisYWidth = this.state.showYAxis ? AXIS_Y_W : 0;
+      const heatmapCssW = Math.max(1, this.fullChartSize.cssW - axisYWidth);
+      const heatmapCssH = Math.max(1, this.fullChartSize.cssH - AXIS_X_H);
+      const scaleX = width / heatmapCssW;
+      const scaleY = height / heatmapCssH;
+
+      const rx0 = Math.min(region.x, region.x + region.width);
+      const ry0 = Math.min(region.y, region.y + region.height);
+      const rx1 = Math.max(region.x, region.x + region.width);
+      const ry1 = Math.max(region.y, region.y + region.height);
+
+      x0 = Math.max(0, Math.min(width, Math.floor(rx0 * scaleX)));
+      y0 = Math.max(0, Math.min(height, Math.floor(ry0 * scaleY)));
+      x1 = Math.max(0, Math.min(width, Math.ceil(rx1 * scaleX)));
+      y1 = Math.max(0, Math.min(height, Math.ceil(ry1 * scaleY)));
+
+      if (x1 <= x0 || y1 <= y0) {
+        return {
+          integral: 0,
+          actualSum: 0,
+          errorPercent: 0,
+        };
+      }
+    }
 
     const bytesPerPixel = 4; // r32float
     const unalignedBytesPerRow = width * bytesPerPixel;
@@ -580,9 +646,9 @@ export class GaussianChart {
     const strideFloats = bytesPerRow / bytesPerPixel;
 
     let sum = 0;
-    for (let y = 0; y < height; y++) {
+    for (let y = y0; y < y1; y++) {
       const rowStart = y * strideFloats;
-      for (let x = 0; x < width; x++) {
+      for (let x = x0; x < x1; x++) {
         sum += data[rowStart + x] ?? 0;
       }
     }

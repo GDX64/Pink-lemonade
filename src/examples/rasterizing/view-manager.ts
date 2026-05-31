@@ -107,6 +107,8 @@ export class ViewManager {
     canvas.style.touchAction = "none";
 
     canvas.addEventListener("pointerdown", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
       this.isPanning = true;
       this.lastPointerX = e.clientX;
       canvas.setPointerCapture(e.pointerId);
@@ -114,6 +116,11 @@ export class ViewManager {
 
     canvas.addEventListener("pointermove", (e) => {
       if (!this.isPanning) return;
+      if ((e.buttons & 4) === 0) {
+        this.isPanning = false;
+        canvas.releasePointerCapture(e.pointerId);
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const deltaXRatio = (e.clientX - this.lastPointerX) / rect.width;
       this.lastPointerX = e.clientX;

@@ -45,7 +45,20 @@ export class ChartCanvas {
   private readonly xMin: number;
   private readonly xScale: number;
   private onLevelChange: ((level: number) => void) | null = null;
+  private onSelectionChange:
+    | ((
+        region: { x: number; y: number; width: number; height: number } | null,
+      ) => void)
+    | null = null;
   private isDraggingLevel = false;
+  private isSelecting = false;
+  private hasSelection = false;
+  private selectingPointerId = -1;
+  private selectStartX = 0;
+  private selectStartY = 0;
+  private selectCurrentX = 0;
+  private selectCurrentY = 0;
+  private selectionIntegral: number | null = null;
 
   private static readonly BAR_W = 16;
   private static readonly BAR_H = 160;
@@ -62,6 +75,7 @@ export class ChartCanvas {
   private onCanvasPointerMove: (e: PointerEvent) => void;
   private onCanvasPointerUp: (e: PointerEvent) => void;
   private onCanvasPointerCancel: (e: PointerEvent) => void;
+  private onCanvasPointerDown: (e: PointerEvent) => void;
   private onWindowPointerMove: (e: PointerEvent) => void;
 
   constructor(
@@ -84,8 +98,10 @@ export class ChartCanvas {
     this.onCanvasPointerMove = () => {};
     this.onCanvasPointerUp = () => {};
     this.onCanvasPointerCancel = () => {};
+    this.onCanvasPointerDown = () => {};
     this.onWindowPointerMove = () => {};
     this.bindLevelDrag();
+    this.bindSelectionDrag();
   }
 
   destroy() {
@@ -96,6 +112,7 @@ export class ChartCanvas {
       "pointercancel",
       this.onCanvasPointerCancel,
     );
+    this.canvas.removeEventListener("pointerdown", this.onCanvasPointerDown);
     window.removeEventListener("pointermove", this.onWindowPointerMove);
     this.container.style.cursor = "";
     if (this.canvas.parentElement === this.container) {
@@ -105,6 +122,25 @@ export class ChartCanvas {
 
   setOnLevelChange(cb: (level: number) => void) {
     this.onLevelChange = cb;
+  }
+
+  setOnSelectionChange(
+    cb:
+      | ((
+          region: {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          } | null,
+        ) => void)
+      | null,
+  ) {
+    this.onSelectionChange = cb;
+  }
+
+  setSelectionIntegral(integral: number | null) {
+    this.selectionIntegral = integral;
   }
 
   setHeatmapSource(canvas: HTMLCanvasElement) {
@@ -174,6 +210,87 @@ export class ChartCanvas {
     window.addEventListener("pointermove", this.onWindowPointerMove);
   }
 
+  private bindSelectionDrag() {
+    const getLocal = (e: PointerEvent) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+      const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      return { x, y };
+    };
+
+    this.onCanvasPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0 || this.isDraggingLevel) return;
+      const { x, y } = getLocal(e);
+      this.isSelecting = true;
+      this.hasSelection = true;
+      this.selectingPointerId = e.pointerId;
+      this.selectStartX = x;
+      this.selectStartY = y;
+      this.selectCurrentX = x;
+      this.selectCurrentY = y;
+      this.selectionIntegral = null;
+      this.emitSelectionChange();
+      this.canvas.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    this.canvas.addEventListener("pointerdown", this.onCanvasPointerDown);
+
+    const updateSelection = (e: PointerEvent) => {
+      if (!this.isSelecting || e.pointerId !== this.selectingPointerId) return;
+      const { x, y } = getLocal(e);
+      this.selectCurrentX = x;
+      this.selectCurrentY = y;
+      this.selectionIntegral = null;
+      this.emitSelectionChange();
+    };
+
+    const stopSelection = (e: PointerEvent) => {
+      if (!this.isSelecting || e.pointerId !== this.selectingPointerId) return;
+      this.isSelecting = false;
+      this.selectingPointerId = -1;
+      this.emitSelectionChange();
+      this.canvas.releasePointerCapture(e.pointerId);
+    };
+
+    const prevMove = this.onCanvasPointerMove;
+    this.onCanvasPointerMove = (e: PointerEvent) => {
+      prevMove(e);
+      updateSelection(e);
+    };
+    this.canvas.removeEventListener("pointermove", prevMove);
+    this.canvas.addEventListener("pointermove", this.onCanvasPointerMove);
+
+    const prevUp = this.onCanvasPointerUp;
+    this.onCanvasPointerUp = (e: PointerEvent) => {
+      prevUp(e);
+      stopSelection(e);
+    };
+    this.canvas.removeEventListener("pointerup", prevUp);
+    this.canvas.addEventListener("pointerup", this.onCanvasPointerUp);
+
+    const prevCancel = this.onCanvasPointerCancel;
+    this.onCanvasPointerCancel = (e: PointerEvent) => {
+      prevCancel(e);
+      stopSelection(e);
+    };
+    this.canvas.removeEventListener("pointercancel", prevCancel);
+    this.canvas.addEventListener("pointercancel", this.onCanvasPointerCancel);
+  }
+
+  private getSelectionRegion() {
+    if (!this.hasSelection) return null;
+    const x = Math.min(this.selectStartX, this.selectCurrentX);
+    const y = Math.min(this.selectStartY, this.selectCurrentY);
+    const width = Math.abs(this.selectCurrentX - this.selectStartX);
+    const height = Math.abs(this.selectCurrentY - this.selectStartY);
+    if (width < 1 || height < 1) return null;
+    return { x, y, width, height };
+  }
+
+  private emitSelectionChange() {
+    this.onSelectionChange?.(this.getSelectionRegion());
+  }
+
   setMergedPoints(points: Float32Array) {
     this.mergedPoints = points;
   }
@@ -225,6 +342,43 @@ export class ChartCanvas {
     ctx.restore();
 
     this.drawLegend(cssW, cssH);
+    this.drawSelectionRect();
+
+    ctx.restore();
+  }
+
+  private drawSelectionRect() {
+    const region = this.getSelectionRegion();
+    if (!region) return;
+
+    const { ctx } = this;
+    const { x, y, width: w, height: h } = region;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(34, 113, 247, 0.16)";
+    ctx.strokeStyle = "rgba(34, 113, 247, 0.95)";
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+
+    if (this.selectionIntegral !== null) {
+      const label = `Integral: ${fmtCompact(this.selectionIntegral)}`;
+      ctx.setLineDash([]);
+      ctx.font = ChartCanvas.FONT;
+      ctx.textBaseline = "top";
+      const paddingX = 6;
+      const paddingY = 4;
+      const textW = ctx.measureText(label).width;
+      const boxW = textW + paddingX * 2;
+      const boxH = 18;
+      const boxX = x + 2;
+      const boxY = y + 2;
+      ctx.fillStyle = "rgba(15, 15, 15, 0.75)";
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, boxX + paddingX, boxY + paddingY);
+    }
 
     ctx.restore();
   }
