@@ -535,20 +535,26 @@ export class GaussianChart {
       mergeThreshold,
     });
 
-    // merge strategy returns [x, y, w, variance].
-    const count = merged.length / 4;
-    const gpuInstances = new Float32Array(count * 4);
+    // merge strategy returns [x, y, w, p00, p01, p10, p11].
+    const count = merged.length / 7;
+    const gpuInstances = new Float32Array(count * 7);
     for (let i = 0; i < count; i++) {
-      const mi = i * 4;
-      const gi = i * 4;
+      const mi = i * 7;
+      const gi = i * 7;
       const x = merged[mi]!;
       const y = merged[mi + 1]!;
       const w = merged[mi + 2]!;
-      const variance = merged[mi + 3]!;
+      const p00 = merged[mi + 3]!;
+      const p01 = merged[mi + 4]!;
+      const p10 = merged[mi + 5]!;
+      const p11 = merged[mi + 6]!;
       gpuInstances[gi] = x;
       gpuInstances[gi + 1] = y;
       gpuInstances[gi + 2] = w;
-      gpuInstances[gi + 3] = variance;
+      gpuInstances[gi + 3] = p00;
+      gpuInstances[gi + 4] = p01;
+      gpuInstances[gi + 5] = p10;
+      gpuInstances[gi + 6] = p11;
     }
 
     return { gpuInstances, count };
@@ -669,7 +675,7 @@ function createAccumulationPipeline(
 
       struct VertexOut {
         @builtin(position) pos: vec4f,
-        @location(0) offset: vec2f,
+        @location(0) z: vec2f,
         @location(1) weight: f32,
       };
 
@@ -678,7 +684,8 @@ function createAccumulationPipeline(
         @location(0) quadOffset: vec2f,
         @location(1) point: vec2f,
         @location(2) weight: f32,
-        @location(3) variance: f32,
+        @location(3) pRow0: vec2f,
+        @location(4) pRow1: vec2f,
       ) -> VertexOut {
         if (point.x < u.viewMinX || point.x > u.viewMaxX) {
           return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0), 0.0);
@@ -688,21 +695,39 @@ function createAccumulationPipeline(
         let scale = 1.0 - 2.0 * padFrac;
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
-        let sigmaScale = sqrt(max(variance, 1e-6));
-        let kernelSize = (u.sigmaSize * sigmaScale) * 3.0 * 2.0;
-        let r = vec2f(kernelSize / u.screenWidth, kernelSize / u.screenHeight);
+
+        // z is in standardized Gaussian space; clip is at 3-sigma bounds.
+        let z = quadOffset * 3.0;
+
+        // Build Cholesky factor L such that P = L * transpose(L).
+        let p00 = max(pRow0.x, 1e-6);
+        let p10 = pRow1.x;
+        let p11 = max(pRow1.y, 1e-6);
+        let l00 = sqrt(p00);
+        let l10 = p10 / max(l00, 1e-6);
+        let l11 = sqrt(max(p11 - l10 * l10, 1e-6));
+
+        let local = vec2f(
+          l00 * z.x,
+          l10 * z.x + l11 * z.y,
+        );
+        let px = local * u.sigmaSize;
+        let ndcDelta = vec2f(
+          2.0 * px.x / u.screenWidth,
+          2.0 * px.y / u.screenHeight,
+        );
         return VertexOut(
-          vec4f(nx + quadOffset.x * r.x, ny + quadOffset.y * r.y, 0.0, 1.0),
-          quadOffset,
+          vec4f(nx + ndcDelta.x, ny + ndcDelta.y, 0.0, 1.0),
+          z,
           weight,
         );
       }
 
       @fragment
-      fn fs_main(@location(0) offset: vec2f, @location(1) weight: f32) -> @location(0) f32 {
-        let d2 = dot(offset, offset);
-        if(d2 > 1.0) { discard; }
-        let result = exp(- d2 * 4.5);
+      fn fs_main(@location(0) z: vec2f, @location(1) weight: f32) -> @location(0) f32 {
+        let d2 = dot(z, z);
+        if (d2 > 9.0) { discard; }
+        let result = exp(-0.5 * d2);
         return result * weight;
       }
     `,
@@ -720,12 +745,13 @@ function createAccumulationPipeline(
           attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }],
         },
         {
-          arrayStride: 16,
+          arrayStride: 28,
           stepMode: "instance",
           attributes: [
             { shaderLocation: 1, offset: 0, format: "float32x2" },
             { shaderLocation: 2, offset: 8, format: "float32" },
-            { shaderLocation: 3, offset: 12, format: "float32" },
+            { shaderLocation: 3, offset: 12, format: "float32x2" },
+            { shaderLocation: 4, offset: 20, format: "float32x2" },
           ],
         },
       ],
@@ -874,7 +900,7 @@ function uploadData(device: GPUDevice, pointCount: number) {
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
   const instanceBuffer = device.createBuffer({
-    size: pointCount * 4 * 4,
+    size: pointCount * 7 * 4,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 

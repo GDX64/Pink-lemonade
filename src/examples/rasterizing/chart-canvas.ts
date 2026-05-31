@@ -216,7 +216,7 @@ export class ChartCanvas {
     ctx.clip();
 
     const pts = this.mergedPoints;
-    const n = pts.length / 4;
+    const n = pts.length / 7;
 
     if (this.styleAccessors.getShowGaussianQuads()) {
       const sigmaPx = Math.max(0, this.styleAccessors.getGaussianSigmaSize());
@@ -225,11 +225,18 @@ export class ChartCanvas {
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const p = i * 4;
+          const p = i * 7;
           const sx = toScreenX(pts[p]!);
           const sy = toScreenY(pts[p + 1]!);
-          const variance = Math.max(pts[p + 3]!, 1e-6);
-          const quadHalfSizePx = sigmaPx * Math.sqrt(variance) * 3;
+          const p00 = pts[p + 3]!;
+          const p01 = pts[p + 4]!;
+          const p11 = pts[p + 6]!;
+          const trace = p00 + p11;
+          const detTerm = Math.sqrt(
+            Math.max((p00 - p11) * (p00 - p11) + 4 * p01 * p01, 0),
+          );
+          const lambdaMax = Math.max(0.5 * (trace + detTerm), 1e-6);
+          const quadHalfSizePx = sigmaPx * Math.sqrt(lambdaMax) * 3;
           const quadSizePx = quadHalfSizePx * 2;
           ctx.rect(
             sx - quadHalfSizePx + 0.5,
@@ -249,11 +256,18 @@ export class ChartCanvas {
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (let i = 0; i < n; i++) {
-          const p = i * 4;
+          const p = i * 7;
           const sx = toScreenX(pts[p]!);
           const sy = toScreenY(pts[p + 1]!);
-          const variance = Math.max(pts[p + 3]!, 1e-6);
-          const circleRadiusPx = sigmaPx * Math.sqrt(variance) * 3;
+          const p00 = pts[p + 3]!;
+          const p01 = pts[p + 4]!;
+          const p11 = pts[p + 6]!;
+          const trace = p00 + p11;
+          const detTerm = Math.sqrt(
+            Math.max((p00 - p11) * (p00 - p11) + 4 * p01 * p01, 0),
+          );
+          const lambdaMax = Math.max(0.5 * (trace + detTerm), 1e-6);
+          const circleRadiusPx = sigmaPx * Math.sqrt(lambdaMax) * 3;
           ctx.moveTo(sx + circleRadiusPx, sy);
           ctx.arc(sx, sy, circleRadiusPx, 0, Math.PI * 2);
         }
@@ -270,7 +284,7 @@ export class ChartCanvas {
     ctx.lineWidth = this.styleAccessors.getLineWidth();
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
-      const p = i * 4;
+      const p = i * 7;
       const sx = toScreenX(pts[p]!);
       const sy = toScreenY(pts[p + 1]!);
       if (i === 0) ctx.moveTo(sx, sy);

@@ -31,8 +31,8 @@ function mergePass(
   thresholdPx: number,
 ): Float64Array {
   // Merge output layout per point:
-  // [x, y, weight, variance]
-  const out = new Float64Array((pts.length / 3) * 4);
+  // [x, y, weight, p00, p01, p10, p11]
+  const out = new Float64Array((pts.length / 3) * 7);
   let count = 0;
   const n = pts.length / 3;
   const t2 = thresholdPx * thresholdPx;
@@ -49,27 +49,39 @@ function mergePass(
   let clusterEndIdx = 0;
 
   const flushCluster = () => {
-    // Assume each Gaussian has base variance 1 and add weighted spread around
-    // the merged centroid in screen space.
+    // Assume each Gaussian has base covariance I and add weighted spread around
+    // the merged centroid in screen space to obtain full 2x2 covariance P.
     const cx = toSX(clusterX);
     const cy = toSY(clusterY);
-    let weightedSqDistSum = 0;
+    let weightedXX = 0;
+    let weightedXY = 0;
+    let weightedYY = 0;
     for (let i = clusterStartIdx; i <= clusterEndIdx; i++) {
       const x = pts[i * 3]!;
       const y = pts[i * 3 + 1]!;
       const w = pts[i * 3 + 2]!;
       const dx = toSX(x) - cx;
       const dy = toSY(y) - cy;
-      weightedSqDistSum += w * (dx * dx + dy * dy);
+      weightedXX += w * dx * dx;
+      weightedXY += w * dx * dy;
+      weightedYY += w * dy * dy;
     }
-    const variance = 1 + weightedSqDistSum / Math.max(clusterW, 1e-12);
+    const invW = 1 / Math.max(clusterW, 1e-12);
+    const p00 = 1 + weightedXX * invW;
+    const p01 = weightedXY * invW;
+    const p10 = p01;
+    const p11 = 1 + weightedYY * invW;
 
-    const w = clusterW;
-    const o = count * 4;
+    const detOfP = p00 * p11 - p01 * p10 || 1e-12;
+    const w = clusterW / Math.sqrt(detOfP);
+    const o = count * 7;
     out[o] = clusterX;
     out[o + 1] = clusterY;
     out[o + 2] = w;
-    out[o + 3] = variance;
+    out[o + 3] = p00;
+    out[o + 4] = p01;
+    out[o + 5] = p10;
+    out[o + 6] = p11;
     count++;
     hasCluster = false;
   };
@@ -124,7 +136,7 @@ function mergePass(
 
   if (hasCluster) flushCluster();
 
-  return out.slice(0, count * 4);
+  return out.slice(0, count * 7);
 }
 
 function mergeDownsample({
