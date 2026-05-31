@@ -707,15 +707,18 @@ function createAccumulationPipeline(
         let l10 = p10 / max(l00, 1e-6);
         let l11 = sqrt(max(p11 - l10 * l10, 1e-6));
 
-        let local = vec2f(
-          l00 * z.x,
-          l10 * z.x + l11 * z.y,
+        // Lower-triangular Cholesky factor: L = [[l00, 0], [l10, l11]].
+        let L = mat2x2f(
+          vec2f(l00, l10),
+          vec2f(0.0, l11),
         );
+        let local = L * z;
         let px = local * u.sigmaSize;
-        let ndcDelta = vec2f(
-          2.0 * px.x / u.screenWidth,
-          2.0 * px.y / u.screenHeight,
+        let pxToNdc = mat2x2f(
+          vec2f(2.0 / u.screenWidth, 0.0),
+          vec2f(0.0, 2.0 / u.screenHeight),
         );
+        let ndcDelta = pxToNdc * px;
         return VertexOut(
           vec4f(nx + ndcDelta.x, ny + ndcDelta.y, 0.0, 1.0),
           z,

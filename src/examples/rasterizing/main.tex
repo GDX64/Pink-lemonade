@@ -527,7 +527,53 @@ The first pass performs KDE directly on the GPU. Each downsampled point is rende
 
 The kernel radius is configurable in screen pixels. The quad is sized to cover the full extent of the kernel --- three standard deviations in each direction --- so that effectively all of the kernel mass is captured. Inside the quad, each fragment evaluates the Gaussian as a function of its distance from the point center, scaled by the point's weight. Points outside the current view window are discarded before reaching the rasterizer.
 
-A small padding margin is reserved at the top and bottom of the heatmap region so that density does not bleed into the axis areas.
+For each merged kernel, we keep its center $\mu\in\mathbb{R}^2$, weight $w$, and covariance $P\in\mathbb{R}^{2\times 2}$. In the vertex shader, we build a Cholesky factor $L$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
+\begin{equation}
+P = LL^T,
+\end{equation}
+with
+\begin{equation}
+P=
+\begin{bmatrix}
+\sigma_x^2 & \sigma_{xy} \\
+\sigma_{xy} & \sigma_y^2
+\end{bmatrix}
+\end{equation}
+\begin{equation}
+L=
+\begin{bmatrix}
+\ell_{00} & 0 \\
+\ell_{10} & \ell_{11}
+\end{bmatrix}
+\end{equation}
+\begin{equation}
+\ell_{00}=\sqrt{\sigma_x^2}
+\end{equation}
+\begin{equation}
+\ell_{10}=\frac{\sigma_{xy}}{\ell_{00}}
+\end{equation}
+\begin{equation}
+\ell_{11}=\sqrt{\sigma_y^2-\ell_{10}^2}
+\end{equation}
+Starting from standardized quad coordinates $z\in[-3,3]^2$, the shader computes
+\begin{equation}
+x = \mu + sLz,
+\end{equation}
+where $s$ is the user-controlled kernel size (in pixels). This is the explicit linear map that turns an isotropic footprint into an oriented anisotropic ellipse in screen space.
+
+The fragment shader does not need to invert $P$ per pixel. Instead, it receives $z$ as a varying from the vertex stage, and rasterization hardware linearly interpolates $z$ across the two triangles of the quad. Therefore each fragment already has the local standardized coordinates needed for the quadratic form
+\begin{equation}
+d_M^2 = z^Tz,
+\end{equation}
+which is equivalent to the Mahalanobis distance in screen coordinates:
+\begin{equation}
+d_M^2 = (x-\mu)^T (s^2P)^{-1}(x-\mu).
+\end{equation}
+The kernel value is then evaluated as
+\begin{equation}
+K(x)=\exp\left(-\frac{1}{2}d_M^2\right),
+\end{equation}
+and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
 
 \subsection{Pass 2 --- Reduction}
 
