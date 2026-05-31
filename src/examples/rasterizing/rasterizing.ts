@@ -9,16 +9,24 @@ export async function rasterizingExample() {
 
 async function createChart1() {
   const data = await loadData();
-  const container = document.createElement("div");
+  const chart = new GaussianChart({
+    data,
+  });
+  const container = chart.container;
+  document.body.appendChild(container);
   container.style.width = "100vw";
   container.style.height = "100vh";
   container.style.position = "relative";
-  document.body.appendChild(container);
-  const chart = new GaussianChart({
-    data,
-    container,
-  });
+  chart.state.showTimescale = false;
+  chart.state.showYAxis = false;
   await chart.start();
+  chart.setupRenderLoop();
+  // chart.downloadImage({
+  //   width: 1080,
+  //   height: 720,
+  //   name: "chart.png",
+  //   devicePixelRatio: 2,
+  // });
 }
 
 async function loadData(): Promise<LoadedData> {

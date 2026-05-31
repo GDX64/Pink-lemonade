@@ -17,6 +17,7 @@ export type ChartCanvasStyleAccessors = {
   getGaussianSigmaSize: () => number;
   getGaussianTruncateNSigma: () => number;
   getHeatmapColor: (value: number) => [number, number, number];
+  size(): { cssW: number; cssH: number };
 };
 
 function fmtCompact(v: number): string {
@@ -189,8 +190,7 @@ export class ChartCanvas {
     viewMaxY: number,
   ) {
     const dpr = Math.max(0.25, this.styleAccessors.getPixelRatio());
-    const cssW = Math.max(1, this.container.clientWidth);
-    const cssH = Math.max(1, this.container.clientHeight);
+    const { cssW, cssH } = this.styleAccessors.size();
     const w = Math.round(cssW * dpr);
     const h = Math.round(cssH * dpr);
     if (this.canvas.width !== w || this.canvas.height !== h) {

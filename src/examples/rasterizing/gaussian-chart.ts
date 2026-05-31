@@ -23,7 +23,6 @@ export type LoadedData = {
 
 export type GaussianChartOptions = {
   data: LoadedData;
-  container: HTMLElement;
 };
 
 type GaussianChartState = {
@@ -50,12 +49,12 @@ type GaussianChartState = {
 };
 
 export class GaussianChart {
-  private readonly container: HTMLElement;
+  readonly container: HTMLElement;
   private readonly n: number;
   private readonly dataF64: Float64Array;
   private readonly xMin: number;
   private readonly xScale: number;
-  private readonly state: GaussianChartState;
+  readonly state: GaussianChartState;
 
   private canvas!: HTMLCanvasElement;
   private gpu!: Awaited<ReturnType<typeof initWebGPU>>;
@@ -100,11 +99,9 @@ export class GaussianChart {
   private integrateTimeoutId: number | null = null;
 
   constructor(options: GaussianChartOptions) {
-    const { data, container } = options;
-    this.container = container;
-    if (getComputedStyle(this.container).position === "static") {
-      this.container.style.position = "relative";
-    }
+    const { data } = options;
+    this.container = document.createElement("div");
+    this.container.style.position = "relative";
     this.n = data.n;
     this.dataF64 = data.dataF64;
     this.xMin = data.xMin;
@@ -135,12 +132,6 @@ export class GaussianChart {
     };
     this.fpsController = null;
     this.renderedPointsController = null;
-
-    this.integrateTimeoutId = window.setTimeout(async () => {
-      if (this.destroyed) return;
-      const integral = await this.integrate();
-      console.log({ integral });
-    }, 1000);
   }
 
   destroy() {
@@ -151,8 +142,6 @@ export class GaussianChart {
       window.clearTimeout(this.integrateTimeoutId);
       this.integrateTimeoutId = null;
     }
-
-    window.removeEventListener("resize", this.handleResize);
 
     if (this.gui) {
       this.gui.destroy();
@@ -187,7 +176,7 @@ export class GaussianChart {
     this.gpu = await initWebGPU(this.canvas);
     this.accumulationPipeline = createAccumulationPipeline(
       this.gpu.device,
-      this.getHeatmapCssHeight(),
+      this.getHeatmapCssH(),
     );
     this.reductionPipeline = createReductionPipeline(this.gpu.device);
     this.tonemapPipeline = createTonemapPipeline(
@@ -260,6 +249,12 @@ export class GaussianChart {
       getGaussianSigmaSize: () => this.state.sigmaSize,
       getGaussianTruncateNSigma: () => N_SIGMA_TRUNCATE,
       getHeatmapColor: (v) => this.heatmapColor(v),
+      size: () => {
+        const { width, height } = this.canvas;
+        const cssW = Math.round(width / this.getEffectivePixelRatio());
+        const cssH = Math.round(height / this.getEffectivePixelRatio());
+        return { cssW, cssH };
+      },
     });
     this.chartCanvas.setHeatmapSource(this.canvas);
     this.viewManager.bindCanvas(this.chartCanvas.getCanvasElement());
@@ -271,12 +266,24 @@ export class GaussianChart {
 
     this.setupGui();
     this.lastTime = performance.now();
-    this.render();
-    window.addEventListener("resize", this.handleResize);
+    window.addEventListener("resize", () =>
+      this.handleResize(this.getContainerCssSize()),
+    );
   }
 
   private setupGui() {
     const gui = new GUI({ title: "Render Controls" });
+    const exportActions = {
+      downloadImage: () => {
+        const { cssW, cssH } = this.getContainerCssSize();
+        void this.downloadImage({
+          width: cssW,
+          height: cssH,
+          name: `gaussian-chart-${Date.now()}`,
+          devicePixelRatio: this.getEffectivePixelRatio(),
+        });
+      },
+    };
     this.gui = gui;
     this.container.appendChild(gui.domElement);
     gui.domElement.style.position = "absolute";
@@ -295,12 +302,12 @@ export class GaussianChart {
     gui
       .add(this.state, "showYAxis")
       .name("Show Y axis")
-      .onChange(() => this.handleResize());
+      .onChange(() => this.handleResize(this.getContainerCssSize()));
     gui
       .add(this.state, "pixelRatio", 0.5, 4, 0.25)
       .name("Pixel ratio")
       .onChange(() => {
-        this.handleResize();
+        this.handleResize(this.getContainerCssSize());
       });
     this.fpsController = gui.add(this.controls, "fps").name("FPS").disable();
     gui.add(this.controls, "totalPoints").name("Total points").disable();
@@ -367,6 +374,8 @@ export class GaussianChart {
     lineFolder
       .add(this.state, "showGaussian3SigmaCircle")
       .name(`Show gaussian ${N_SIGMA_TRUNCATE} sigma circle`);
+
+    gui.add(exportActions, "downloadImage").name("Download image");
   }
 
   private scheduleReadback() {
@@ -528,10 +537,14 @@ export class GaussianChart {
     }
   }
 
-  private async integrate(): Promise<number> {
+  private async integrate(): Promise<{
+    integral: number;
+    actualSum: number;
+    errorPercent: number;
+  } | null> {
     const width = this.hdrW;
     const height = this.hdrH;
-    if (width <= 0 || height <= 0) return 0;
+    if (width <= 0 || height <= 0) return null;
 
     const bytesPerPixel = 4; // r32float
     const unalignedBytesPerRow = width * bytesPerPixel;
@@ -576,12 +589,83 @@ export class GaussianChart {
     readbackBuffer.destroy();
     const sigmaSize = this.state.sigmaSize * this.getEffectivePixelRatio();
     const scaleFactor = sigmaSize ** 2;
-    return sum / scaleFactor;
+    const integral = sum / scaleFactor;
+
+    let actualSum = 0;
+    for (let i = 0; i < this.n; i++) {
+      const w = this.dataF64[i * 3 + 2]!;
+      actualSum += w;
+    }
+
+    const errorPercent =
+      (Math.abs(integral - actualSum) / (actualSum || 1)) * 100;
+
+    return {
+      integral,
+      actualSum,
+      errorPercent,
+    };
   }
 
-  private readonly handleResize = () => {
+  async downloadImage(options: {
+    width: number;
+    height: number;
+    name: string;
+    devicePixelRatio: number;
+  }) {
     if (this.destroyed) return;
-    this.resizeHeatmapCanvas(this.canvas);
+
+    const width = Math.max(1, Math.floor(options.width));
+    const height = Math.max(1, Math.floor(options.height));
+    const exportDpr = Math.max(0.25, options.devicePixelRatio);
+
+    const prevContainerWidth = this.container.style.width;
+    const prevContainerHeight = this.container.style.height;
+    const prevPixelRatio = this.state.pixelRatio;
+    const prevRenderMode = this.state.heatmapRenderMode;
+
+    try {
+      this.container.style.width = `${width}px`;
+      this.container.style.height = `${height}px`;
+
+      this.state.pixelRatio = exportDpr;
+      this.state.heatmapRenderMode = "composited";
+
+      this.syncHeatmapPresentation();
+      this.handleResize({
+        cssW: width,
+        cssH: height,
+      });
+
+      this.render();
+      await this.gpu.device.queue.onSubmittedWorkDone();
+      this.chartCanvas.render(
+        this.viewManager.getViewMinX(),
+        this.viewManager.getViewMaxX(),
+        this.viewManager.getViewMinY(),
+        this.viewManager.getViewMaxY(),
+      );
+
+      const link = document.createElement("a");
+      link.download = options.name.endsWith(".png")
+        ? options.name
+        : `${options.name}.png`;
+
+      link.href = this.exportImage("image/png");
+      link.click();
+    } finally {
+      this.state.pixelRatio = prevPixelRatio;
+      this.state.heatmapRenderMode = prevRenderMode;
+      this.container.style.width = prevContainerWidth;
+      this.container.style.height = prevContainerHeight;
+      this.syncHeatmapPresentation();
+      this.handleResize(this.getContainerCssSize());
+    }
+  }
+
+  private handleResize(size: { cssH: number; cssW: number }) {
+    if (this.destroyed) return;
+    this.resizeHeatmapCanvas(size);
     this.hdrW = this.canvas.width;
     this.hdrH = this.canvas.height;
     this.lastViewMinX = NaN;
@@ -600,7 +684,7 @@ export class GaussianChart {
       this.statsBuffer,
       this.colorBuffer,
     );
-  };
+  }
 
   private writePaletteToBuffer() {
     const data = new Float32Array(16);
@@ -705,7 +789,8 @@ export class GaussianChart {
     const canvas = document.createElement("canvas");
     canvas.style.cssText =
       "position:absolute;top:0;left:0;pointer-events:none;z-index:0;";
-    this.resizeHeatmapCanvas(canvas);
+    this.canvas = canvas;
+    this.resizeHeatmapCanvas(this.getContainerCssSize());
     return canvas;
   }
 
@@ -732,21 +817,21 @@ export class GaussianChart {
     return { cssW, cssH };
   }
 
-  private getHeatmapCssHeight() {
+  private getHeatmapCssH() {
     const { cssH } = this.getContainerCssSize();
     return Math.max(1, cssH - AXIS_X_H);
   }
 
-  private resizeHeatmapCanvas(canvas: HTMLCanvasElement) {
-    const { cssW, cssH } = this.getContainerCssSize();
+  private resizeHeatmapCanvas(size: { cssH: number; cssW: number }) {
+    const { cssH, cssW } = size;
     const axisYWidth = this.state.showYAxis ? AXIS_Y_W : 0;
     const heatmapCssW = Math.max(1, cssW - axisYWidth);
     const heatmapCssH = Math.max(1, cssH - AXIS_X_H);
     const pixelRatio = this.getEffectivePixelRatio();
-    canvas.style.width = `${heatmapCssW}px`;
-    canvas.style.height = `${heatmapCssH}px`;
-    canvas.width = Math.round(heatmapCssW * pixelRatio);
-    canvas.height = Math.round(heatmapCssH * pixelRatio);
+    this.canvas.style.width = `${heatmapCssW}px`;
+    this.canvas.style.height = `${heatmapCssH}px`;
+    this.canvas.width = Math.round(heatmapCssW * pixelRatio);
+    this.canvas.height = Math.round(heatmapCssH * pixelRatio);
   }
 
   private getEffectivePixelRatio(): number {
@@ -782,11 +867,8 @@ function createHDRTexture(device: GPUDevice, width: number, height: number) {
   });
 }
 
-function createAccumulationPipeline(
-  device: GPUDevice,
-  heatmapCssHeight: number,
-) {
-  const padFrac = CHART_PAD_Y / Math.max(1, heatmapCssHeight);
+function createAccumulationPipeline(device: GPUDevice, heatmapcssH: number) {
+  const padFrac = CHART_PAD_Y / Math.max(1, heatmapcssH);
   const nSigma = N_SIGMA_TRUNCATE.toFixed(6);
   const nSigma2 = (N_SIGMA_TRUNCATE * N_SIGMA_TRUNCATE).toFixed(6);
   const module = device.createShaderModule({
