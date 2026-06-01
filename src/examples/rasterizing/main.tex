@@ -152,7 +152,7 @@
 %
 \usepackage{array}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 % Frank Mittelbach's and David Carlisle's array.sty patches and improves
 % the standard LaTeX2e array and tabular environments to provide better
 % appearance and additional user controls. As the default LaTeX2e table
@@ -407,6 +407,75 @@ Because data is sorted by time, only points falling within the current view wind
 Visible points are downsampled by a \textit{weighted merge} pass before GPU upload. Scanning left-to-right, the algorithm maintains one open cluster and tests whether the next point can be absorbed while keeping both the earliest point and the candidate within a screen-space threshold of the updated weighted centroid. If not, it flushes the cluster and starts a new one.
 
 Each merged point keeps the sum of constituent weights, preserving total signal. The earliest-point check prevents centroid drift from slowly violating the threshold. Since points are time-sorted, each point is visited once with no backtracking, yielding $O(N)$ time over the visible subset. The merge is recomputed on each pan/zoom event to keep transitions smooth.
+
+Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our implementation. The left side shows the geometric test performed for each incoming point: after computing the hypothetical weighted centroid $\mu'$, the algorithm accepts the candidate only if both the first point of the open cluster and the new point remain within the threshold radius $\tau$ in pixel space. The right side shows the resulting one-pass control flow.
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[t]{\linewidth}
+    \vspace{0pt}
+    \raggedright
+    \begin{tikzpicture}[font=\footnotesize, >=Latex, line width=0.45pt, note/.style={align=center}]
+      \node[anchor=west, font=\bfseries\footnotesize] at (-0.2,3.1) {Geometric test};
+      \draw[->] (0,0) -- (0,2.8) node[left] {$s_y$};
+      \draw[->] (0,0) -- (3.95,0) node[below] {$s_x$};
+
+      \coordinate (mu) at (1.9,1.35);
+      \coordinate (first) at (0.95,1.72);
+      \coordinate (cand) at (2.75,0.98);
+      
+
+      \draw[dashed] (mu) circle [radius=0.9];
+      \node[anchor=west] at (2.82,2.02) {$\tau$};
+
+      \fill (first) circle (1.2pt);
+      
+      \fill (cand) circle (1.2pt);
+      \fill (mu) circle (1.4pt);
+
+      \draw[->] (first) -- (mu);
+      \draw[->] (cand) -- (mu);
+
+      \node[above left] at (first) {$p_0$};
+      
+      \node[below right] at (cand) {$p_i$};
+      \node[below] at (mu) {$\mu'$};
+
+      \node[note, text width=3.55cm, anchor=north west] at (-0.05,-0.42) {Accept $p_i$ only if both $\lVert s(p_0)-\mu'\rVert < \tau$ and $\lVert s(p_i)-\mu'\rVert < \tau$.};
+    \end{tikzpicture}
+  \end{minipage}
+
+  \vspace{0.4em}
+
+  \begin{minipage}[t]{\linewidth}
+    \vspace{0pt}
+    \raggedright
+    \begin{tikzpicture}[
+      font=\scriptsize,
+      >=Latex,
+      line width=0.45pt,
+      flow/.style={draw, rounded corners=1.5pt, align=center, minimum width=18mm, minimum height=6mm, text width=20mm},
+      decision/.style={draw, diamond, aspect=1.65, align=center, inner xsep=0.8mm, inner ysep=0.6mm, text width=16mm}
+    ]
+      \node[anchor=west, font=\bfseries\footnotesize] at (-0.1,3.1) {One-pass merge loop};
+
+      \node[flow] (start) at (2.4,2.45) {Read next point $p_i$};
+      \node[flow] (centroid) at (2.4,1.05) {Compute hypothetical\\centroid $\mu'$};
+      \node[decision] (inside) at (2.4,-0.55) {All inside\\$\tau$?};
+      \node[flow] (flush) at (0.25,-2.2) {Flush previous cluster\\start new one with $p_i$};
+      \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, and weight};
+
+      \draw[->] (start) -- (centroid);
+      \draw[->] (centroid) -- (inside);
+      \draw[->] (inside) -- node[above] {no} (flush);
+      \draw[->] (inside) -- node[above] {yes} (absorb);
+      \draw[->] (absorb.north) |- (start.east);
+      \draw[->] (flush.north) |- (start.west);
+    \end{tikzpicture}
+  \end{minipage}
+  \caption{Diagram of the weighted-merge downsampling pass implemented by \texttt{mergeDownsample}. Left: geometric acceptance criterion in screen space. Right: control flow of the single left-to-right scan. The open cluster is updated only when the first point and the incoming point both remain within threshold $\tau$ of the hypothetical new centroid.}
+  \label{fig:merge-downsample}
+\end{figure}
 
 \subsection{Why Shape-Preserving Simplification Is Insufficient}
 
