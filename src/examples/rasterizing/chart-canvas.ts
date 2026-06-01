@@ -143,6 +143,43 @@ export class ChartCanvas {
     this.selectionIntegral = integral;
   }
 
+  setSelection(
+    region: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    } | null,
+  ) {
+    this.selectionIntegral = null;
+
+    if (!region) {
+      this.isSelecting = false;
+      this.hasSelection = false;
+      this.selectingPointerId = -1;
+      this.emitSelectionChange();
+      return;
+    }
+
+    const { cssW, cssH } = this.styleAccessors.size();
+    const axisYWidth = this.styleAccessors.getShowYAxis() ? AXIS_Y_W : 0;
+    const heatmapCssW = Math.max(1, cssW - axisYWidth);
+    const heatmapCssH = Math.max(1, cssH - AXIS_X_H);
+    const x0 = Math.max(0, Math.min(heatmapCssW, region.x));
+    const y0 = Math.max(0, Math.min(heatmapCssH, region.y));
+    const x1 = Math.max(0, Math.min(heatmapCssW, region.x + region.width));
+    const y1 = Math.max(0, Math.min(heatmapCssH, region.y + region.height));
+
+    this.isSelecting = false;
+    this.hasSelection = true;
+    this.selectingPointerId = -1;
+    this.selectStartX = x0;
+    this.selectStartY = y0;
+    this.selectCurrentX = x1;
+    this.selectCurrentY = y1;
+    this.emitSelectionChange();
+  }
+
   setHeatmapSource(canvas: HTMLCanvasElement) {
     this.heatmapSource = canvas;
   }
@@ -284,6 +321,10 @@ export class ChartCanvas {
     const width = Math.abs(this.selectCurrentX - this.selectStartX);
     const height = Math.abs(this.selectCurrentY - this.selectStartY);
     if (width < 1 || height < 1) return null;
+    const area = width * height;
+    if (area < 30) {
+      return null;
+    }
     return { x, y, width, height };
   }
 
@@ -339,6 +380,15 @@ export class ChartCanvas {
     if (this.styleAccessors.getShowYAxis()) {
       this.drawYAxis(hmW, hmH, cssW, viewMinY, viewMaxY);
     }
+    this.drawSelectionAxisHighlights(
+      hmW,
+      hmH,
+      cssW,
+      viewMinX,
+      viewMaxX,
+      viewMinY,
+      viewMaxY,
+    );
     ctx.restore();
 
     this.drawLegend(cssW, cssH);
@@ -363,7 +413,7 @@ export class ChartCanvas {
     ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
 
     if (this.selectionIntegral !== null) {
-      const label = `Integral: ${fmtCompact(this.selectionIntegral)}`;
+      const label = `Sum: ${fmtCompact(this.selectionIntegral)}`;
       ctx.setLineDash([]);
       ctx.font = ChartCanvas.FONT;
       ctx.textBaseline = "top";
@@ -378,6 +428,125 @@ export class ChartCanvas {
       ctx.fillRect(boxX, boxY, boxW, boxH);
       ctx.fillStyle = "#ffffff";
       ctx.fillText(label, boxX + paddingX, boxY + paddingY);
+    }
+
+    ctx.restore();
+  }
+
+  private drawSelectionAxisHighlights(
+    hmW: number,
+    hmH: number,
+    cssW: number,
+    viewMinX: number,
+    viewMaxX: number,
+    viewMinY: number,
+    viewMaxY: number,
+  ) {
+    const region = this.getSelectionRegion();
+    if (!region) return;
+
+    const axisYWidth = this.styleAccessors.getShowYAxis() ? AXIS_Y_W : 0;
+    const xStartPx = Math.max(0, Math.min(hmW, this.selectStartX));
+    const xEndPx = Math.max(0, Math.min(hmW, this.selectCurrentX));
+    const yStartPx = Math.max(
+      CHART_PAD_Y,
+      Math.min(CHART_PAD_Y + hmH, this.selectStartY),
+    );
+    const yEndPx = Math.max(
+      CHART_PAD_Y,
+      Math.min(CHART_PAD_Y + hmH, this.selectCurrentY),
+    );
+    const yStartLocal = yStartPx - CHART_PAD_Y;
+    const yEndLocal = yEndPx - CHART_PAD_Y;
+
+    const xSpan = Math.max(1e-9, viewMaxX - viewMinX);
+    const ySpan = Math.max(1e-9, viewMaxY - viewMinY);
+
+    const xStartVal = viewMinX + (xStartPx / hmW) * xSpan;
+    const xEndVal = viewMinX + (xEndPx / hmW) * xSpan;
+    const yStartVal = viewMinY + (1 - yStartLocal / hmH) * ySpan;
+    const yEndVal = viewMinY + (1 - yEndLocal / hmH) * ySpan;
+
+    const xStartText = `Start: ${formatTimestamp(xStartVal * this.xScale + this.xMin)}`;
+    const xEndText = `End: ${formatTimestamp(xEndVal * this.xScale + this.xMin)}`;
+    const yStartText = `Start: ${fmtCompact(yStartVal)}`;
+    const yEndText = `End: ${fmtCompact(yEndVal)}`;
+
+    const { ctx } = this;
+    const xAxisTop = hmH + CHART_PAD_Y;
+
+    ctx.save();
+    ctx.font = ChartCanvas.FONT;
+
+    // X-axis highlights (dates)
+    if (this.styleAccessors.getShowTimescale()) {
+      const drawXMark = (x: number, label: string, align: CanvasTextAlign) => {
+        ctx.strokeStyle = "rgba(34, 113, 247, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, xAxisTop);
+        ctx.lineTo(x, xAxisTop + 10);
+        ctx.stroke();
+
+        ctx.textAlign = align;
+        ctx.textBaseline = "top";
+        const textW = ctx.measureText(label).width;
+        const padX = 4;
+        const boxW = textW + padX * 2;
+        let textX = x;
+        if (align === "left") textX = Math.min(x + 4, hmW - boxW);
+        if (align === "right") textX = Math.max(x - 4, boxW);
+
+        const drawX =
+          align === "center"
+            ? textX - boxW / 2
+            : align === "left"
+              ? textX
+              : textX - boxW;
+        ctx.fillStyle = "rgba(15, 15, 15, 0.72)";
+        ctx.fillRect(drawX, xAxisTop + 12, boxW, 16);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, drawX + padX, xAxisTop + 15);
+      };
+
+      drawXMark(xStartPx, xStartText, "left");
+      drawXMark(xEndPx, xEndText, "left");
+    }
+
+    // Y-axis highlights (prices)
+    if (axisYWidth > 0) {
+      const yAxisX = hmW;
+      const yAxisRight = cssW;
+      const drawYMark = (y: number, label: string, up: boolean) => {
+        ctx.strokeStyle = "rgba(34, 113, 247, 0.95)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(yAxisX, y);
+        ctx.lineTo(yAxisX + 10, y);
+        ctx.stroke();
+
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        const textW = ctx.measureText(label).width;
+        const padX = 0;
+        const boxW = Math.min(
+          textW + padX * 2,
+          Math.max(12, yAxisRight - yAxisX - 2),
+        );
+        const boxH = 16;
+        const boxX = yAxisX;
+        const boxY = Math.max(
+          0,
+          Math.min(hmH - boxH, y + (up ? -boxH - 2 : 2)),
+        );
+        ctx.fillStyle = "rgba(15, 15, 15, 0.72)";
+        ctx.fillRect(boxX, boxY, boxW, boxH);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(label, boxX + padX, boxY + boxH / 2);
+      };
+
+      drawYMark(yStartLocal, yStartText, true);
+      drawYMark(yEndLocal, yEndText, false);
     }
 
     ctx.restore();
@@ -618,7 +787,7 @@ export class ChartCanvas {
     ctx.font = FONT;
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    // ctx.fillText("Satoshi", PAD, 0);
+    // ctx.fillText("Per σ²", PAD, 0);
 
     ctx.translate(PAD, LEGEND_TITLE_H);
 

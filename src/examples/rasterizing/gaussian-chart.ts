@@ -14,6 +14,12 @@ const DEFAULT_PALETTE_COLORS = {
   c2: "#f28787",
 };
 
+function parseCssPixels(value: string): number {
+  if (!value) return 0;
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export type LoadedData = {
   n: number;
   dataF64: Float64Array;
@@ -281,7 +287,7 @@ export class GaussianChart {
       this.chartCanvas.setSelectionIntegral(null);
       this.integrateTimeoutId = window.setTimeout(() => {
         void this.computeSelectionIntegral(region, token);
-      }, 300);
+      }, 150);
     });
     this.syncHeatmapPresentation();
 
@@ -430,7 +436,7 @@ export class GaussianChart {
     });
   }
 
-  private render() {
+  private async render() {
     if (this.destroyed) return;
     const now = performance.now();
     const dt = (now - this.lastTime) / 1000;
@@ -447,6 +453,7 @@ export class GaussianChart {
     this.viewManager.tick(dt);
 
     const pixelRatio = this.getEffectivePixelRatio();
+    const padFrac = CHART_PAD_Y / Math.max(1, this.getHeatmapCssH());
 
     updateUniform(
       this.gpu.device,
@@ -458,6 +465,7 @@ export class GaussianChart {
       this.hdrW,
       this.hdrH,
       this.state.sigmaSize * pixelRatio,
+      padFrac,
     );
 
     this.gpu.device.queue.writeBuffer(
@@ -546,6 +554,7 @@ export class GaussianChart {
 
     this.gpu.device.queue.submit([encoder.finish()]);
     this.scheduleReadback();
+    await this.gpu.device.queue.onSubmittedWorkDone();
     this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
   }
 
@@ -555,7 +564,7 @@ export class GaussianChart {
         break;
       }
       await new Promise(requestAnimationFrame);
-      this.render();
+      await this.render();
     }
   }
 
@@ -705,14 +714,7 @@ export class GaussianChart {
         cssH: height,
       });
 
-      this.render();
-      await this.gpu.device.queue.onSubmittedWorkDone();
-      this.chartCanvas.render(
-        this.viewManager.getViewMinX(),
-        this.viewManager.getViewMaxX(),
-        this.viewManager.getViewMinY(),
-        this.viewManager.getViewMaxY(),
-      );
+      await this.render();
 
       const link = document.createElement("a");
       link.download = options.name.endsWith(".png")
@@ -880,8 +882,14 @@ export class GaussianChart {
   }
 
   private getContainerCssSize() {
-    const cssW = Math.max(1, this.container.clientWidth);
-    const cssH = Math.max(1, this.container.clientHeight);
+    const cssW = Math.max(
+      1,
+      this.container.clientWidth || this.fullChartSize.cssW,
+    );
+    const cssH = Math.max(
+      1,
+      this.container.clientHeight || this.fullChartSize.cssH,
+    );
     return { cssW, cssH };
   }
 
@@ -905,6 +913,18 @@ export class GaussianChart {
 
   private getEffectivePixelRatio(): number {
     return Math.max(0.25, this.state.pixelRatio);
+  }
+
+  setSelection(
+    region: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    } | null,
+  ) {
+    if (this.destroyed || !this.chartCanvas) return;
+    this.chartCanvas.setSelection(region);
   }
 
   exportImage(type?: string, quality?: number): string {
@@ -937,7 +957,6 @@ function createHDRTexture(device: GPUDevice, width: number, height: number) {
 }
 
 function createAccumulationPipeline(device: GPUDevice, heatmapcssH: number) {
-  const padFrac = CHART_PAD_Y / Math.max(1, heatmapcssH);
   const nSigma = N_SIGMA_TRUNCATE.toFixed(6);
   const nSigma2 = (N_SIGMA_TRUNCATE * N_SIGMA_TRUNCATE).toFixed(6);
   const module = device.createShaderModule({
@@ -946,7 +965,7 @@ function createAccumulationPipeline(device: GPUDevice, heatmapcssH: number) {
         viewMinX: f32, viewMaxX: f32,
         minY: f32, maxY: f32,
         screenWidth: f32, screenHeight: f32,
-        sigmaSize: f32, _pad: f32,
+        sigmaSize: f32, padFrac: f32,
       };
 
       @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -969,8 +988,7 @@ function createAccumulationPipeline(device: GPUDevice, heatmapcssH: number) {
           return VertexOut(vec4f(10.0, 10.0, 10.0, 1.0), vec2f(0.0), 0.0);
         }
 
-        let padFrac = ${padFrac.toFixed(6)}f;
-        let scale = 1.0 - 2.0 * padFrac;
+        let scale = 1.0 - 2.0 * u.padFrac;
         let nx = (point.x - u.viewMinX) / (u.viewMaxX - u.viewMinX) * 2.0 - 1.0;
         let ny = ((point.y - u.minY) / (u.maxY - u.minY) * 2.0 - 1.0) * scale;
 
@@ -1208,6 +1226,7 @@ function updateUniform(
   width: number,
   height: number,
   kernelSz: number,
+  padFrac: number,
 ) {
   device.queue.writeBuffer(
     uniformBuffer,
@@ -1220,7 +1239,7 @@ function updateUniform(
       width,
       height,
       kernelSz,
-      0,
+      padFrac,
     ]),
   );
 }

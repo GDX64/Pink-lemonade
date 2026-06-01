@@ -1,14 +1,14 @@
 import { createNoiseData } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
 
-const DATA_KIND = "";
-
 export async function rasterizingExample() {
   await createChart1();
+  // await randomImageFull();
+  // await randomApproxImage();
 }
 
 async function createChart1() {
-  const data = await loadData();
+  const data = await loadData("data");
   const chart = new GaussianChart({
     data,
   });
@@ -17,8 +17,8 @@ async function createChart1() {
   container.style.width = "100vw";
   container.style.height = "100vh";
   container.style.position = "relative";
-  chart.state.showTimescale = false;
-  chart.state.showYAxis = false;
+  chart.state.showTimescale = true;
+  chart.state.showYAxis = true;
   await chart.start();
   chart.setupRenderLoop();
   // chart.downloadImage({
@@ -29,8 +29,41 @@ async function createChart1() {
   // });
 }
 
-async function loadData(): Promise<LoadedData> {
-  if (DATA_KIND === "random") {
+async function randomApproxImage() {
+  const data = await loadData("random");
+  const chart = new GaussianChart({
+    data,
+  });
+  chart.state.showTimescale = false;
+  chart.state.showYAxis = false;
+  await chart.start();
+  chart.downloadImage({
+    width: 1920,
+    height: 1080,
+    name: "approx_image",
+    devicePixelRatio: 2,
+  });
+}
+
+async function randomImageFull() {
+  const data = await loadData("random");
+  const chart = new GaussianChart({
+    data,
+  });
+  chart.state.showTimescale = false;
+  chart.state.showYAxis = false;
+  chart.state.mergeThresholdSigmas = 0;
+  await chart.start();
+  chart.downloadImage({
+    width: 1920,
+    height: 1080,
+    name: "full_image",
+    devicePixelRatio: 2,
+  });
+}
+
+async function loadData(kind: "random" | "data"): Promise<LoadedData> {
+  if (kind === "random") {
     const points = createNoiseData(100_000, 12345);
     const nFiltered = points.length;
     if (nFiltered === 0) {
