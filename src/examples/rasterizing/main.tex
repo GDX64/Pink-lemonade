@@ -687,8 +687,10 @@ The normalized value is then mapped through a three-stop colormap with a user-ad
 An optional quantization step maps the normalized value to a discrete number of levels before color lookup, producing a contour-map aesthetic that can make density gradients easier to read.
 
 
-\section{Discussion}
-\label{sec:discussion}
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and perceptual tonemapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
 
 \subsection{Complexity}
 
@@ -767,7 +769,7 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
 \begin{figure}
     \centering
     \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
-  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
+  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:conclusion}.}
     \label{fig:placeholder}
 \end{figure}
 
@@ -784,14 +786,6 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
     \caption{Bitcoin trading on coinbase sample with 88956 minutes compressed into 271 gaussian kernels, from december 2025 to may 2026. Capturing the downfall of february and the unusual negotiation volume on feb 05}
     \label{fig:placeholder}
 \end{figure}
-
-
-
-\section{Conclusion}
-\label{sec:conclusion}
-
-We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and perceptual tonemapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
-
 
 
 
