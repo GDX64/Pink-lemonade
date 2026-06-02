@@ -12,7 +12,7 @@ export async function rasterizingExample() {
 }
 
 async function createChart1() {
-  const data = await loadData("random");
+  const data = await loadData("data");
   const chart = new GaussianChart({
     data,
   });
@@ -28,6 +28,16 @@ async function createChart1() {
   chart.state.quantSteps = 6;
   await chart.start();
   chart.setupRenderLoop();
+  setTimeout(() => {
+    chart
+      .integrate({
+        x: 0,
+        y: 0,
+        width: BASE_WIDTH,
+        height: BASE_HEIGHT,
+      })
+      .then((result) => console.log(result));
+  }, 100);
   // chart.downloadImage({
   //   width: 1080,
   //   height: 720,

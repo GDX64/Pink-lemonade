@@ -425,7 +425,7 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
       \coordinate (cand) at (2.75,0.98);
       
 
-      \draw[dashed] (mu) circle [radius=0.9];
+      \draw[dashed] (mu) circle [radius=1.1];
       \node[anchor=west] at (2.82,2.02) {$\tau$};
 
       \fill (first) circle (1.2pt);
@@ -463,7 +463,7 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
       \node[flow] (centroid) at (2.4,1.05) {Compute hypothetical\\centroid $\mu'$};
       \node[decision] (inside) at (2.4,-0.55) {All inside\\$\tau$?};
       \node[flow] (flush) at (0.25,-2.2) {Flush previous cluster\\start new one with $p_i$};
-      \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, and weight};
+      \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, weight, end};
 
       \draw[->] (start) -- (centroid);
       \draw[->] (centroid) -- (inside);
@@ -599,7 +599,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
   \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
     \includegraphics[width=\linewidth]{full_image.png}%
   }\\[0.5em]
-  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 773 kernels while preserving the dominant density structures.]{%
+  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures, while integrating with only 1.67\% of error .]{%
     \includegraphics[width=\linewidth]{figs/approx_image.png}%
   }
   \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology.}
@@ -668,7 +668,7 @@ The kernel value is then evaluated as
 \begin{equation}
 K(\overrightarrow{\boldsymbol{x}})=\exp\left(-\frac{1}{2}d_M^2\right),
 \end{equation}
-and weighted contribution $wK(\overrightarrow{\boldsymbol{x}})$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
+and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
 
 \subsection{Pass 2 --- Reduction}
 
@@ -734,7 +734,7 @@ with
 \Psi(\rho)=1+e^{-\rho^2/4}+\frac{2}{1+\rho^2/4}
 -\frac{8}{2+\rho^2/4}\exp\!\left(-\frac{\rho^2}{8(2+\rho^2/4)}\right).
 \end{equation}
-In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISE-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
+In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
 
 For a heatmap region of area $|\Omega|$, a practical approximation is
 \begin{equation}
@@ -748,7 +748,7 @@ As a concrete operating point, setting merge distance equal to one standard devi
 \end{equation}
 Therefore
 \begin{equation}
-\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2}.
+\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
 \end{equation}
 This small value supports using merge thresholds on the order of $\sigma$ when low approximation error is required.
 
@@ -768,14 +768,21 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
     \centering
     \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
   \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
-    \label{fig:gaussian-merge-example}
+    \label{fig:placeholder}
 \end{figure}
 
 \begin{figure}
     \centering
-    \includegraphics[width=1\linewidth]{figs/quantization.png}
-    \caption{Using quantization and controlling opacity cut threshold increases the contrast between hot and cold areas}
-  \label{fig:quantization-opacity}
+    \includegraphics[width=1\linewidth]{figs/integral.png}
+    \caption{Integrated quantity over user selected area}
+    \label{fig:placeholder}
+\end{figure}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
+    \caption{Bitcoin trading on coinbase sample with 88956 minutes compressed into 271 gaussian kernels, from december 2025 to may 2026. Capturing the downfall of february and the unusual negotiation volume on feb 05}
+    \label{fig:placeholder}
 \end{figure}
 
 
