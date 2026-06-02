@@ -1,5 +1,5 @@
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
-const AXIS_X_H = 30; // px reserved on the bottom for the X axis
+const AXIS_X_H = 46; // px reserved on the bottom for the X axis
 const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 
 export type ChartCanvasStyleAccessors = {
@@ -29,9 +29,18 @@ function fmtCompact(v: number): string {
   return v.toPrecision(3);
 }
 
-function formatTimestamp(ms: number): string {
+function formatTimestampDay(ms: number): string {
   const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatTimestampHourMinute(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatTimestamp(ms: number): string {
+  return `${formatTimestampDay(ms)} ${formatTimestampHourMinute(ms)}`;
 }
 
 export class ChartCanvas {
@@ -690,8 +699,8 @@ export class ChartCanvas {
     const stripY = hmH + CHART_PAD_Y;
 
     ctx.save();
-    ctx.fillStyle = "#f5f5f5";
-    ctx.fillRect(0, stripY, hmW, cssH);
+    // ctx.fillStyle = "#f5f5f5";
+    // ctx.fillRect(0, stripY, hmW, cssH);
 
     ctx.strokeStyle = "#999";
     ctx.lineWidth = 1;
@@ -718,12 +727,10 @@ export class ChartCanvas {
       ctx.lineTo(x, stripY + 5);
       ctx.stroke();
 
+      const tsMs = val * this.xScale + this.xMin;
       ctx.fillStyle = "#333";
-      ctx.fillText(
-        formatTimestamp(val * this.xScale + this.xMin),
-        x,
-        stripY + PAD + 5,
-      );
+      ctx.fillText(formatTimestampDay(tsMs), x, stripY + PAD + 3);
+      ctx.fillText(formatTimestampHourMinute(tsMs), x, stripY + PAD + 16);
     }
     ctx.restore();
   }
@@ -740,8 +747,8 @@ export class ChartCanvas {
     const stripX = hmW;
 
     ctx.save();
-    ctx.fillStyle = "#f5f5f5";
-    ctx.fillRect(stripX, 0, cssW - stripX, hmH);
+    // ctx.fillStyle = "#f5f5f5";
+    // ctx.fillRect(stripX, 0, cssW - stripX, hmH);
 
     ctx.strokeStyle = "#999";
     ctx.lineWidth = 1;

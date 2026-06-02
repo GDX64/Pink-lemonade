@@ -1,24 +1,31 @@
 import { createNoiseData } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
 
+const BASE_WIDTH = 800;
+const BASE_HEIGHT = 600;
+
 export async function rasterizingExample() {
   await createChart1();
   // await randomImageFull();
   // await randomApproxImage();
+  // await areaSelection();
 }
 
 async function createChart1() {
-  const data = await loadData("data");
+  const data = await loadData("random");
   const chart = new GaussianChart({
     data,
   });
   const container = chart.container;
   document.body.appendChild(container);
-  container.style.width = "100vw";
-  container.style.height = "100vh";
+  // container.style.width = "100vw";
+  // container.style.height = "100vh";
+  container.style.width = `${BASE_WIDTH}px`;
+  container.style.height = `${BASE_HEIGHT}px`;
   container.style.position = "relative";
   chart.state.showTimescale = true;
   chart.state.showYAxis = true;
+  chart.state.quantSteps = 6;
   await chart.start();
   chart.setupRenderLoop();
   // chart.downloadImage({
@@ -34,14 +41,15 @@ async function randomApproxImage() {
   const chart = new GaussianChart({
     data,
   });
-  chart.state.showTimescale = false;
-  chart.state.showYAxis = false;
+  chart.state.showTimescale = true;
+  chart.state.showYAxis = true;
+  chart.state.quantSteps = 6;
   await chart.start();
   chart.downloadImage({
-    width: 1920,
-    height: 1080,
+    width: BASE_WIDTH,
+    height: BASE_HEIGHT,
     name: "approx_image",
-    devicePixelRatio: 2,
+    devicePixelRatio: 3,
   });
 }
 
@@ -50,21 +58,22 @@ async function randomImageFull() {
   const chart = new GaussianChart({
     data,
   });
-  chart.state.showTimescale = false;
-  chart.state.showYAxis = false;
+  chart.state.showTimescale = true;
+  chart.state.showYAxis = true;
   chart.state.mergeThresholdSigmas = 0;
+  chart.state.quantSteps = 6;
   await chart.start();
   chart.downloadImage({
-    width: 1920,
-    height: 1080,
+    width: BASE_WIDTH,
+    height: BASE_HEIGHT,
     name: "full_image",
-    devicePixelRatio: 2,
+    devicePixelRatio: 3,
   });
 }
 
 async function loadData(kind: "random" | "data"): Promise<LoadedData> {
   if (kind === "random") {
-    const points = createNoiseData(100_000, 12345);
+    const points = createNoiseData(100_000, 578211);
     const nFiltered = points.length;
     if (nFiltered === 0) {
       return { n: 0, dataF64: new Float64Array(0), xMin: 0, xScale: 1 };

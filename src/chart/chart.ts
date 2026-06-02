@@ -185,18 +185,26 @@ export function createNoiseData(
   const mean = 0;
   const stdDev = 1;
   const gen = createGen(seed);
-  let acc = gausianNoise(mean, stdDev, gen);
+  let acc = N / 1000;
   let timeAcc = Date.now();
   const data: [number, number, number][] = [];
   for (let i = 0; i < N; i++) {
     acc += gausianNoise(mean, stdDev, gen);
     timeAcc += 1000;
-    const s =
-      Math.sin((i / N) * Math.PI * 2) + gausianNoise(mean, stdDev, gen) / 10;
-    const w = Math.abs(s * s * s * 100);
+
+    const x = i / N; //[0, 1] range for the splat kernel
+    const density =
+      gaussianSample(0.9, 0.05, x) + gaussianSample(0.3, 0.1, x) * 0.8;
+
+    const s = density + gausianNoise(mean, stdDev, gen) * 0.5;
+    const w = Math.abs(s ** 5 * 100);
     data.push([timeAcc, acc, w]);
   }
   return data;
+}
+
+function gaussianSample(mean: number, stdDev: number, x: number): number {
+  return Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
 }
 
 export function drawChart(

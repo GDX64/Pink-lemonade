@@ -4,7 +4,7 @@ import { downsample } from "./downsampling";
 import { lowerBound, upperBound, ViewManager } from "./view-manager";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
-const AXIS_X_H = 30; // px reserved on the bottom for the X axis
+const AXIS_X_H = 46; // px reserved on the bottom for the X axis
 const CHART_PAD_Y = 20; // px of top+bottom padding inside the heatmap canvas
 const N_SIGMA_TRUNCATE = 3; // number of sigmas to cover with the quad
 
@@ -588,6 +588,7 @@ export class GaussianChart {
     actualSum: number;
     errorPercent: number;
   } | null> {
+    console.log(region);
     const width = this.hdrW;
     const height = this.hdrH;
     if (width <= 0 || height <= 0) return null;
