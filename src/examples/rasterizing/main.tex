@@ -394,6 +394,15 @@ Each data point carries three values: a timestamp, a price level, and a scalar w
 
 Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss under extreme zoom. The original scale factors are retained separately for axis label reconstruction.
 
+Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
+  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
+  \label{fig:bitcoin-sample}
+\end{figure}
+
 
 \section{Adaptive Downsampling}
 \label{sec:downsampling}
@@ -709,6 +718,15 @@ and its scale-normalized form
 
 To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
 
+Figure~\ref{fig:integral-region} illustrates the interactive integral query used to inspect cumulative density over user-selected regions when validating approximation behavior.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/integral.png}
+  \caption{Integrated quantity over a user-selected area in the density heatmap.}
+  \label{fig:integral-region}
+\end{figure}
+
 \subsection{Two-Gaussian Analytical Error Model}
 
 For intuition, consider two isotropic 2D Gaussians with equal weights and equal standard deviation $\sigma$, centered at $\pm\overrightarrow{\boldsymbol{\Delta}}/2$ (so their separation is $\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert$). Let
@@ -748,6 +766,14 @@ As a concrete operating point, setting merge distance equal to one standard devi
 \begin{equation}
 \Psi(1) \approx 0.01539.
 \end{equation}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
+  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces low integrated squared error, matching the analytical trend in this subsection.}
+  \label{fig:two-gaussian-merge}
+\end{figure}
+
 Therefore
 \begin{equation}
 \mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
@@ -765,27 +791,6 @@ The colormap is defined in display color space, while kernel accumulation operat
 \subsection{Future Work}
 
 The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price trace without inflating kernel weights. Combining both representations in the same view would make the relationship between price trajectory and activity density immediately readable.
-
-\begin{figure}
-    \centering
-    \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
-  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:conclusion}.}
-    \label{fig:placeholder}
-\end{figure}
-
-\begin{figure}
-    \centering
-    \includegraphics[width=1\linewidth]{figs/integral.png}
-    \caption{Integrated quantity over user selected area}
-    \label{fig:placeholder}
-\end{figure}
-
-\begin{figure}
-    \centering
-    \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
-    \caption{Bitcoin trading on coinbase sample with 88956 minutes compressed into 271 gaussian kernels, from december 2025 to may 2026. Capturing the downfall of february and the unusual negotiation volume on feb 05}
-    \label{fig:placeholder}
-\end{figure}
 
 
 
