@@ -599,7 +599,7 @@ The kernel value is then evaluated as
 \begin{equation}
 K(\overrightarrow{\boldsymbol{x}})=\exp\left(-\frac{1}{2}d_M^2\right),
 \end{equation}
-and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
+and weighted contribution $wK(\overrightarrow{\boldsymbol{x}})$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
 
 \subsection{Pass 2 --- Reduction}
 
@@ -665,7 +665,7 @@ with
 \Psi(\rho)=1+e^{-\rho^2/4}+\frac{2}{1+\rho^2/4}
 -\frac{8}{2+\rho^2/4}\exp\!\left(-\frac{\rho^2}{8(2+\rho^2/4)}\right).
 \end{equation}
-In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
+In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISE-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
 
 For a heatmap region of area $|\Omega|$, a practical approximation is
 \begin{equation}
@@ -679,7 +679,7 @@ As a concrete operating point, setting merge distance equal to one standard devi
 \end{equation}
 Therefore
 \begin{equation}
-\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
+\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2}.
 \end{equation}
 This small value supports using merge thresholds on the order of $\sigma$ when low approximation error is required.
 
@@ -699,14 +699,14 @@ The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated
     \centering
     \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
   \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces a low integrated squared error, consistent with the analytical result in Section~\ref{sec:discussion}.}
-    \label{fig:placeholder}
+    \label{fig:gaussian-merge-example}
 \end{figure}
 
 \begin{figure}
     \centering
     \includegraphics[width=1\linewidth]{figs/quantization.png}
     \caption{Using quantization and controlling opacity cut threshold increases the contrast between hot and cold areas}
-    \label{fig:placeholder}
+  \label{fig:quantization-opacity}
 \end{figure}
 
 
