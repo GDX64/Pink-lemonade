@@ -736,6 +736,28 @@ and its scale-normalized form
 \mathrm{NRMSE}=\frac{\sqrt{\mathrm{MSE}}}{\max_{(x,y)\in\Omega}F(x,y)-\min_{(x,y)\in\Omega}F(x,y)}.
 \end{equation}
 
+To estimate these quantities in practice, we use Monte Carlo sampling over the visible domain with the same setup used in the benchmark ($1920\times1080$, $\texttt{sigmaSizePx}=16$, and $\tau=1$). At each iteration, we first evaluate the approximation $\hat{F}$. If $\hat{F}<0.01$, the sample is rejected and a new point is drawn. This acceptance rule avoids over-representing empty background regions that would artificially lower the measured error. For accepted samples, we evaluate both $F$ and $\hat{F}$, accumulate squared error, and compute MSE and NRMSE. We also report relative margin of error (RME, 95\%) for the MSE estimate as
+\begin{equation}
+\mathrm{RME}=100\cdot\frac{1.96\,\mathrm{SE}(\mathrm{MSE})}{\mathrm{MSE}}.
+\end{equation}
+
+Table~\ref{tab:monte-carlo-error} summarizes the measured approximation quality at three dataset sizes.
+
+\begin{table}[t]
+  \centering
+  \caption{Monte Carlo approximation quality for weighted-merge KDE.}
+  \label{tab:monte-carlo-error}
+  \begin{tabular}{|r|r|r|r|}
+    \hline
+    $N$ & merged kernels & NRMSE (\%) & RME (95\%) \\
+    \hline
+    1{,}000 & 332 & 0.0979\% & $\pm 22.63\%$ \\
+    10{,}000 & 621 & 0.0625\% & $\pm 16.40\%$ \\
+    100{,}000 & 1034 & 0.0301\% & $\pm 17.48\%$ \\
+    \hline
+  \end{tabular}
+\end{table}
+
 To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
 
 Figure~\ref{fig:integral-region} illustrates the interactive integral query used to inspect cumulative density over user-selected regions when validating approximation behavior.
