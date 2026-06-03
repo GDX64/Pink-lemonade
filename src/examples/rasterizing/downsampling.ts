@@ -136,7 +136,7 @@ function mergePass(
 
   if (hasCluster) flushCluster();
 
-  return out.slice(0, count * 7);
+  return out.subarray(0, count * 7);
 }
 
 function mergeDownsample({

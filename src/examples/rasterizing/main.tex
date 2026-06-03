@@ -701,6 +701,26 @@ An optional quantization step maps the normalized value to a discrete number of 
 
 We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and perceptual tonemapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
 
+\subsection{Benchmark Results}
+
+Table~\ref{tab:merge-benchmark} reports merge-pass benchmark results measured on an Intel Core i5-10400F CPU using Node.js 24.12.0, with resolution $1920\times1080$, $\texttt{sigmaSizePx}=16$, and merge threshold $\tau=1$ pixel.
+
+\begin{table}[t]
+  \centering
+  \caption{Merge benchmark summary on i5-10400F (Node.js 24.12.0), using $1920\times1080$, $\texttt{sigmaSizePx}=16$, and $\tau=1$.}
+  \label{tab:merge-benchmark}
+  \begin{tabular}{|r|r|r|r|r|r|}
+    \hline
+    $N$ & merged points & mean (ms) & p99 (ms) & rme & samples \\
+    \hline
+    1{,}000{,}000 & 1813 & 33.5311 & 46.5077 & $\pm 6.95\%$ & 50 \\
+    100{,}000 & 1034 & 2.8952 & 7.8766 & $\pm 7.14\%$ & 173 \\
+    10{,}000 & 621 & 0.4484 & 2.2119 & $\pm 6.81\%$ & 1115 \\
+    1{,}000 & 332 & 0.0808 & 0.3997 & $\pm 2.65\%$ & 6186 \\
+    \hline
+  \end{tabular}
+\end{table}
+
 \subsection{Complexity}
 
 Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and tonemapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.

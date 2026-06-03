@@ -798,18 +798,18 @@ export class GaussianChart {
     gpuInstances: Float32Array;
     count: number;
   } {
-    const toSX = (x: number) =>
-      (((x - args.viewMinX) / (args.viewMaxX - args.viewMinX)) * args.screenW) /
-      args.sigmaSizePx;
-    const toSY = (y: number) =>
-      (((y - args.viewMinY) / (args.viewMaxY - args.viewMinY)) * args.screenH) /
-      args.sigmaSizePx;
+    const xFactor =
+      args.screenW / (args.viewMaxX - args.viewMinX) / args.sigmaSizePx;
+    const toSX = (x: number) => (x - args.viewMinX) * xFactor;
+    const yFactor =
+      args.screenH / (args.viewMaxY - args.viewMinY) / args.sigmaSizePx;
+    const toSY = (y: number) => (y - args.viewMinY) * yFactor;
 
     const startIdx = lowerBound(args.dataF64, args.viewMinX);
     const endIdx = upperBound(args.dataF64, args.viewMaxX);
 
     const merged = downsample({
-      points: args.dataF64.slice(startIdx * 3, endIdx * 3),
+      points: args.dataF64.subarray(startIdx * 3, endIdx * 3),
       strategy: "merge",
       toSX,
       toSY,
