@@ -1,4 +1,4 @@
-import { createNoiseData } from "../../chart/chart";
+import { createNoiseData, createNoiseFloatData } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
 
 const BASE_WIDTH = 800;
@@ -12,7 +12,7 @@ export async function rasterizingExample() {
 }
 
 async function createChart1() {
-  const data = await loadData("data");
+  const data = await loadData("random");
   const chart = new GaussianChart({
     data,
   });
@@ -38,12 +38,6 @@ async function createChart1() {
       })
       .then((result) => console.log(result));
   }, 100);
-  // chart.downloadImage({
-  //   width: 1080,
-  //   height: 720,
-  //   name: "chart.png",
-  //   devicePixelRatio: 2,
-  // });
 }
 
 async function randomApproxImage() {
@@ -83,24 +77,7 @@ async function randomImageFull() {
 
 async function loadData(kind: "random" | "data"): Promise<LoadedData> {
   if (kind === "random") {
-    const points = createNoiseData(100_000, 578211);
-    const nFiltered = points.length;
-    if (nFiltered === 0) {
-      return { n: 0, dataF64: new Float64Array(0), xMin: 0, xScale: 1 };
-    }
-
-    // createNoiseData returns [time, price] points; normalize x and keep unit weight
-    const xMin = points[0]![0];
-    const xMax = points[nFiltered - 1]![0];
-    const xScale = xMax - xMin || 1;
-    const dataF64 = new Float64Array(nFiltered * 3);
-    for (let i = 0; i < nFiltered; i++) {
-      const [time, price] = points[i]!;
-      dataF64[i * 3] = (time - xMin) / xScale;
-      dataF64[i * 3 + 1] = price;
-      dataF64[i * 3 + 2] = points[i]![2] || 1; // weight
-    }
-    return { n: nFiltered, dataF64, xMin, xScale };
+    return createNoiseFloatData();
   }
 
   const jsonData = (await import("./data.json?url")).default;

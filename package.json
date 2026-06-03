@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "vite build",
+    "bench": "vitest bench",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",

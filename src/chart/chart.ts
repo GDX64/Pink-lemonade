@@ -44,6 +44,39 @@ export function createNoiseData(
   return data;
 }
 
+export function createNoiseFloatData(N = 100_000) {
+  const points = createNoiseData(N, 578211);
+  const nFiltered = points.length;
+  if (nFiltered === 0) {
+    return {
+      n: 0,
+      dataF64: new Float64Array(0),
+      xMin: 0,
+      xScale: 1,
+      xMax: 0,
+      yMin: 0,
+      yMax: 0,
+    };
+  }
+
+  // createNoiseData returns [time, price] points; normalize x and keep unit weight
+  const xMin = points[0]![0];
+  const xMax = points[nFiltered - 1]![0];
+  const xScale = xMax - xMin || 1;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  const dataF64 = new Float64Array(nFiltered * 3);
+  for (let i = 0; i < nFiltered; i++) {
+    const [time, price] = points[i]!;
+    dataF64[i * 3] = (time - xMin) / xScale;
+    dataF64[i * 3 + 1] = price;
+    dataF64[i * 3 + 2] = points[i]![2] || 1; // weight
+    yMin = Math.min(yMin, price);
+    yMax = Math.max(yMax, price);
+  }
+  return { n: nFiltered, dataF64, xMin, xScale, xMax, yMin, yMax };
+}
+
 function gaussianSample(mean: number, stdDev: number, x: number): number {
   return Math.exp(-0.5 * ((x - mean) / stdDev) ** 2);
 }

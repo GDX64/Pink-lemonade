@@ -497,16 +497,17 @@ export class GaussianChart {
       viewMinY !== this.lastViewMinY ||
       viewMaxY !== this.lastViewMaxY
     ) {
-      const merged = this.mergePoints(
+      const merged = GaussianChart.mergePoints({
         viewMinX,
         viewMaxX,
         viewMinY,
         viewMaxY,
-        this.hdrW,
-        this.hdrH,
-        this.state.mergeThresholdSigmas,
-        this.state.sigmaSize * pixelRatio,
-      );
+        screenW: this.hdrW,
+        screenH: this.hdrH,
+        mergeThreshold: this.state.mergeThresholdSigmas,
+        sigmaSizePx: this.state.sigmaSize * pixelRatio,
+        dataF64: this.dataF64,
+      });
       this.gpu.device.queue.writeBuffer(
         this.instanceBuffer,
         0,
@@ -783,33 +784,36 @@ export class GaussianChart {
     this.gpu.device.queue.writeBuffer(this.colorBuffer, 0, data);
   }
 
-  private mergePoints(
-    viewMinX: number,
-    viewMaxX: number,
-    viewMinY: number,
-    viewMaxY: number,
-    screenW: number,
-    screenH: number,
-    mergeThreshold: number,
-    sigmaSizePx: number,
-  ): {
+  static mergePoints(args: {
+    viewMinX: number;
+    viewMaxX: number;
+    viewMinY: number;
+    viewMaxY: number;
+    screenW: number;
+    screenH: number;
+    mergeThreshold: number;
+    sigmaSizePx: number;
+    dataF64: Float64Array;
+  }): {
     gpuInstances: Float32Array;
     count: number;
   } {
     const toSX = (x: number) =>
-      (((x - viewMinX) / (viewMaxX - viewMinX)) * screenW) / sigmaSizePx;
+      (((x - args.viewMinX) / (args.viewMaxX - args.viewMinX)) * args.screenW) /
+      args.sigmaSizePx;
     const toSY = (y: number) =>
-      (((y - viewMinY) / (viewMaxY - viewMinY)) * screenH) / sigmaSizePx;
+      (((y - args.viewMinY) / (args.viewMaxY - args.viewMinY)) * args.screenH) /
+      args.sigmaSizePx;
 
-    const startIdx = lowerBound(this.dataF64, viewMinX);
-    const endIdx = upperBound(this.dataF64, viewMaxX);
+    const startIdx = lowerBound(args.dataF64, args.viewMinX);
+    const endIdx = upperBound(args.dataF64, args.viewMaxX);
 
     const merged = downsample({
-      points: this.dataF64.slice(startIdx * 3, endIdx * 3),
+      points: args.dataF64.slice(startIdx * 3, endIdx * 3),
       strategy: "merge",
       toSX,
       toSY,
-      mergeThreshold,
+      mergeThreshold: args.mergeThreshold,
     });
 
     // merge strategy returns [x, y, w, p00, p01, p10, p11].

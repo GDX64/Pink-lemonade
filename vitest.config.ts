@@ -4,8 +4,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["test/browser/**/*.test.ts"],
+    benchmark: {
+      include: ["./test/**/*.bench.ts"],
+      reporters: ["default"],
+      outputFile: "./benchmark-results.json",
+    },
     browser: {
-      enabled: true,
+      enabled: false,
       provider: playwright({
         launchOptions: {
           headless: false,
