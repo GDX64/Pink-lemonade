@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createNoiseFloatData } from "../src/chart/chart";
-import { GaussianChart } from "../src/examples/rasterizing/gaussian-chart";
+import { mergePoints } from "../src/examples/rasterizing/downsampling";
 
 type GaussianComponent = {
   x: number;
@@ -58,7 +58,7 @@ function estimateMonteCarloMetrics(n: number) {
   const mergeThreshold = 1;
   const sigmaSizePx = 16;
 
-  const merged = GaussianChart.mergePoints({
+  const merged = mergePoints({
     viewMinX,
     viewMaxX,
     viewMinY,

@@ -6,3 +6,4 @@ playwright-report/
 dist-ts
 data.json
 target
+pkg

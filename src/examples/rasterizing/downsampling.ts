@@ -1,4 +1,5 @@
 import { lowerBound, upperBound } from "./view-manager";
+import initWasm, { Downsampler } from "../../../pkg/pink_lemonade_wasm";
 
 export type DownsampleStrategy = "merge" | "lttb" | "rdp";
 
@@ -205,4 +206,10 @@ export function mergePoints(args: {
   }
 
   return { gpuInstances, count };
+}
+
+export async function wasmMerge() {
+  await initWasm();
+  const downsampler = new Downsampler();
+  return downsampler;
 }
