@@ -1,4 +1,4 @@
-import { createNoiseData, createNoiseFloatData } from "../../chart/chart";
+import { createNoiseFloatData } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
 
 const BASE_WIDTH = 800;
@@ -6,22 +6,67 @@ const BASE_HEIGHT = 600;
 
 export async function rasterizingExample() {
   await createChart1();
-  // await randomImageFull();
-  // await randomApproxImage();
-  // await areaSelection();
 }
 
-async function createChart1() {
+export async function rasterizingApplication(mount?: HTMLElement) {
+  await createChart1(mount);
+}
+
+export async function renderFigureChart(
+  kind: "figure-1" | "figure-2" | "figure-3",
+  mount: HTMLElement,
+) {
+  const data = await loadData("random");
+  const chart = new GaussianChart({ data });
+  mount.innerHTML = "";
+  const container = chart.container;
+  mount.appendChild(container);
+  container.style.width = `${BASE_WIDTH}px`;
+  container.style.height = `${BASE_HEIGHT}px`;
+  container.style.position = "relative";
+  chart.state.showTimescale = true;
+  chart.state.showYAxis = true;
+  chart.state.quantSteps = 6;
+  chart.state.mergeThresholdSigmas = kind === "figure-1" ? 0 : 1;
+  await chart.start();
+  if (kind === "figure-3") {
+    chart.setViewRangeX(0.6500622508888406, 1);
+    chart.setSelection({
+      x: 388,
+      y: 277.5,
+      width: 246,
+      height: 182,
+    });
+  }
+  chart.setupRenderLoop();
+  return chart;
+}
+
+export async function generateApproxFigure() {
+  await randomApproxImage();
+}
+
+export async function generateFullFigure() {
+  await randomImageFull();
+}
+
+async function createChart1(mount?: HTMLElement) {
   const data = await loadData("random");
   const chart = new GaussianChart({
     data,
   });
   const container = chart.container;
-  document.body.appendChild(container);
-  // container.style.width = "100vw";
-  // container.style.height = "100vh";
-  container.style.width = `${BASE_WIDTH}px`;
-  container.style.height = `${BASE_HEIGHT}px`;
+  const target = mount ?? document.body;
+  target.appendChild(container);
+  const useFullscreen = !!mount;
+  const width = useFullscreen
+    ? Math.max(window.innerWidth, target.clientWidth)
+    : BASE_WIDTH;
+  const height = useFullscreen
+    ? Math.max(window.innerHeight, target.clientHeight)
+    : BASE_HEIGHT;
+  container.style.width = `${width}px`;
+  container.style.height = `${height}px`;
   container.style.position = "relative";
   chart.state.showTimescale = true;
   chart.state.showYAxis = true;
@@ -33,8 +78,8 @@ async function createChart1() {
       .integrate({
         x: 0,
         y: 0,
-        width: BASE_WIDTH,
-        height: BASE_HEIGHT,
+        width,
+        height,
       })
       .then((result) => console.log(result));
   }, 100);

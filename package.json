@@ -45,6 +45,7 @@
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
+    "tinybench": "^6.0.2",
     "vite-plugin-singlefile": "^2.3.3"
   }
 }

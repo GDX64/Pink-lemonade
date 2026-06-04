@@ -316,6 +316,7 @@ export class GaussianChart {
       },
     };
     this.gui = gui;
+    this.gui.close();
     this.container.appendChild(gui.domElement);
     gui.domElement.style.position = "absolute";
     gui.domElement.style.top = "0px";
@@ -876,6 +877,13 @@ export class GaussianChart {
   ) {
     if (this.destroyed || !this.chartCanvas) return;
     this.chartCanvas.setSelection(region);
+  }
+
+  setViewRangeX(minX: number, maxX: number) {
+    if (this.destroyed || !this.viewManager) return;
+    this.viewManager.setViewRangeX(minX, maxX);
+    this.lastViewMinX = NaN;
+    this.lastViewMaxX = NaN;
   }
 
   exportImage(type?: string, quality?: number): string {

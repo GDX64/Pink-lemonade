@@ -103,6 +103,25 @@ export class ViewManager {
     return this.currentViewMaxY;
   }
 
+  setViewRangeX(minX: number, maxX: number): void {
+    const clampedMin = Math.max(0, Math.min(1, minX));
+    const clampedMax = Math.max(0, Math.min(1, maxX));
+    let lo = Math.min(clampedMin, clampedMax);
+    let hi = Math.max(clampedMin, clampedMax);
+    const minSpan = this.minViewRangeX;
+    if (hi - lo < minSpan) {
+      hi = Math.min(1, lo + minSpan);
+      lo = Math.max(0, hi - minSpan);
+    }
+    this.targetViewMinX = lo;
+    this.targetViewMaxX = hi;
+    this.currentViewMinX = lo;
+    this.currentViewMaxX = hi;
+    const [minY, maxY] = this.computeVisibleYRange();
+    this.currentViewMinY = minY;
+    this.currentViewMaxY = maxY;
+  }
+
   bindCanvas(canvas: HTMLCanvasElement): void {
     canvas.style.touchAction = "none";
 
