@@ -1,5 +1,3 @@
-#![cfg_attr(target_arch = "wasm32", feature(stdarch_wasm_atomic_wait))]
-
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
