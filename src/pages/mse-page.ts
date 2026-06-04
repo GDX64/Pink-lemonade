@@ -12,22 +12,95 @@ type GaussianComponent = {
 };
 
 const SAMPLE_COUNT = 10_000;
+const PROGRESS_STEP = 250;
 
-export function runMsePage() {
+type MonteCarloMetrics = {
+  mse: number;
+  nrmse: number;
+  rme: number;
+  acceptedSamples: number;
+  mergedCount: number;
+};
+
+type MonteCarloEstimationEvent =
+  | {
+      kind: "progress";
+      n: number;
+      acceptedSamples: number;
+      targetSamples: number;
+      progress: number;
+    }
+  | {
+      kind: "result";
+      n: number;
+      metrics: MonteCarloMetrics;
+    };
+
+export async function runMsePage(
+  onProgress?: (event: {
+    scenarioIndex: number;
+    totalScenarios: number;
+    n: number;
+    acceptedSamples: number;
+    targetSamples: number;
+    scenarioProgress: number;
+    overallProgress: number;
+  }) => void,
+) {
   const scenarios = [1_000, 10_000, 100_000] as const;
-  return scenarios.map((n) => {
-    const metrics = estimateMonteCarloMetrics(n);
-    return {
+  const rows: Array<Record<string, string>> = [];
+  const progressUi = createMseProgressUi();
+
+  for (const [scenarioIndex, n] of scenarios.entries()) {
+    let metrics: MonteCarloMetrics | null = null;
+    for (const event of estimateMonteCarloMetrics(n)) {
+      if (event.kind === "progress") {
+        const scenarioProgress = event.progress;
+        const overallProgress =
+          (scenarioIndex + scenarioProgress) / scenarios.length;
+        progressUi.update({
+          n,
+          acceptedSamples: event.acceptedSamples,
+          targetSamples: event.targetSamples,
+          scenarioProgress,
+          overallProgress,
+        });
+        onProgress?.({
+          scenarioIndex,
+          totalScenarios: scenarios.length,
+          n,
+          acceptedSamples: event.acceptedSamples,
+          targetSamples: event.targetSamples,
+          scenarioProgress,
+          overallProgress,
+        });
+        await waitForNextFrame();
+        continue;
+      }
+      metrics = event.metrics;
+    }
+
+    if (!metrics) {
+      throw new Error(`MSE estimation finished without result for N=${n}`);
+    }
+
+    rows.push({
       N: n.toLocaleString("en-US"),
       merged: String(metrics.mergedCount),
       nrmsePct: `${(metrics.nrmse * 100).toFixed(4)}%`,
       rme: `±${metrics.rme.toFixed(2)}%`,
       samples: String(metrics.acceptedSamples),
-    };
-  });
+    });
+  }
+
+  progressUi.done();
+
+  return rows;
 }
 
-function estimateMonteCarloMetrics(n: number) {
+function* estimateMonteCarloMetrics(
+  n: number,
+): Generator<MonteCarloEstimationEvent, void, void> {
   const { dataF64, yMin, yMax } = createNoiseFloatData(n);
 
   const viewMinX = 0;
@@ -83,6 +156,19 @@ function estimateMonteCarloMetrics(n: number) {
     acceptedSamples++;
     if (reference < minReference) minReference = reference;
     if (reference > maxReference) maxReference = reference;
+
+    if (
+      acceptedSamples % PROGRESS_STEP === 0 ||
+      acceptedSamples === SAMPLE_COUNT
+    ) {
+      yield {
+        kind: "progress",
+        n,
+        acceptedSamples,
+        targetSamples: SAMPLE_COUNT,
+        progress: acceptedSamples / SAMPLE_COUNT,
+      };
+    }
   }
   mse /= Math.max(acceptedSamples, 1);
 
@@ -100,7 +186,83 @@ function estimateMonteCarloMetrics(n: number) {
   const referenceRange = maxReference - minReference;
   const nrmse = referenceRange > 0 ? Math.sqrt(mse) / referenceRange : 0;
 
-  return { mse, nrmse, rme, acceptedSamples, mergedCount: merged.count };
+  yield {
+    kind: "result",
+    n,
+    metrics: { mse, nrmse, rme, acceptedSamples, mergedCount: merged.count },
+  };
+}
+
+function waitForNextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function createMseProgressUi() {
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.inset = "0";
+  host.style.display = "grid";
+  host.style.placeItems = "center";
+  host.style.background = "rgba(247, 251, 255, 0.88)";
+  host.style.zIndex = "9999";
+
+  const card = document.createElement("div");
+  card.style.width = "min(560px, 92vw)";
+  card.style.border = "1px solid #c8d9eb";
+  card.style.borderRadius = "14px";
+  card.style.background = "#ffffff";
+  card.style.padding = "18px";
+  card.style.boxShadow = "0 10px 30px rgba(10, 34, 65, 0.15)";
+
+  const title = document.createElement("div");
+  title.textContent = "Estimating Monte Carlo MSE...";
+  title.style.fontWeight = "700";
+  title.style.marginBottom = "10px";
+
+  const detail = document.createElement("div");
+  detail.style.fontSize = "14px";
+  detail.style.color = "#2d4d6c";
+  detail.style.marginBottom = "10px";
+  detail.textContent = "Preparing...";
+
+  const barWrap = document.createElement("div");
+  barWrap.style.height = "10px";
+  barWrap.style.background = "#e7eef6";
+  barWrap.style.borderRadius = "999px";
+  barWrap.style.overflow = "hidden";
+
+  const bar = document.createElement("div");
+  bar.style.height = "100%";
+  bar.style.width = "0%";
+  bar.style.background = "linear-gradient(90deg, #6ca4d8, #2f6fa9)";
+  bar.style.transition = "width 80ms linear";
+
+  barWrap.appendChild(bar);
+  card.appendChild(title);
+  card.appendChild(detail);
+  card.appendChild(barWrap);
+  host.appendChild(card);
+  document.body.appendChild(host);
+
+  return {
+    update(input: {
+      n: number;
+      acceptedSamples: number;
+      targetSamples: number;
+      scenarioProgress: number;
+      overallProgress: number;
+    }) {
+      const scenarioPct = (input.scenarioProgress * 100).toFixed(1);
+      const overallPct = (input.overallProgress * 100).toFixed(1);
+      detail.textContent = `N=${input.n.toLocaleString("en-US")} | samples ${input.acceptedSamples}/${input.targetSamples} | scenario ${scenarioPct}% | overall ${overallPct}%`;
+      bar.style.width = `${overallPct}%`;
+    },
+    done() {
+      host.remove();
+    },
+  };
 }
 
 function decodeOriginalComponents(dataF64: Float64Array): GaussianComponent[] {

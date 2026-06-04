@@ -68,7 +68,13 @@ const actions: Array<{
     run: async () => {
       setInfo("Running Monte Carlo MSE estimation...");
       clearOutput();
-      const table = runMsePage();
+      const table = await runMsePage((progress) => {
+        const overallPct = (progress.overallProgress * 100).toFixed(1);
+        const scenarioPct = (progress.scenarioProgress * 100).toFixed(1);
+        setInfo(
+          `MSE estimation ${overallPct}% (N=${progress.n.toLocaleString("en-US")}, ${progress.acceptedSamples}/${progress.targetSamples}, scenario ${scenarioPct}%)`,
+        );
+      });
       output.appendChild(renderTable(table));
       setInfo("MSE estimation completed.");
     },
@@ -168,8 +174,8 @@ function updateMenuHighlight() {
   if (!menu.isConnected) return;
   for (const [i, li] of Array.from(menu.children).entries()) {
     const button = li.firstElementChild as HTMLButtonElement;
-    button.style.background = i === activeAction ? "#d7ebff" : "#f0f6fd";
-    button.style.borderColor = i === activeAction ? "#5789bc" : "#97acc2";
+    button.style.background = "#f0f6fd";
+    button.style.borderColor = "#97acc2";
   }
 }
 
