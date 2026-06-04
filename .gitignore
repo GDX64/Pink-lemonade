@@ -5,3 +5,4 @@ playwright-report/
 .vitest/
 dist-ts
 data.json
+target

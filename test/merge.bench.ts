@@ -1,6 +1,7 @@
 import { bench, describe } from "vitest";
 import { createNoiseFloatData } from "../src/chart/chart";
 import { GaussianChart } from "../src/examples/rasterizing/gaussian-chart";
+import { mergePoints } from "../src/examples/rasterizing/downsampling";
 
 describe("GaussianChart.mergePoints", () => {
   const n_1000_000 = createNoiseFloatData(1000_000);
@@ -37,7 +38,7 @@ function calc({
   yMin,
   yMax,
 }: ReturnType<typeof createNoiseFloatData>) {
-  const result = GaussianChart.mergePoints({
+  const result = mergePoints({
     viewMinX: 0,
     viewMaxX: 1,
     viewMinY: yMin,
