@@ -1,6 +1,6 @@
 import GUI from "lil-gui";
 import { ChartCanvas } from "./chart-canvas";
-import { mergePoints } from "./downsampling";
+import { wasmMerge } from "./downsampling";
 import { ViewManager } from "./view-manager";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
@@ -79,6 +79,7 @@ export class GaussianChart {
   private hdrTexture!: GPUTexture;
   private reductionBindGroup!: GPUBindGroup;
   private tonemapBindGroup!: GPUBindGroup;
+  private downsampler!: Awaited<ReturnType<typeof wasmMerge>>;
   private viewManager!: ViewManager;
   private chartCanvas!: ChartCanvas;
   private destroyed = false;
@@ -182,6 +183,9 @@ export class GaussianChart {
   }
 
   async start(): Promise<void> {
+    this.downsampler = await wasmMerge();
+    this.downsampler.setDataF64(this.dataF64);
+
     this.canvas = this.createCanvas();
     this.gpu = await initWebGPU(this.canvas);
     this.accumulationPipeline = createAccumulationPipeline(
@@ -497,17 +501,16 @@ export class GaussianChart {
       viewMinY !== this.lastViewMinY ||
       viewMaxY !== this.lastViewMaxY
     ) {
-      const merged = mergePoints({
-        viewMinX,
-        viewMaxX,
-        viewMinY,
-        viewMaxY,
-        screenW: this.hdrW,
-        screenH: this.hdrH,
-        mergeThreshold: this.state.mergeThresholdSigmas,
-        sigmaSizePx: this.state.sigmaSize * pixelRatio,
-        dataF64: this.dataF64,
-      });
+      this.downsampler.setViewMinX(viewMinX);
+      this.downsampler.setViewMaxX(viewMaxX);
+      this.downsampler.setViewMinY(viewMinY);
+      this.downsampler.setViewMaxY(viewMaxY);
+      this.downsampler.setScreenW(this.hdrW);
+      this.downsampler.setScreenH(this.hdrH);
+      this.downsampler.setMergeThreshold(this.state.mergeThresholdSigmas);
+      this.downsampler.setSigmaSizePx(this.state.sigmaSize * pixelRatio);
+
+      const merged = this.downsampler.mergePoints();
       this.gpu.device.queue.writeBuffer(
         this.instanceBuffer,
         0,
