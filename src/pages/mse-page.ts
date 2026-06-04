@@ -13,6 +13,8 @@ type GaussianComponent = {
 
 const SAMPLE_COUNT = 10_000;
 const PROGRESS_STEP = 250;
+const MAX_SIGMA_DISTANCE = 5;
+const MAX_SIGMA_DISTANCE_SQ = MAX_SIGMA_DISTANCE * MAX_SIGMA_DISTANCE;
 
 type MonteCarloMetrics = {
   mse: number;
@@ -336,6 +338,9 @@ function evaluateKdeAt(
     const muy = toSY(c.y);
     const dx = sx - mux;
     const dy = sy - muy;
+
+    const cartesianD2 = dx * dx + dy * dy;
+    if (cartesianD2 > MAX_SIGMA_DISTANCE_SQ) continue;
 
     const det = c.p00 * c.p11 - c.p01 * c.p10;
     if (det <= 1e-12) continue;
