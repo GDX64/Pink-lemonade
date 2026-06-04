@@ -1,7 +1,7 @@
 import GUI from "lil-gui";
 import { ChartCanvas } from "./chart-canvas";
-import { downsample } from "./downsampling";
-import { lowerBound, upperBound, ViewManager } from "./view-manager";
+import { mergePoints } from "./downsampling";
+import { ViewManager } from "./view-manager";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
 const AXIS_X_H = 46; // px reserved on the bottom for the X axis
@@ -497,7 +497,7 @@ export class GaussianChart {
       viewMinY !== this.lastViewMinY ||
       viewMaxY !== this.lastViewMaxY
     ) {
-      const merged = GaussianChart.mergePoints({
+      const merged = mergePoints({
         viewMinX,
         viewMaxX,
         viewMinY,
@@ -782,63 +782,6 @@ export class GaussianChart {
       0,
     ]);
     this.gpu.device.queue.writeBuffer(this.colorBuffer, 0, data);
-  }
-
-  static mergePoints(args: {
-    viewMinX: number;
-    viewMaxX: number;
-    viewMinY: number;
-    viewMaxY: number;
-    screenW: number;
-    screenH: number;
-    mergeThreshold: number;
-    sigmaSizePx: number;
-    dataF64: Float64Array;
-  }): {
-    gpuInstances: Float32Array;
-    count: number;
-  } {
-    const xFactor =
-      args.screenW / (args.viewMaxX - args.viewMinX) / args.sigmaSizePx;
-    const toSX = (x: number) => (x - args.viewMinX) * xFactor;
-    const yFactor =
-      args.screenH / (args.viewMaxY - args.viewMinY) / args.sigmaSizePx;
-    const toSY = (y: number) => (y - args.viewMinY) * yFactor;
-
-    const startIdx = lowerBound(args.dataF64, args.viewMinX);
-    const endIdx = upperBound(args.dataF64, args.viewMaxX);
-
-    const merged = downsample({
-      points: args.dataF64.subarray(startIdx * 3, endIdx * 3),
-      strategy: "merge",
-      toSX,
-      toSY,
-      mergeThreshold: args.mergeThreshold,
-    });
-
-    // merge strategy returns [x, y, w, p00, p01, p10, p11].
-    const count = merged.length / 7;
-    const gpuInstances = new Float32Array(count * 7);
-    for (let i = 0; i < count; i++) {
-      const mi = i * 7;
-      const gi = i * 7;
-      const x = merged[mi]!;
-      const y = merged[mi + 1]!;
-      const w = merged[mi + 2]!;
-      const p00 = merged[mi + 3]!;
-      const p01 = merged[mi + 4]!;
-      const p10 = merged[mi + 5]!;
-      const p11 = merged[mi + 6]!;
-      gpuInstances[gi] = x;
-      gpuInstances[gi + 1] = y;
-      gpuInstances[gi + 2] = w;
-      gpuInstances[gi + 3] = p00;
-      gpuInstances[gi + 4] = p01;
-      gpuInstances[gi + 5] = p10;
-      gpuInstances[gi + 6] = p11;
-    }
-
-    return { gpuInstances, count };
   }
 
   private heatmapColor(value: number): [number, number, number] {

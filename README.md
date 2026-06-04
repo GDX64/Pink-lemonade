@@ -6,17 +6,22 @@ Canvas2D-style API rendered with WebGPU.
 
 - Node.js 18+
 - Chromium-compatible environment for browser-mode tests
+- Rust nightly with wasm target support
+- wasm-bindgen CLI
 
 ## Setup
 
 ```bash
 npm install
 npx playwright install chromium
+rustup target add wasm32-unknown-unknown --toolchain nightly
+cargo install wasm-bindgen-cli
 ```
 
 ## Scripts
 
 - `npm run typecheck`: run TypeScript checks
+- `npm run wasm`: compile Rust to WebAssembly and generate JS bindings in `pkg/`
 - `npm run build`: build ESM library output with Vite
 - `npm run test`: run Vitest in browser mode (Chromium/Playwright)
 - `npm run test:watch`: run Vitest in watch mode

@@ -16,12 +16,13 @@
     }
   },
   "scripts": {
-    "build": "vite build",
+    "build": "npm run wasm && vite build",
     "bench": "vitest bench",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "test:browser": "vitest --config vitest.config.ts",
+    "wasm": "cargo wasm --manifest-path rust/Cargo.toml && wasm-bindgen --target web --out-dir ./pkg ./rust/target/wasm32-unknown-unknown/release/pink_lemonade_wasm.wasm",
     "deploy": "npm run build && npm publish --access public",
     "dev": "vite"
   },
