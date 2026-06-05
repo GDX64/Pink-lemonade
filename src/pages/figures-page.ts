@@ -1,7 +1,7 @@
 import { renderFigureChart } from "../examples/rasterizing/rasterizing";
 
 export async function runFigurePage(
-  kind: "figure-1" | "figure-2" | "figure-3",
+  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4",
   args: {
     output: HTMLElement;
     appMount: HTMLElement;

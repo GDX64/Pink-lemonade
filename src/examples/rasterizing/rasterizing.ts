@@ -13,10 +13,11 @@ export async function rasterizingApplication(mount?: HTMLElement) {
 }
 
 export async function renderFigureChart(
-  kind: "figure-1" | "figure-2" | "figure-3",
+  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4",
   mount: HTMLElement,
 ) {
-  const data = await loadData("random");
+  const dataKind = kind === "figure-4" ? "data" : "random";
+  const data = await loadData(dataKind);
   const chart = new GaussianChart({ data });
   mount.innerHTML = "";
   const container = chart.container;
@@ -27,7 +28,10 @@ export async function renderFigureChart(
   chart.state.showTimescale = true;
   chart.state.showYAxis = true;
   chart.state.quantSteps = 6;
-  chart.state.mergeThresholdSigmas = kind === "figure-1" ? 0 : 1;
+  chart.state.mergeThresholdSigmas = 1;
+  if (kind === "figure-1") {
+    chart.state.mergeThresholdSigmas = 0;
+  }
   await chart.start();
   if (kind === "figure-3") {
     chart.setViewRangeX(0.6500622508888406, 1);

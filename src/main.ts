@@ -81,23 +81,30 @@ const actions: Array<{
   },
   {
     page: "figure-1",
-    label: "figure-1",
+    label: "full KDE figure",
     run: async () => {
       await runFigurePage("figure-1", { output, appMount, setInfo });
     },
   },
   {
     page: "figure-2",
-    label: "figure-2",
+    label: "merge points figure",
     run: async () => {
       await runFigurePage("figure-2", { output, appMount, setInfo });
     },
   },
   {
     page: "figure-3",
-    label: "figure-3",
+    label: "Integral selection + zoom figure",
     run: async () => {
       await runFigurePage("figure-3", { output, appMount, setInfo });
+    },
+  },
+  {
+    page: "figure-4",
+    label: "Bitcoin figure",
+    run: async () => {
+      await runFigurePage("figure-4", { output, appMount, setInfo });
     },
   },
 ];
