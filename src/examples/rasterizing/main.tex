@@ -372,6 +372,14 @@ A timeseries is usually shown as time versus value, leaving any third scalar (fo
 \section{Motivation}
 \label{sec:motivation}
 
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
+  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
+  \label{fig:bitcoin-sample}
+\end{figure}
+
 A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
 
 The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw; with strong overlap, fragment work can reach billions of evaluations per frame.
@@ -397,20 +405,14 @@ Before rendering, timestamps are normalized to a unit interval. This ensures tha
 
 All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities (Figure~\ref{fig:synthetic-amplitude}) with the addition of Gaussian noise. The only exception is the Bitcoin chart, which is built from real market data.
 
+Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
+
+
 \begin{figure}[t]
   \centering
   \includesvg[width=1\linewidth]{figs/quantity_amplitude}
   \caption{Amplitude function used to define the quantity distribution in the synthetic data generation process shared by all non-Bitcoin examples.}
   \label{fig:synthetic-amplitude}
-\end{figure}
-
-Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
-  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
-  \label{fig:bitcoin-sample}
 \end{figure}
 
 
@@ -431,41 +433,6 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
 
 \begin{figure}[t]
   \centering
-  \begin{minipage}[t]{\linewidth}
-    \vspace{0pt}
-    \raggedright
-    \begin{tikzpicture}[font=\footnotesize, >=Latex, line width=0.45pt, note/.style={align=center}]
-      \node[anchor=west, font=\bfseries\footnotesize] at (-0.2,3.1) {Geometric test};
-      \draw[->] (0,0) -- (0,2.8) node[left] {$s_y$};
-      \draw[->] (0,0) -- (3.95,0) node[below] {$s_x$};
-
-      \coordinate (mu) at (1.9,1.35);
-      \coordinate (first) at (0.95,1.72);
-      \coordinate (cand) at (2.75,0.98);
-      
-
-      \draw[dashed] (mu) circle [radius=1.1];
-      \node[anchor=west] at (2.82,2.02) {$\tau$};
-
-      \fill (first) circle (1.2pt);
-      
-      \fill (cand) circle (1.2pt);
-      \fill (mu) circle (1.4pt);
-
-      \draw[->] (first) -- (mu);
-      \draw[->] (cand) -- (mu);
-
-      \node[above left] at (first) {$p_0$};
-      
-      \node[below right] at (cand) {$p_i$};
-      \node[below] at (mu) {$\mu'$};
-
-      \node[note, text width=3.55cm, anchor=north west] at (-0.05,-0.42) {Accept $p_i$ only if both $\lVert s(p_0)-\mu'\rVert < \tau$ and $\lVert s(p_i)-\mu'\rVert < \tau$.};
-    \end{tikzpicture}
-  \end{minipage}
-
-  \vspace{0.4em}
-
   \begin{minipage}[t]{\linewidth}
     \vspace{0pt}
     \raggedright
@@ -509,6 +476,13 @@ The weighted merge strategy addresses this directly: the sole criterion for coll
 \label{sec:gaussian-merging}
 
 This section formalizes our merge operation and relates it to the KL-based reduction criterion of Runnalls \cite{4383588}.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
+  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces low integrated squared error.}
+  \label{fig:two-gaussian-merge}
+\end{figure}
 
 At the component level, we use the full matrix-form weighted Gaussian
 \begin{equation}
@@ -779,58 +753,7 @@ Figure~\ref{fig:integral-region} illustrates the interactive integral query used
   \label{fig:integral-region}
 \end{figure}
 
-\subsection{Two-Gaussian Analytical Error Model}
-
-For intuition, consider two isotropic 2D Gaussians with equal weights and equal standard deviation $\sigma$, centered at $\pm\overrightarrow{\boldsymbol{\Delta}}/2$ (so their separation is $\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert$). Let
-\begin{equation}
-\rho = \frac{\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert}{\sigma}
-\end{equation}
-be the separation measured in sigmas.
-
-The exact pair is
-\begin{equation}
-f(\overrightarrow{\boldsymbol{x}})=\frac{1}{2}\,\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}}; -\frac{\overrightarrow{\boldsymbol{\Delta}}}{2},\sigma^2\overrightarrow{\mathbf{I}}\right)+\frac{1}{2}\,\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}}; +\frac{\overrightarrow{\boldsymbol{\Delta}}}{2},\sigma^2\overrightarrow{\mathbf{I}}\right),
-\end{equation}
-and its moment-preserving single-Gaussian merge is
-\begin{equation}
-g(\overrightarrow{\boldsymbol{x}})=\mathcal{N}\!\left(\overrightarrow{\boldsymbol{x}};0,\sigma_m^2 \overrightarrow{\mathbf{I}}\right),\qquad \sigma_m^2=\sigma^2\left(1+\frac{\rho^2}{4}\right).
-\end{equation}
-
-A closed-form integrated squared error (ISE) is
-\begin{equation}
-\mathrm{ISE}(\rho)=\int_{\mathbb{R}^2}\left(f(\overrightarrow{\boldsymbol{x}})-g(\overrightarrow{\boldsymbol{x}})\right)^2d\overrightarrow{\boldsymbol{x}}
-=\frac{1}{8\pi\sigma^2}\,\Psi(\rho),
-\end{equation}
-with
-\begin{equation}
-\Psi(\rho)=1+e^{-\rho^2/4}+\frac{2}{1+\rho^2/4}
--\frac{8}{2+\rho^2/4}\exp\!\left(-\frac{\rho^2}{8(2+\rho^2/4)}\right).
-\end{equation}
-In this two-Gaussian setting, $\Psi(\rho)$ is bounded with $\Psi(0)=0$ and $\lim_{\rho\to\infty}\Psi(\rho)=1$, consistent with ISD-style bounded similarity/error behavior discussed by Williams \cite{Williams2003}.
-
-For a heatmap region of area $|\Omega|$, a practical approximation is
-\begin{equation}
-\mathrm{MSE}(\rho) \approx \frac{\mathrm{ISE}(\rho)}{|\Omega|},
-\end{equation}
-or, on a discrete grid, replacing $|\Omega|$ by pixel count. Small $\rho$ yields low error; large $\rho$ increases error quickly, motivating sigma-scaled merge thresholds.
-
-As a concrete operating point, setting merge distance equal to one standard deviation gives $\rho=1$ and
-\begin{equation}
-\Psi(1) \approx 0.01539.
-\end{equation}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=1\linewidth]{figs/gaussian_merge2.png}
-  \caption{Two-component Gaussian merge example for equal-variance kernels. At centroid separation $\rho=\lVert\overrightarrow{\boldsymbol{\Delta}}\rVert/\sigma=1$, the moment-preserving single-Gaussian approximation induces low integrated squared error, matching the analytical trend in this subsection.}
-  \label{fig:two-gaussian-merge}
-\end{figure}
-
-Therefore
-\begin{equation}
-\mathrm{ISE}(1) \approx \frac{0.01539}{8\pi\sigma^2},
-\end{equation}
-This small value supports using merge thresholds on the order of $\sigma$ when low approximation error is required.
+These empirical results support using merge thresholds on the order of $\sigma$ to balance quality and performance.
 
 \subsection{Limitations}
 
