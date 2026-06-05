@@ -26,6 +26,21 @@ type MonteCarloMetrics = {
 
 type MonteCarloEstimationEvent =
   | {
+      kind: "scenario-start";
+      n: number;
+      viewMinX: number;
+      viewMaxX: number;
+      viewMinY: number;
+      viewMaxY: number;
+    }
+  | {
+      kind: "sample";
+      n: number;
+      x: number;
+      y: number;
+      accepted: boolean;
+    }
+  | {
       kind: "progress";
       n: number;
       acceptedSamples: number;
@@ -56,6 +71,26 @@ export async function runMsePage(
   for (const [scenarioIndex, n] of scenarios.entries()) {
     let metrics: MonteCarloMetrics | null = null;
     for (const event of estimateMonteCarloMetrics(n)) {
+      if (event.kind === "scenario-start") {
+        progressUi.resetPlot({
+          n: event.n,
+          viewMinX: event.viewMinX,
+          viewMaxX: event.viewMaxX,
+          viewMinY: event.viewMinY,
+          viewMaxY: event.viewMaxY,
+        });
+        continue;
+      }
+
+      if (event.kind === "sample") {
+        progressUi.plotPoint({
+          x: event.x,
+          y: event.y,
+          accepted: event.accepted,
+        });
+        continue;
+      }
+
       if (event.kind === "progress") {
         const scenarioProgress = event.progress;
         const overallProgress =
@@ -114,6 +149,15 @@ function* estimateMonteCarloMetrics(
   const mergeThreshold = 1;
   const sigmaSizePx = 16;
 
+  yield {
+    kind: "scenario-start",
+    n,
+    viewMinX,
+    viewMaxX,
+    viewMinY,
+    viewMaxY,
+  };
+
   const merged = mergePoints({
     viewMinX,
     viewMaxX,
@@ -144,8 +188,17 @@ function* estimateMonteCarloMetrics(
     const x = lerp(viewMinX, viewMaxX, rng());
     const y = lerp(viewMinY, viewMaxY, rng());
     const approximation = evaluateKdeAt(mergedComponents, x, y, toSX, toSY);
+    const accepted = approximation >= minApproxKde;
 
-    if (approximation < minApproxKde) {
+    yield {
+      kind: "sample",
+      n,
+      x,
+      y,
+      accepted,
+    };
+
+    if (!accepted) {
       continue;
     }
 
@@ -211,7 +264,7 @@ function createMseProgressUi() {
   host.style.zIndex = "9999";
 
   const card = document.createElement("div");
-  card.style.width = "min(560px, 92vw)";
+  card.style.width = "min(840px, 96vw)";
   card.style.border = "1px solid #c8d9eb";
   card.style.borderRadius = "14px";
   card.style.background = "#ffffff";
@@ -229,6 +282,28 @@ function createMseProgressUi() {
   detail.style.marginBottom = "10px";
   detail.textContent = "Preparing...";
 
+  const canvasWrap = document.createElement("div");
+  canvasWrap.style.marginBottom = "10px";
+  canvasWrap.style.display = "flex";
+  canvasWrap.style.justifyContent = "center";
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 800;
+  canvas.height = 600;
+  canvas.style.width = "800px";
+  canvas.style.height = "600px";
+  canvas.style.maxWidth = "100%";
+  canvas.style.border = "1px solid #d0dce9";
+  canvas.style.borderRadius = "8px";
+  canvas.style.background = "#f8fbff";
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Could not create Canvas 2D context for MSE plot");
+  }
+
+  canvasWrap.appendChild(canvas);
+
   const barWrap = document.createElement("div");
   barWrap.style.height = "10px";
   barWrap.style.background = "#e7eef6";
@@ -244,11 +319,53 @@ function createMseProgressUi() {
   barWrap.appendChild(bar);
   card.appendChild(title);
   card.appendChild(detail);
+  card.appendChild(canvasWrap);
   card.appendChild(barWrap);
   host.appendChild(card);
   document.body.appendChild(host);
 
+  let plotViewMinX = 0;
+  let plotViewMaxX = 1;
+  let plotViewMinY = 0;
+  let plotViewMaxY = 1;
+
+  const drawBackground = () => {
+    ctx.fillStyle = "#f8fbff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  };
+
+  drawBackground();
+
   return {
+    resetPlot(input: {
+      n: number;
+      viewMinX: number;
+      viewMaxX: number;
+      viewMinY: number;
+      viewMaxY: number;
+    }) {
+      plotViewMinX = input.viewMinX;
+      plotViewMaxX = input.viewMaxX;
+      plotViewMinY = input.viewMinY;
+      plotViewMaxY = input.viewMaxY;
+      drawBackground();
+      detail.textContent = `Preparing N=${input.n.toLocaleString("en-US")}...`;
+    },
+    plotPoint(input: { x: number; y: number; accepted: boolean }) {
+      const xRange = plotViewMaxX - plotViewMinX;
+      const yRange = plotViewMaxY - plotViewMinY;
+      if (xRange <= 0 || yRange <= 0) return;
+
+      const nx = (input.x - plotViewMinX) / xRange;
+      const ny = (input.y - plotViewMinY) / yRange;
+      const px = Math.round(nx * (canvas.width - 1));
+      const py = Math.round((1 - ny) * (canvas.height - 1));
+
+      if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) return;
+
+      ctx.fillStyle = input.accepted ? "#1f6fb2" : "#c8d3df";
+      ctx.fillRect(px, py, 2, 2);
+    },
     update(input: {
       n: number;
       acceptedSamples: number;
