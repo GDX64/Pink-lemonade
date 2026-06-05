@@ -152,6 +152,7 @@
 %
 \usepackage{array}
 \usepackage{tikz}
+\usepackage{svg}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 % Frank Mittelbach's and David Carlisle's array.sty patches and improves
 % the standard LaTeX2e array and tabular environments to provide better
@@ -393,6 +394,15 @@ Our approach is most closely related to these two lines of work, combining the i
 Each data point carries three values: a timestamp, a price level, and a scalar weight. For financial tick data, weight is naturally derived from traded volume, making denser activity periods visually brighter regardless of the number of individual events.
 
 Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss under extreme zoom. The original scale factors are retained separately for axis label reconstruction.
+
+All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities (Figure~\ref{fig:synthetic-amplitude}) with the addition of Gaussian noise. The only exception is the Bitcoin chart, which is built from real market data.
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=1\linewidth]{figs/quantity_amplitude}
+  \caption{Amplitude function used to define the quantity distribution in the synthetic data generation process shared by all non-Bitcoin examples.}
+  \label{fig:synthetic-amplitude}
+\end{figure}
 
 Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
 

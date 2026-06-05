@@ -34,14 +34,17 @@ export function createNoiseData(
     timeAcc += 1000;
 
     const x = i / N; //[0, 1] range for the splat kernel
-    const density =
-      gaussianSample(0.9, 0.05, x) + gaussianSample(0.3, 0.1, x) * 0.8;
+    const density = distribution(x);
 
     const s = density + gausianNoise(mean, stdDev, gen) * 0.5;
     const w = Math.abs(s ** 5 * 100);
     data.push([timeAcc, acc, w]);
   }
   return data;
+}
+
+export function distribution(x: number): number {
+  return gaussianSample(0.9, 0.05, x) + gaussianSample(0.3, 0.1, x) * 0.8;
 }
 
 export function createNoiseFloatData(N = 100_000) {

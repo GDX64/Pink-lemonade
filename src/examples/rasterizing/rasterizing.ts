@@ -1,5 +1,7 @@
 import { createNoiseFloatData } from "../../chart/chart";
+import { distribution } from "../../chart/chart";
 import { GaussianChart, type LoadedData } from "./gaussian-chart";
+import Plotly from "plotly.js-dist-min";
 
 const BASE_WIDTH = 800;
 const BASE_HEIGHT = 600;
@@ -13,9 +15,14 @@ export async function rasterizingApplication(mount?: HTMLElement) {
 }
 
 export async function renderFigureChart(
-  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4",
+  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4" | "figure-5",
   mount: HTMLElement,
 ) {
+  if (kind === "figure-5") {
+    await renderDistributionFigure(mount);
+    return null;
+  }
+
   const dataKind = kind === "figure-4" ? "data" : "random";
   const data = await loadData(dataKind);
   const chart = new GaussianChart({ data });
@@ -44,6 +51,74 @@ export async function renderFigureChart(
   }
   chart.setupRenderLoop();
   return chart;
+}
+
+async function renderDistributionFigure(mount: HTMLElement) {
+  mount.innerHTML = "";
+
+  const plotHost = document.createElement("div");
+  plotHost.style.width = `${BASE_WIDTH}px`;
+  plotHost.style.height = `${BASE_HEIGHT}px`;
+  plotHost.style.position = "relative";
+  mount.appendChild(plotHost);
+
+  const sampleCount = 1000;
+  const xs = Array.from(
+    { length: sampleCount },
+    (_, i) => i / (sampleCount - 1),
+  );
+  const ys = xs.map((x) => distribution(x));
+
+  await Plotly.newPlot(
+    plotHost,
+    [
+      {
+        x: xs,
+        y: ys,
+        type: "scatter",
+        mode: "lines",
+        line: {
+          color: "#1f6fb2",
+          width: 3,
+        },
+        // name: "amplitude(x)",
+      },
+    ],
+    {
+      width: BASE_WIDTH,
+      height: BASE_HEIGHT,
+      paper_bgcolor: "#ffffff",
+      plot_bgcolor: "#ffffff",
+      margin: { l: 60, r: 20, t: 40, b: 50 },
+      // title: {
+      //   text: "Probability Distribution Used in Examples",
+      //   font: { color: "#16324f", size: 18 },
+      // },
+      xaxis: {
+        title: { text: "x" },
+        range: [0, 1],
+        // gridcolor: "#dbe7f3",
+        zerolinecolor: "#b8cde2",
+      },
+      yaxis: {
+        // title: { text: "amplitude(x)" },
+        // gridcolor: "#dbe7f3",
+        zerolinecolor: "#b8cde2",
+      },
+      showlegend: false,
+    },
+    {
+      responsive: false,
+      displaylogo: false,
+      toImageButtonOptions: {
+        format: "svg",
+        filename: "amplitude",
+        width: 800,
+        height: 400,
+        scale: 1,
+      },
+    },
+  );
 }
 
 export async function generateApproxFigure() {

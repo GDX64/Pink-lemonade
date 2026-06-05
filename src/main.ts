@@ -107,6 +107,13 @@ const actions: Array<{
       await runFigurePage("figure-4", { output, appMount, setInfo });
     },
   },
+  {
+    page: "figure-5",
+    label: "Distribution figure (Plotly)",
+    run: async () => {
+      await runFigurePage("figure-5", { output, appMount, setInfo });
+    },
+  },
 ];
 
 for (const [idx, action] of actions.entries()) {

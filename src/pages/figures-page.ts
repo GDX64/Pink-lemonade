@@ -1,7 +1,7 @@
 import { renderFigureChart } from "../examples/rasterizing/rasterizing";
 
 export async function runFigurePage(
-  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4",
+  kind: "figure-1" | "figure-2" | "figure-3" | "figure-4" | "figure-5",
   args: {
     output: HTMLElement;
     appMount: HTMLElement;
@@ -14,7 +14,11 @@ export async function runFigurePage(
       ? "Rendered Figure 1 (full KDE reference) at 800x600."
       : kind === "figure-2"
         ? "Rendered Figure 2 (merged approximation) at 800x600."
-        : "Rendered Figure 3 (merged approximation + selected area + zoom) at 800x600.",
+        : kind === "figure-3"
+          ? "Rendered Figure 3 (merged approximation + selected area + zoom) at 800x600."
+          : kind === "figure-4"
+            ? "Rendered Figure 4 (bitcoin data) at 800x600."
+            : "Rendered Figure 5 (Plotly distribution curve) at 800x600.",
   );
   output.innerHTML = "";
   output.style.margin = "0";
