@@ -351,7 +351,7 @@ Fax: (888) 555--1212}}
 % As a general rule, do not put math, special symbols or citations
 % in the abstract
 \begin{abstract}
-A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{tonemapping} --- uses instanced drawing for Gaussian splats and produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
+A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{dynamic color mapping} --- uses instanced drawing for Gaussian splats and produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
 \end{abstract}
 
 % no keywords
@@ -384,7 +384,7 @@ A timeseries is naturally plotted as time versus value, but many datasets also i
 
 The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw \cite{10.1109/TVCG.2013.65}; with strong overlap, fragment work can reach billions of evaluations per frame.
 
-We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/tonemapping pipeline supports interactive, perceptually calibrated density maps.
+We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/dynamic-color-mapping pipeline supports interactive, perceptually calibrated density maps.
 
 \section{Related Work}
 \label{sec:related-work}
@@ -574,7 +574,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \node[stage, below=of inst] (vs) {Pass 1a: Vertex shader (instanced screen-aligned quads, one instance per kernel)};
     \node[stage, below=of vs] (acc) {Pass 1b: Fragment shader accumulation (quad rasterization + additive blending into HDR KDE texture)};
     \node[stage, below=of acc] (red) {Pass 2: Compute shader reduction (parallel max to compute global $\max(F)$)};
-    \node[stage, below=of red] (tone) {Pass 3: Tonemapping (normalization, colormap, opacity threshold)};
+    \node[stage, below=of red] (tone) {Pass 3: Dynamic color mapping (normalization, colormap, opacity threshold)};
     \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
 
     \draw[arrow] (raw) -- (clip);
@@ -589,7 +589,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \draw[arrow] (red.east) -- ++(5mm,0) |- node[pos=0.75, right, align=left]{max buffer} (tone.east);
     \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
   \end{tikzpicture}
-  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs perceptual tonemapping. The reduction output is consumed both by the tonemapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
+  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs dynamic color mapping. The reduction output is consumed both by the color-mapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
   \label{fig:pipeline-overview}
 \end{figure}
 
@@ -673,9 +673,9 @@ and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer.
 
 The second pass finds the maximum accumulated value across the entire HDR texture. A parallel reduction --- dispatched across the texture in tiles --- scans every texel and records the global maximum via an atomic operation.
 
-This maximum is read back to the CPU asynchronously for use in the legend scale. Because the readback is asynchronous it introduces at most one frame of lag, which is imperceptible in practice. More importantly, the value is available to the tonemapping pass in the same frame via the same GPU-side buffer, so normalization is always current.
+This maximum is read back to the CPU asynchronously for use in the legend scale. Because the readback is asynchronous it introduces at most one frame of lag, which is imperceptible in practice. More importantly, the value is available to the dynamic color mapping pass in the same frame via the same GPU-side buffer, so normalization is always current.
 
-\subsection{Pass 3 --- Tonemapping}
+\subsection{Pass 3 --- Dynamic Color Mapping}
 
 The third pass maps the raw floating-point accumulation values to a perceptual colormap and writes the final output. A fullscreen quad reads from the HDR texture and the maximum value buffer, normalizing each pixel's density to the range $[0, 1]$.
 
@@ -689,7 +689,7 @@ An optional quantization step maps the normalized value to a discrete number of 
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and perceptual tonemapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
+We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and dynamic color mapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
 
 \subsection{Benchmark Results}
 
@@ -713,7 +713,7 @@ Table~\ref{tab:merge-benchmark} reports merge-pass benchmark results measured on
 
 \subsection{Complexity}
 
-Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and tonemapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.
+Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and dynamic color mapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.
 
 \subsection{Mean Squared Error Analysis}
 
