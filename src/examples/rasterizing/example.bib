@@ -86,8 +86,121 @@ title = {Gaussian Mixture Reduction for Tracking Multiple Maneuvering Targets in
   year      = {2006}
 }
 
+@ARTICLE{4658159,
+  author={Bachthaler, Sven and Weiskopf, Daniel},
+  journal={IEEE Transactions on Visualization and Computer Graphics}, 
+  title={Continuous Scatterplots}, 
+  year={2008},
+  volume={14},
+  number={6},
+  pages={1428-1435},
+  abstract={Scatterplots are well established means of visualizing discrete data values with two data variables as a collection of discrete points. We aim at generalizing the concept of scatterplots to the visualization of spatially continuous input data by a continuous and dense plot. An example of a continuous input field is data defined on an n-D spatial grid with respective interpolation or reconstruction of in-between values. We propose a rigorous, accurate, and generic mathematical model of continuous scatterplots that considers an arbitrary density defined on an input field on an n-D domain and that maps this density to m-D scatterplots. Special cases are derived from this generic model and discussed in detail: scatterplots where the n-D spatial domain and the m-D data attribute domain have identical dimension, 1-D scatterplots as a way to define continuous histograms, and 2-D scatterplots of data on 3-D spatial grids. We show how continuous histograms are related to traditional discrete histograms and to the histograms of isosurface statistics. Based on the mathematical model of continuous scatterplots, respective visualization algorithms are derived, in particular for 2-D scatterplots of data from 3-D tetrahedral grids. For several visualization tasks, we show the applicability of continuous scatterplots. Since continuous scatterplots do not only sample data at grid points but interpolate data values within cells, a denseand complete visualization of the data set is achieved that scales well with increasing data set size. Especially for irregular grids with varying cell size, improved results are obtained when compared to conventional scatterplots. Therefore, continuous scatterplots are a suitable extension of a statistics visualization technique to be applied to typical data from scientific computation.},
+  keywords={Scattering;Data visualization;Histograms;Interpolation;Mathematical model;Statistics;Frequency;Computer Society;Isosurfaces;Displays;Index Terms—;Scatterplot;histogram;continuous frequency plot;interpolation},
+  doi={10.1109/TVCG.2008.119},
+  ISSN={1941-0506},
+  month={Nov},}
+
+  @article{10.1109/TVCG.2013.65,
+author = {Mayorga, Adrian and Gleicher, Michael},
+title = {Splatterplots: Overcoming Overdraw in Scatter Plots},
+year = {2013},
+issue_date = {September 2013},
+publisher = {IEEE Educational Activities Department},
+address = {USA},
+volume = {19},
+number = {9},
+issn = {1077-2626},
+url = {https://doi.org/10.1109/TVCG.2013.65},
+doi = {10.1109/TVCG.2013.65},
+abstract = {We introduce Splatterplots, a novel presentation of scattered data that enables visualizations that scale beyond standard scatter plots. Traditional scatter plots suffer from overdraw (overlapping glyphs) as the number of points per unit area increases. Overdraw obscures outliers, hides data distributions, and makes the relationship among subgroups of the data difficult to discern. To address these issues, Splatterplots abstract away information such that the density of data shown in any unit of screen space is bounded, while allowing continuous zoom to reveal abstracted details. Abstraction automatically groups dense data points into contours and samples remaining points. We combine techniques for abstraction with perceptually based color blending to reveal the relationship between data subgroups. The resulting visualizations represent the dense regions of each subgroup of the data set as smooth closed shapes and show representative outliers explicitly. We present techniques that leverage the GPU for Splatterplot computation and rendering, enabling interaction with massive data sets. We show how Splatterplots can be an effective alternative to traditional methods of displaying scatter data communicating data trends, outliers, and data set relationships much like traditional scatter plots, but scaling to data sets of higher density and up to millions of points on the screen.},
+journal = {IEEE Transactions on Visualization and Computer Graphics},
+month = sep,
+pages = {1526–1538},
+numpages = {13},
+keywords = {visual design, statistical graphics, perception theory, Visualization, Shape, Scalability issues, Image color analysis, Encoding, Data visualization, Clutter}
+}
+
+@inproceedings{inproceedings,
+author = {Crouse, D.F. and Willett, P. and Pattipati, Krishna and Svensson, L.},
+year = {2011},
+month = {08},
+pages = {1 - 8},
+title = {A look at Gaussian mixture reduction algorithms},
+journal = {Fusion 2011 - 14th International Conference on Information Fusion}
+}
+
+@inproceedings{10.1111/cgf.12129,
+author = {Liu, Zhicheng and Jiang, Biye and Heer, Jeffrey},
+title = {imMens: real-time visual querying of big data},
+year = {2013},
+publisher = {The Eurographs Association \& John Wiley \& Sons, Ltd.},
+address = {Chichester, GBR},
+url = {https://doi.org/10.1111/cgf.12129},
+doi = {10.1111/cgf.12129},
+abstract = {Data analysts must make sense of increasingly large data sets, sometimes with billions or more records. We present methods for interactive visualization of big data, following the principle that perceptual and interactive scalability should be limited by the chosen resolution of the visualized data, not the number of records. We first describe a design space of scalable visual summaries that use data reduction methods (such as binned aggregation or sampling) to visualize a variety of data types. We then contribute methods for interactive querying (e.g., brushing \& linking) among binned plots through a combination of multivariate data tiles and parallel query processing. We implement our techniques in imMens, a browser-based visual analysis system that uses WebGL for data processing and rendering on the GPU. In benchmarks imMens sustains 50 frames-per-second brushing \& linking among dozens of visualizations, with invariant performance on data sizes ranging from thousands to billions of records.},
+booktitle = {Proceedings of the 15th Eurographics Conference on Visualization},
+pages = {421–430},
+numpages = {10},
+location = {Leipzig, Germany},
+series = {EuroVis '13}
+}
+
+@article{10.1145/3592433,
+author = {Kerbl, Bernhard and Kopanas, Georgios and Leimkuehler, Thomas and Drettakis, George},
+title = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
+year = {2023},
+issue_date = {August 2023},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+volume = {42},
+number = {4},
+issn = {0730-0301},
+url = {https://doi.org/10.1145/3592433},
+doi = {10.1145/3592433},
+abstract = {Radiance Field methods have recently revolutionized novel-view synthesis of scenes captured with multiple photos or videos. However, achieving high visual quality still requires neural networks that are costly to train and render, while recent faster methods inevitably trade off speed for quality. For unbounded and complete scenes (rather than isolated objects) and 1080p resolution rendering, no current method can achieve real-time display rates. We introduce three key elements that allow us to achieve state-of-the-art visual quality while maintaining competitive training times and importantly allow high-quality real-time (≥ 30 fps) novel-view synthesis at 1080p resolution. First, starting from sparse points produced during camera calibration, we represent the scene with 3D Gaussians that preserve desirable properties of continuous volumetric radiance fields for scene optimization while avoiding unnecessary computation in empty space; Second, we perform interleaved optimization/density control of the 3D Gaussians, notably optimizing anisotropic covariance to achieve an accurate representation of the scene; Third, we develop a fast visibility-aware rendering algorithm that supports anisotropic splatting and both accelerates training and allows realtime rendering. We demonstrate state-of-the-art visual quality and real-time rendering on several established datasets.},
+journal = {ACM Trans. Graph.},
+month = jul,
+articleno = {139},
+numpages = {14},
+keywords = {novel view synthesis, radiance fields, 3D gaussians, real-time rendering}
+}
+
+@article{Salmond2009,
+author = {Salmond, D.J.},
+year = {2009},
+month = {05},
+pages = {667 - 686},
+title = {Mixture Reduction Algorithms for Point and Extended Object Tracking in Clutter},
+volume = {45},
+journal = {Aerospace and Electronic Systems, IEEE Transactions on},
+doi = {10.1109/TAES.2009.5089549}
+}
+
+@article{10.1109/TVCG.2013.179,
+author = {Lins, Lauro and Klosowski, James T. and Scheidegger, Carlos},
+title = {Nanocubes for Real-Time Exploration of Spatiotemporal Datasets},
+year = {2013},
+issue_date = {December 2013},
+publisher = {IEEE Educational Activities Department},
+address = {USA},
+volume = {19},
+number = {12},
+issn = {1077-2626},
+url = {https://doi.org/10.1109/TVCG.2013.179},
+doi = {10.1109/TVCG.2013.179},
+abstract = {Consider real-time exploration of large multidimensional spatiotemporal datasets with billions of entries, each defined by a location, a time, and other attributes. Are certain attributes correlated spatially or temporally? Are there trends or outliers in the data? Answering these questions requires aggregation over arbitrary regions of the domain and attributes of the data. Many relational databases implement the well-known data cube aggregation operation, which in a sense precomputes every possible aggregate query over the database. Data cubes are sometimes assumed to take a prohibitively large amount of space, and to consequently require disk storage. In contrast, we show how to construct a data cube that fits in a modern laptop's main memory, even for billions of entries; we call this data structure a nanocube. We present algorithms to compute and query a nanocube, and show how it can be used to generate well-known visual encodings such as heatmaps, histograms, and parallel coordinate plots. When compared to exact visualizations created by scanning an entire dataset, nanocube plots have bounded screen error across a variety of scales, thanks to a hierarchical structure in space and time. We demonstrate the effectiveness of our technique on a variety of real-world datasets, and present memory, timing, and network bandwidth measurements. We find that the timings for the queries in our examples are dominated by network and user-interaction latencies.},
+journal = {IEEE Transactions on Visualization and Computer Graphics},
+month = dec,
+pages = {2456–2465},
+numpages = {10},
+keywords = {Data cube, data structures, interactive exploration}
+}
+
+
 
 //Resultados e discussão juntos
 //mover trabalhos futuros para conclusão
 //explicar melhor como funciona a escala
 //explorar quantidades 
+
+

@@ -382,7 +382,7 @@ A timeseries is usually shown as time versus value, leaving any third scalar (fo
 
 A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
 
-The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw; with strong overlap, fragment work can reach billions of evaluations per frame.
+The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw \cite{10.1109/TVCG.2013.65}; with strong overlap, fragment work can reach billions of evaluations per frame.
 
 We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/tonemapping pipeline supports interactive, perceptually calibrated density maps.
 
@@ -393,7 +393,13 @@ Lampe and Hauser \cite{5742387} introduced an interactive KDE framework for stre
 
 More recently, Peng et al. \cite{article} presented a GMM-based splatting pipeline for large-scale particle simulations, where Gaussian components are rendered directly from a compressed representation to avoid expensive reconstruction. That work demonstrates the viability of Gaussian-mixture primitives for high-throughput visualization and informs our use of Gaussian-based accumulation in a performance-critical pipeline.
 
-Our approach is most closely related to these two lines of work, combining the interactive KDE perspective for exploratory analysis \cite{5742387} with Gaussian-mixture rendering ideas from large-scale particle visualization \cite{article}, while targeting weighted financial timeseries heatmaps and screen-space merge control.
+A second line of work addresses the overdraw that arises when many points are plotted in the same screen region. Bachthaler and Weiskopf's continuous scatterplots \cite{4658159} recast discrete point plots as a continuous density field, while Splatterplots \cite{10.1109/TVCG.2013.65} bound the density of marks drawn per unit of screen space and leverage the GPU to scale to millions of points. These methods share our central premise: the displayed resolution, rather than the raw record count, should govern how much is drawn. We adopt the same principle but target a weighted KDE density field rather than abstracted contours or outlier glyphs.
+
+The notion that interactive scalability should be limited by display resolution is also central to scalable aggregation systems. imMens \cite{10.1111/cgf.12129} precomputes binned aggregates and renders them on the GPU for frame-rate brushing and linking over billions of records, and Nanocubes \cite{10.1109/TVCG.2013.179} maintain an in-memory data cube that answers aggregate queries with bounded screen error across scales. These systems rely on precomputed, server- or memory-resident aggregations; in contrast, our screen-space merge is recomputed per view directly on the visible subset, avoiding any pre-aggregation step.
+
+Finally, our accumulation stage is methodologically a splatting technique: each kernel is rasterized as an anisotropic Gaussian footprint defined by a covariance matrix. This connects our pipeline to recent 3D Gaussian splatting \cite{10.1145/3592433}, which renders scenes as large collections of anisotropic Gaussians with optimized covariances at real-time rates. We borrow the same instanced, covariance-driven splatting formulation, but apply it to 2D weighted density estimation rather than radiance-field synthesis.
+
+Our approach is most closely related to the interactive KDE \cite{5742387} and Gaussian-mixture rendering \cite{article} lines of work, combining the interactive KDE perspective for exploratory analysis with Gaussian-mixture rendering ideas from large-scale particle visualization, while targeting weighted financial timeseries heatmaps and screen-space merge control.
 
 
 \section{Data Preparation}
@@ -475,7 +481,7 @@ The weighted merge strategy addresses this directly: the sole criterion for coll
 \section{Mathematical Basis for Gaussian Merging}
 \label{sec:gaussian-merging}
 
-This section formalizes our merge operation and relates it to the KL-based reduction criterion of Runnalls \cite{4383588}.
+This section formalizes our merge operation and relates it to the Gaussian-mixture reduction (GMR) literature from target tracking, where a mixture is approximated by one with fewer components by successively merging pairs \cite{Salmond2009,Williams2003,4383588}; Crouse et al. \cite{inproceedings} survey and compare these algorithms. Our moment-preserving merge is the same second-order moment match used as the per-pair reduction step in that work, specialized here to screen-space proximity rather than the KL-based pair-selection criterion of Runnalls \cite{4383588}.
 
 \begin{figure}[t]
   \centering
@@ -615,7 +621,7 @@ Setting $R=3\sigma$ gives
 \end{equation}
 that is, about $1.11\%$ omitted mass. For our purposes, this error level is acceptable.
 
-For each merged kernel, we keep its center $\overrightarrow{\boldsymbol{\mu}}\in\mathbb{R}^2$, weight $w$, and covariance $\overrightarrow{\mathbf{P}}\in\mathbb{R}^{2\times 2}$. In the vertex shader, we build a Cholesky factor $\overrightarrow{\mathbf{L}}$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
+For each merged kernel, we keep its center $\overrightarrow{\boldsymbol{\mu}}\in\mathbb{R}^2$, weight $w$, and covariance $\overrightarrow{\mathbf{P}}\in\mathbb{R}^{2\times 2}$, splatting each as an anisotropic Gaussian footprint in the spirit of covariance-driven Gaussian splatting \cite{10.1145/3592433}. In the vertex shader, we build a Cholesky factor $\overrightarrow{\mathbf{L}}$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
 \begin{equation}
 \overrightarrow{\mathbf{P}} = \overrightarrow{\mathbf{L}}\overrightarrow{\mathbf{L}}^T,
 \end{equation}
