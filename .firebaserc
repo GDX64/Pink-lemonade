@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "pojeto-993a9"
+  },
+  "targets": {
+    "pojeto-993a9": {
+      "hosting": {
+        "heatmap": [
+          "heatmap-glmachado"
+        ]
+      }
+    }
+  }
+}
