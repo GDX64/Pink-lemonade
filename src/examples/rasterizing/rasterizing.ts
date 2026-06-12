@@ -4,7 +4,7 @@ import { GaussianChart, type LoadedData } from "./gaussian-chart";
 import Plotly from "plotly.js-dist-min";
 
 const BASE_WIDTH = 800;
-const BASE_HEIGHT = 600;
+const BASE_HEIGHT = 400;
 
 export async function rasterizingExample() {
   await createChart1();
@@ -30,7 +30,13 @@ export async function renderFigureChart(
   const container = chart.container;
   mount.appendChild(container);
   container.style.width = `${BASE_WIDTH}px`;
-  container.style.height = `${BASE_HEIGHT}px`;
+  if (kind === "figure-4") {
+    container.style.height = `${BASE_HEIGHT * 1.5}px`;
+    chart.state.opacityCut = 0.042;
+  } else {
+    container.style.height = `${BASE_HEIGHT}px`;
+  }
+  container.style.width = `${BASE_WIDTH}px`;
   container.style.position = "relative";
   chart.state.showTimescale = true;
   chart.state.showYAxis = true;
@@ -40,13 +46,13 @@ export async function renderFigureChart(
     chart.state.mergeThresholdSigmas = 0;
   }
   await chart.start();
-  if (kind === "figure-3") {
-    chart.setViewRangeX(0.6500622508888406, 1);
+  if (kind === "figure-4") {
+    // chart.setViewRangeX(0.6500622508888406, 1);
     chart.setSelection({
-      x: 388,
-      y: 277.5,
-      width: 246,
-      height: 182,
+      x: 226,
+      y: 341.5,
+      width: 173,
+      height: 200,
     });
   }
   chart.setupRenderLoop();
@@ -152,16 +158,6 @@ async function createChart1(mount?: HTMLElement) {
   chart.state.quantSteps = 6;
   await chart.start();
   chart.setupRenderLoop();
-  setTimeout(() => {
-    chart
-      .integrate({
-        x: 0,
-        y: 0,
-        width,
-        height,
-      })
-      .then((result) => console.log(result));
-  }, 100);
 }
 
 async function randomApproxImage() {

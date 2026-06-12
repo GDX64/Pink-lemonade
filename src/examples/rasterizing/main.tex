@@ -596,7 +596,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
 \begin{figure}[t]
   \centering
   \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
-    \includegraphics[width=\linewidth]{full_image.png}%
+    \includegraphics[width=\linewidth]{figs/full_image.png}%
   }\\[0.5em]
   \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures, while integrating with only 1.67\% of error .]{%
     \includegraphics[width=\linewidth]{figs/approx_image.png}%
@@ -749,15 +749,6 @@ Table~\ref{tab:monte-carlo-error} summarizes the measured approximation quality 
 \end{table}
 
 To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
-
-Figure~\ref{fig:integral-region} illustrates the interactive integral query used to inspect cumulative density over user-selected regions when validating approximation behavior.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=1\linewidth]{figs/integral.png}
-  \caption{Integrated quantity over a user-selected area in the density heatmap.}
-  \label{fig:integral-region}
-\end{figure}
 
 These empirical results support using merge thresholds on the order of $\sigma$ to balance quality and performance.
 

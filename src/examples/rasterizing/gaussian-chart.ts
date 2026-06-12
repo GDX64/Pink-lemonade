@@ -1088,7 +1088,7 @@ function createTonemapPipeline(device: GPUDevice, format: GPUTextureFormat) {
 
         let maxVal = f32(stats[0]);
         var t = clamp(accum / maxVal, 0.0, 1.0);
-        let opacity = smoothstep(0.0, palette.opacityCut, t);
+        let opacity = step(palette.opacityCut, t);
         if palette.steps > 1.0 {
           t = floor(t * palette.steps) / (palette.steps - 1.0);
         }
