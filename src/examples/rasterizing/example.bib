@@ -1,9 +1,19 @@
+@book{Aigner23TimeViz2nd,
+  author = {Aigner, Wolfgang and Miksch, Silvia and Schumann, Heidrun and Tominski, Christian},
+  publisher = {Springer},
+  title = {{Visualization of Time-Oriented Data}},
+  year = {2023},
+ edition = {2nd},
+  doi = {10.1007/978-1-4471-7527-8},
+  isbn = {978-1-4471-7527-8},
+  url = {https://timeviz.net},
+}
+
 @mastersthesis{Steinarsson2013,
   author  = {Sveinn Steinarsson},
   title   = {Downsampling Time Series for Visual Representation},
   school  = {University of Iceland},
   year    = {2013},
-  url     = {https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf}
 }
 
 @article{Douglas1973,
@@ -23,13 +33,13 @@ month = {03},
 pages = {},
 title = {Gaussian Mixture Model-Based Splatting for Rapid Rendering and Time Series Analysis of Large-Scale Particle Data},
 volume = {PP},
-journal = {IEEE transactions on visualization and computer graphics},
+journal = {IEEE Trans. on Visualization and Computer Graphics},
 doi = {10.1109/TVCG.2026.3672120}
 }
 
 @ARTICLE{4383588,
   author={Runnalls, A.R.},
-  journal={IEEE Transactions on Aerospace and Electronic Systems}, 
+  journal={IEEE Trans. on Aerospace and Electronic Systems}, 
   title={Kullback-Leibler Approach to Gaussian Mixture Reduction}, 
   year={2007},
   volume={43},
@@ -71,12 +81,14 @@ doi = {10.1109/TVCG.2026.3672120}
   ISSN={2770-0682},
   month={Nov},}
 
-@article{Williams2003,
+@mastersthesis{Williams2003,
 author = {Williams, Jason},
 year = {2003},
 month = {03},
 pages = {247},
+school={Air Force Institute of Technology},
 title = {Gaussian Mixture Reduction for Tracking Multiple Maneuvering Targets in Clutter}
+
 }
 
 @book{Bishop2006,
@@ -88,7 +100,7 @@ title = {Gaussian Mixture Reduction for Tracking Multiple Maneuvering Targets in
 
 @ARTICLE{4658159,
   author={Bachthaler, Sven and Weiskopf, Daniel},
-  journal={IEEE Transactions on Visualization and Computer Graphics}, 
+  journal={IEEE Trans. on Visualization and Computer Graphics}, 
   title={Continuous Scatterplots}, 
   year={2008},
   volume={14},
@@ -100,7 +112,7 @@ title = {Gaussian Mixture Reduction for Tracking Multiple Maneuvering Targets in
   ISSN={1941-0506},
   month={Nov},}
 
-  @article{10.1109/TVCG.2013.65,
+@article{10.1109/TVCG.2013.65,
 author = {Mayorga, Adrian and Gleicher, Michael},
 title = {Splatterplots: Overcoming Overdraw in Scatter Plots},
 year = {2013},
@@ -113,7 +125,7 @@ issn = {1077-2626},
 url = {https://doi.org/10.1109/TVCG.2013.65},
 doi = {10.1109/TVCG.2013.65},
 abstract = {We introduce Splatterplots, a novel presentation of scattered data that enables visualizations that scale beyond standard scatter plots. Traditional scatter plots suffer from overdraw (overlapping glyphs) as the number of points per unit area increases. Overdraw obscures outliers, hides data distributions, and makes the relationship among subgroups of the data difficult to discern. To address these issues, Splatterplots abstract away information such that the density of data shown in any unit of screen space is bounded, while allowing continuous zoom to reveal abstracted details. Abstraction automatically groups dense data points into contours and samples remaining points. We combine techniques for abstraction with perceptually based color blending to reveal the relationship between data subgroups. The resulting visualizations represent the dense regions of each subgroup of the data set as smooth closed shapes and show representative outliers explicitly. We present techniques that leverage the GPU for Splatterplot computation and rendering, enabling interaction with massive data sets. We show how Splatterplots can be an effective alternative to traditional methods of displaying scatter data communicating data trends, outliers, and data set relationships much like traditional scatter plots, but scaling to data sets of higher density and up to millions of points on the screen.},
-journal = {IEEE Transactions on Visualization and Computer Graphics},
+journal = {IEEE Trans. on Visualization and Computer Graphics},
 month = sep,
 pages = {1526–1538},
 numpages = {13},
@@ -126,7 +138,7 @@ year = {2011},
 month = {08},
 pages = {1 - 8},
 title = {A look at Gaussian mixture reduction algorithms},
-journal = {Fusion 2011 - 14th International Conference on Information Fusion}
+booktitle = {Fusion 2011 - 14th International Conference on Information Fusion}
 }
 
 @inproceedings{10.1111/cgf.12129,
@@ -158,7 +170,7 @@ issn = {0730-0301},
 url = {https://doi.org/10.1145/3592433},
 doi = {10.1145/3592433},
 abstract = {Radiance Field methods have recently revolutionized novel-view synthesis of scenes captured with multiple photos or videos. However, achieving high visual quality still requires neural networks that are costly to train and render, while recent faster methods inevitably trade off speed for quality. For unbounded and complete scenes (rather than isolated objects) and 1080p resolution rendering, no current method can achieve real-time display rates. We introduce three key elements that allow us to achieve state-of-the-art visual quality while maintaining competitive training times and importantly allow high-quality real-time (≥ 30 fps) novel-view synthesis at 1080p resolution. First, starting from sparse points produced during camera calibration, we represent the scene with 3D Gaussians that preserve desirable properties of continuous volumetric radiance fields for scene optimization while avoiding unnecessary computation in empty space; Second, we perform interleaved optimization/density control of the 3D Gaussians, notably optimizing anisotropic covariance to achieve an accurate representation of the scene; Third, we develop a fast visibility-aware rendering algorithm that supports anisotropic splatting and both accelerates training and allows realtime rendering. We demonstrate state-of-the-art visual quality and real-time rendering on several established datasets.},
-journal = {ACM Trans. Graph.},
+journal = {ACM Transactions on Graphics},
 month = jul,
 articleno = {139},
 numpages = {14},
@@ -172,7 +184,7 @@ month = {05},
 pages = {667 - 686},
 title = {Mixture Reduction Algorithms for Point and Extended Object Tracking in Clutter},
 volume = {45},
-journal = {Aerospace and Electronic Systems, IEEE Transactions on},
+journal = {IEEE Transactions on Aerospace and Electronic Systems},
 doi = {10.1109/TAES.2009.5089549}
 }
 
@@ -189,7 +201,7 @@ issn = {1077-2626},
 url = {https://doi.org/10.1109/TVCG.2013.179},
 doi = {10.1109/TVCG.2013.179},
 abstract = {Consider real-time exploration of large multidimensional spatiotemporal datasets with billions of entries, each defined by a location, a time, and other attributes. Are certain attributes correlated spatially or temporally? Are there trends or outliers in the data? Answering these questions requires aggregation over arbitrary regions of the domain and attributes of the data. Many relational databases implement the well-known data cube aggregation operation, which in a sense precomputes every possible aggregate query over the database. Data cubes are sometimes assumed to take a prohibitively large amount of space, and to consequently require disk storage. In contrast, we show how to construct a data cube that fits in a modern laptop's main memory, even for billions of entries; we call this data structure a nanocube. We present algorithms to compute and query a nanocube, and show how it can be used to generate well-known visual encodings such as heatmaps, histograms, and parallel coordinate plots. When compared to exact visualizations created by scanning an entire dataset, nanocube plots have bounded screen error across a variety of scales, thanks to a hierarchical structure in space and time. We demonstrate the effectiveness of our technique on a variety of real-world datasets, and present memory, timing, and network bandwidth measurements. We find that the timings for the queries in our examples are dominated by network and user-interaction latencies.},
-journal = {IEEE Transactions on Visualization and Computer Graphics},
+journal = {IEEE Trans. on Visualization and Computer Graphics},
 month = dec,
 pages = {2456–2465},
 numpages = {10},

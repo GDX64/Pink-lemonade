@@ -351,7 +351,7 @@ Fax: (888) 555--1212}}
 % As a general rule, do not put math, special symbols or citations
 % in the abstract
 \begin{abstract}
-A timeseries is usually shown as time versus value, leaving any third scalar (for example traded volume) underused. We encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing evaluations to roughly screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{dynamic color mapping} --- uses instanced drawing for Gaussian splats and produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
+A timeseries is usually shown as a time-versus-value plot, leaving any third scalar (for example, traded volume in a temporal series of stock trading) underused. In our work, we encode this third variable as weighted Kernel Density Estimation (KDE) and render it as a heatmap, so all three dimensions are visible in one chart. At hundreds of thousands of points, CPU KDE and na\"{i}ve per-point GPU splatting miss real-time pan/zoom budgets. We therefore merge nearby points in screen space into weighted kernels before rendering, reducing the number of evaluations to roughly the screen resolution. The resulting three-stage pipeline --- \textit{accumulation}, \textit{reduction}, and \textit{dynamic color mapping} --- uses instanced drawing for Gaussian splats and produces perceptually calibrated density maps at interactive rates without server-side pre-aggregation.
 \end{abstract}
 
 % no keywords
@@ -369,29 +369,29 @@ A timeseries is usually shown as time versus value, leaving any third scalar (fo
 % Instruções de submissão em https://sibgrapi.sbc.org.br/2026/#/submission
 %==============================
 
-\section{Motivation}
+\section{Introduction}
 \label{sec:motivation}
 
+Visual representations, mostly charts, have been used for centuries to depict temporal data, helping researchers understand and illustrate facts and phenomena. Several examples of time-series visualizations, including the classic ones by William Playfair, can be easily found in information visualization books, especially in Aigner et al.'s \cite{Aigner23TimeViz2nd}. 
 
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
-  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
-  \label{fig:bitcoin-sample}
-\end{figure}
+%A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
 
-A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
+Temporal data may have multiple values per time point, and over the years, several visualization techniques have been developed, beyond the popular time-versus-value plot. However, when the problem at hand requires observing a large time series in real time, such complex visualizations do not scale. Even adding a second value to a time point requires a different approach. 
 
-The challenge is scale. With hundreds of thousands of ticks, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw \cite{10.1109/TVCG.2013.65}; with strong overlap, fragment work can reach billions of evaluations per frame.
+We propose encoding this second value as weighted Kernel Density Estimation: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. %Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}. 
 
-We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/dynamic-color-mapping pipeline supports interactive, perceptually calibrated density maps.
+The challenge is scale. With hundreds of thousands of points, CPU evaluation costs $O(N \times W \times H)$ and is too slow for interactive pan/zoom. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw \cite{10.1109/TVCG.2013.65}; with strong overlap, fragment work can reach billions of evaluations per frame.
+
+We address this with a screen-space kernel-merging approximation: nearby points are replaced by one weighted representative, and merging is recomputed after each view change. This bounds submitted kernels by display resolution rather than dataset size while keeping visual error low when the threshold is near the kernel radius. The resulting accumulation/reduction/dynamic-color-mapping pipeline supports interactive, perceptually calibrated density maps (see Figure \ref{fig:bitcoin-sample}).
 
 \section{Related Work}
 \label{sec:related-work}
 
-Lampe and Hauser \cite{5742387} introduced an interactive KDE framework for streaming data visualization, including viewport-adaptive bandwidth selection and a GPU implementation for interactive updates under pan and zoom. Their work established a practical foundation for coupling KDE with interactive visual analytics.
+Our approach is most closely related to the interactive KDE \cite{5742387} and Gaussian-mixture rendering \cite{article} lines of work, combining the interactive KDE perspective for exploratory analysis with Gaussian-mixture rendering ideas from large-scale particle visualization, while targeting weighted financial timeseries heatmaps and screen-space merge control. We briefly review works from these two lines of research in this section.
 
-More recently, Peng et al. \cite{article} presented a GMM-based splatting pipeline for large-scale particle simulations, where Gaussian components are rendered directly from a compressed representation to avoid expensive reconstruction. That work demonstrates the viability of Gaussian-mixture primitives for high-throughput visualization and informs our use of Gaussian-based accumulation in a performance-critical pipeline.
+Lampe and Hauser \cite{5742387} introduced an interactive Kernel Density Estimation (KDE) framework for streaming data visualization, including viewport-adaptive bandwidth selection and a GPU implementation for interactive updates under pan and zoom. Their work established a practical foundation for coupling KDE with interactive visual analytics.
+
+More recently, Peng et al. \cite{article} presented a Gaussian mixture model-based splatting pipeline for large-scale particle simulations, where Gaussian components are rendered directly from a compressed representation to avoid expensive reconstruction. That work demonstrates the viability of Gaussian-mixture primitives for high-throughput visualization and informs our use of Gaussian-based accumulation in a performance-critical pipeline.
 
 A second line of work addresses the overdraw that arises when many points are plotted in the same screen region. Bachthaler and Weiskopf's continuous scatterplots \cite{4658159} recast discrete point plots as a continuous density field, while Splatterplots \cite{10.1109/TVCG.2013.65} bound the density of marks drawn per unit of screen space and leverage the GPU to scale to millions of points. These methods share our central premise: the displayed resolution, rather than the raw record count, should govern how much is drawn. We adopt the same principle but target a weighted KDE density field rather than abstracted contours or outlier glyphs.
 
@@ -399,19 +399,28 @@ The notion that interactive scalability should be limited by display resolution 
 
 Finally, our accumulation stage is methodologically a splatting technique: each kernel is rasterized as an anisotropic Gaussian footprint defined by a covariance matrix. This connects our pipeline to recent 3D Gaussian splatting \cite{10.1145/3592433}, which renders scenes as large collections of anisotropic Gaussians with optimized covariances at real-time rates. We borrow the same instanced, covariance-driven splatting formulation, but apply it to 2D weighted density estimation rather than radiance-field synthesis.
 
-Our approach is most closely related to the interactive KDE \cite{5742387} and Gaussian-mixture rendering \cite{article} lines of work, combining the interactive KDE perspective for exploratory analysis with Gaussian-mixture rendering ideas from large-scale particle visualization, while targeting weighted financial timeseries heatmaps and screen-space merge control.
+%Our approach is most closely related to the interactive KDE \cite{5742387} and Gaussian-mixture rendering \cite{article} lines of work, combining the interactive KDE perspective for exploratory analysis with Gaussian-mixture rendering ideas from large-scale particle visualization, while targeting weighted financial timeseries heatmaps and screen-space merge control.
 
 
-\section{Data Preparation}
+\section{Data Preparation and Adaptive Downsampling}
 \label{sec:data}
 
-Each data point carries three values: a timestamp, a price level, and a scalar weight. For financial tick data, weight is naturally derived from traded volume, making denser activity periods visually brighter regardless of the number of individual events.
+\subsection{Data Preparation}
 
-Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss under extreme zoom. The original scale factors are retained separately for axis label reconstruction.
+Our target application is the visual exploration of large series of financial data, mainly trading series. Each data point carries three values: a timestamp, a price level, and a scalar weight. For financial tick data, weight is naturally derived from traded volume, making denser activity periods visually brighter regardless of the number of individual events.
 
-All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities (Figure~\ref{fig:synthetic-amplitude}) with the addition of Gaussian noise. The only exception is the Bitcoin chart, which is built from real market data.
+%Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss at extreme zoom levels. The original scale factors are retained separately for axis label reconstruction.
+
+All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities (Figure~\ref{fig:synthetic-amplitude}), with Gaussian noise added. The only exception is the Bitcoin chart (Fig.~\ref{fig:bitcoin-sample}), which is built from real market data.
 
 Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
+  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
+  \label{fig:bitcoin-sample}
+\end{figure}
 
 
 \begin{figure}[t]
@@ -422,18 +431,22 @@ Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our
 \end{figure}
 
 
-\section{Adaptive Downsampling}
+Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss at extreme zoom levels. The original scale factors are retained separately for axis label reconstruction.
+
+
+%\section{Adaptive Downsampling}
+\subsection{Adaptive Downsampling}
 \label{sec:downsampling}
 
-\subsection{View-Range Clipping}
+%\subsection{View-Range Clipping}
 
-Because data is sorted by time, only points falling within the current view window need to be considered. Binary search extracts this subset in logarithmic time, keeping all subsequent work proportional to visible data rather than total data.
+Because data is sorted by time, only points falling within the current view window need to be considered. Binary search extracts this subset in logarithmic time, keeping subsequent work proportional to visible data rather than total data.
 
-\subsection{Weighted Merge}
+\subsubsection{Weighted Merge}
 
 Visible points are downsampled by a \textit{weighted merge} pass before GPU upload. Scanning left-to-right, the algorithm maintains one open cluster and tests whether the next point can be absorbed while keeping both the earliest point and the candidate within a screen-space threshold of the updated weighted centroid. If not, it flushes the cluster and starts a new one.
 
-Each merged point keeps the sum of constituent weights, preserving total signal. The earliest-point check prevents centroid drift from slowly violating the threshold. Since points are time-sorted, each point is visited once with no backtracking, yielding $O(N)$ time over the visible subset. The merge is recomputed on each pan/zoom event to keep transitions smooth.
+Each merged point keeps the sum of constituent weights, preserving the total signal. The earliest-point check prevents centroid drift from slowly violating the threshold. Since points are time-sorted, each point is visited once with no backtracking, yielding $O(N)$ time over the visible subset. The merge is recomputed on each pan/zoom event to keep transitions smooth.
 
 Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our implementation. The left side shows the geometric test performed for each incoming point: after computing the hypothetical weighted centroid $\mu'$, the algorithm accepts the candidate only if both the first point of the open cluster and the new point remain within the threshold radius $\tau$ in pixel space. The right side shows the resulting one-pass control flow.
 
@@ -454,7 +467,7 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
       \node[flow] (start) at (2.4,2.45) {Read next point $p_i$};
       \node[flow] (centroid) at (2.4,1.05) {Compute hypothetical\\centroid $\mu'$};
       \node[decision] (inside) at (2.4,-0.55) {All inside\\$\tau$?};
-      \node[flow] (flush) at (0.25,-2.2) {Flush previous cluster\\start new one with $p_i$};
+      \node[flow] (flush) at (0.25,-2.2) {Flush previous cluster\\Start new one with $p_i$};
       \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, weight, end};
 
       \draw[->] (start) -- (centroid);
@@ -469,13 +482,13 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
   \label{fig:merge-downsample}
 \end{figure}
 
-\subsection{Why Shape-Preserving Simplification Is Insufficient}
+\subsubsection{Why Shape-Preserving Simplification Is Insufficient}
 
 Classical timeseries simplification algorithms such as Largest-Triangle-Three-Buckets (LTTB) \cite{Steinarsson2013} and Ramer-Douglas-Peucker (RDP) \cite{Douglas1973,10589058} are designed to preserve the visual shape of a line chart: they select or retain points whose positions best reconstruct the geometry of the original polyline, discarding points they deem geometrically redundant. This objective is appropriate for a line chart, where the eye follows the trajectory of the series. It is, however, the wrong objective for KDE.
 
 In a density heatmap the quantity that must be conserved is the total weight --- the accumulated momentum of the signal --- not its geometric shape. A point that is geometrically redundant (lying close to a chord between its neighbors) may nonetheless carry substantial weight that, if discarded, would leave the density field darker than the data warrants. Conversely, a point selected by LTTB because it lies far from the chord may carry negligible weight, contributing little to the density while consuming a kernel evaluation. Both cases produce a density estimate that misrepresents the underlying distribution.
 
-The weighted merge strategy addresses this directly: the sole criterion for collapsing points is screen-space proximity, and the total weight is always conserved in the merged centroid. No information about the magnitude of the signal is lost, only spatial resolution that is already below the pixel threshold and therefore invisible.
+The weighted merge strategy addresses this directly: the sole criterion for collapsing points is screen-space proximity, and the total weight is always conserved in the merged centroid. No information about the signal's magnitude is lost; only the spatial resolution, which is already below the pixel threshold and therefore invisible.
 
 
 \section{Mathematical Basis for Gaussian Merging}
@@ -494,7 +507,7 @@ At the component level, we use the full matrix-form weighted Gaussian
 \begin{equation}
 \mathcal{N}(\overrightarrow{\boldsymbol{x}}; A, \overrightarrow{\boldsymbol{\mu}}, \overrightarrow{\mathbf{P}}) = A\,\exp\!\left(-\frac{1}{2}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})^T \overrightarrow{\mathbf{P}}^{-1}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})\right),
 \end{equation}
-with amplitude defined from total weight as
+with amplitude defined from the total weight as
 \begin{equation}
 A(w)=\frac{w}{\sqrt{(2\pi)^d\det(\overrightarrow{\mathbf{P}})}},
 \end{equation}
@@ -550,7 +563,7 @@ which follows from the normalization constant of a weighted Gaussian density.
 
 \subsection{Why Merging in Pixel Space}
 
-Our goal is perceptual: to help users estimate how much aggregated activity is present in each visible region of the chart. Because this judgment is made on what is currently shown on screen, aggregation should be computed in screen (pixel) space rather than only in data space. Merging in pixel space aligns the approximation with the displayed resolution, so contributions that are visually indistinguishable are combined, while separable structures remain distinct.
+Our goal is perceptual: to help users estimate how much aggregated activity is present in each visible region of the chart. Because this judgment is made on what is currently shown on screen, aggregation should be computed in screen (pixel) space rather than only in data space. Merging in pixel space aligns the approximation with the displayed resolution; contributions that are visually indistinguishable are combined, while separable structures remain distinct.
 
 
 \section{GPU Rendering Pipeline}
@@ -589,7 +602,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \draw[arrow] (red.east) -- ++(5mm,0) |- node[pos=0.75, right, align=left]{max buffer} (tone.east);
     \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
   \end{tikzpicture}
-  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs dynamic color mapping. The reduction output is consumed both by the color-mapping shader (same frame) and by asynchronous CPU readback for legend scaling.}
+  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs dynamic color mapping. The reduction output is consumed by both the color-mapping shader (in the same frame) and by asynchronous CPU readback for legend scaling.}
   \label{fig:pipeline-overview}
 \end{figure}
 
@@ -598,10 +611,10 @@ The rendering pipeline consists of three GPU passes submitted together per frame
   \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
     \includegraphics[width=\linewidth]{figs/full_image.png}%
   }\\[0.5em]
-  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures, while integrating with only 1.67\% of error .]{%
+  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures, and integrating with only 1.67\% of error .]{%
     \includegraphics[width=\linewidth]{figs/approx_image.png}%
   }
-  \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology.}
+  \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology. See supplementary material for these visualizations and more examples.}
   \label{fig:kde-full-vs-merged}
 \end{figure}
 
@@ -655,7 +668,7 @@ Starting from standardized quad coordinates $\overrightarrow{\boldsymbol{z}}\in[
 \end{equation}
 where $s$ is the user-controlled kernel size (in pixels). This is the explicit linear map that turns an isotropic footprint into an oriented anisotropic ellipse in screen space.
 
-The fragment shader does not need to invert $\overrightarrow{\mathbf{P}}$ per pixel. Instead, it receives $\overrightarrow{\boldsymbol{z}}$ as a varying from the vertex stage, and rasterization hardware linearly interpolates $\overrightarrow{\boldsymbol{z}}$ across the two triangles of the quad. Therefore each fragment already has the local standardized coordinates needed for the quadratic form
+The fragment shader does not need to invert $\overrightarrow{\mathbf{P}}$ per pixel. Instead, it receives $\overrightarrow{\boldsymbol{z}}$ as a varying from the vertex stage, and rasterization hardware linearly interpolates $\overrightarrow{\boldsymbol{z}}$ across the two triangles of the quad. Therefore, each fragment already has the local standardized coordinates needed for the quadratic form
 \begin{equation}
 d_M^2 = \overrightarrow{\boldsymbol{z}}^T\overrightarrow{\boldsymbol{z}},
 \end{equation}
@@ -667,26 +680,26 @@ The kernel value is then evaluated as
 \begin{equation}
 K(\overrightarrow{\boldsymbol{x}})=\exp\left(-\frac{1}{2}d_M^2\right),
 \end{equation}
-and weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
+and the weighted contribution $wK(x)$ is additively accumulated into the HDR buffer. This avoids per-fragment matrix inversion and leverages fixed-function interpolation for efficient Gaussian evaluation.
 
 \subsection{Pass 2 --- Reduction}
 
 The second pass finds the maximum accumulated value across the entire HDR texture. A parallel reduction --- dispatched across the texture in tiles --- scans every texel and records the global maximum via an atomic operation.
 
-This maximum is read back to the CPU asynchronously for use in the legend scale. Because the readback is asynchronous it introduces at most one frame of lag, which is imperceptible in practice. More importantly, the value is available to the dynamic color mapping pass in the same frame via the same GPU-side buffer, so normalization is always current.
+This maximum is read back to the CPU asynchronously for use in the legend scale. Because the readback is asynchronous, it introduces at most one frame of lag, which is imperceptible in practice. More importantly, the value is available to the dynamic color mapping pass in the same frame via the same GPU-side buffer, ensuring normalization is always up to date.
 
 \subsection{Pass 3 --- Dynamic Color Mapping}
 
 The third pass maps the raw floating-point accumulation values to a perceptual colormap and writes the final output. A fullscreen quad reads from the HDR texture and the maximum value buffer, normalizing each pixel's density to the range $[0, 1]$.
 
-Pixels below a configurable opacity threshold are rendered fully transparent, hiding empty or near-empty regions and separating signal from background cleanly.
+Pixels below a configurable opacity threshold are rendered fully transparent, hiding empty or nearly empty regions and cleanly separating signal from background.
 
 The normalized value is then mapped through a three-stop colormap with a user-adjustable midpoint. The fragment shader interpolates the color gradient from a low-density color through a mid-density color to a high-density color. The midpoint position controls where the perceptual emphasis of the colormap sits: pulling it toward zero compresses the high end and reveals fine structure in sparse regions; pushing it toward one stretches the low end and emphasizes the densest concentrations.
 
 An optional quantization step maps the normalized value to a discrete number of levels before color lookup, producing a contour-map aesthetic that can make density gradients easier to read.
 
 
-\section{Conclusion}
+\section{Discussion and Conclusions}
 \label{sec:conclusion}
 
 We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and dynamic color mapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
@@ -713,7 +726,7 @@ Table~\ref{tab:merge-benchmark} reports merge-pass benchmark results measured on
 
 \subsection{Complexity}
 
-Per-frame CPU work is linear in the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and dynamic color mapping passes scale with screen resolution. In practice the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass fast relative to the fixed-cost passes.
+Per-frame CPU work scales linearly with the number of visible points and runs in a single pass. GPU work for the accumulation pass scales with the number of downsampled points and the kernel radius; the reduction and dynamic color mapping passes scale with screen resolution. In practice, the downsampling limits the GPU instance count to a few thousand even for datasets with hundreds of thousands of points, making the accumulation pass faster than the fixed-cost passes.
 
 \subsection{Mean Squared Error Analysis}
 
@@ -726,10 +739,10 @@ and its scale-normalized form
 \mathrm{NRMSE}=\frac{\sqrt{\mathrm{MSE}}}{\max_{(x,y)\in\Omega}F(x,y)-\min_{(x,y)\in\Omega}F(x,y)}.
 \end{equation}
 
-To estimate these quantities in practice, we use Monte Carlo sampling over the visible domain with the same setup used in the benchmark ($1920\times1080$, $\texttt{sigmaSizePx}=16$, and $\tau=1$). At each iteration, we first evaluate the approximation $\hat{F}$. If $\hat{F}<0.01$, the sample is rejected and a new point is drawn. This acceptance rule avoids over-representing empty background regions that would artificially lower the measured error. For accepted samples, we evaluate both $F$ and $\hat{F}$, accumulate squared error, and compute MSE and NRMSE. We also report relative margin of error (RME, 95\%) for the MSE estimate as
-\begin{equation}
-\mathrm{RME}=100\cdot\frac{1.96\,\mathrm{SE}(\mathrm{MSE})}{\mathrm{MSE}}.
-\end{equation}
+To estimate these quantities in practice, we use Monte Carlo sampling over the visible domain with the same setup used in the benchmark ($1920\times1080$, $\texttt{sigmaSizePx}=16$, and $\tau=1$). At each iteration, we first evaluate the approximation $\hat{F}$. If $\hat{F}<0.01$, the sample is rejected and a new point is drawn. This acceptance rule avoids over-representing empty background regions that would artificially lower the measured error. For accepted samples, we evaluate both $F$ and $\hat{F}$, accumulate squared error, and compute MSE and NRMSE. We also report relative margin of error (RME, 95\%) for the MSE estimate. % as
+%\begin{equation}
+%\mathrm{RME}=100\cdot\frac{1.96\,\mathrm{SE}(\mathrm{MSE})}%{\mathrm{MSE}}.
+%\end{equation}
 
 Table~\ref{tab:monte-carlo-error} summarizes the measured approximation quality at three dataset sizes.
 
@@ -748,21 +761,21 @@ Table~\ref{tab:monte-carlo-error} summarizes the measured approximation quality 
   \end{tabular}
 \end{table}
 
-To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
+To isolate merge effects, MSE is measured on the linear HDR accumulation buffer before opacity thresholding and colormapping. Increasing threshold $\tau$ reduces submitted kernels and frame time but increases MSE, so $\tau$ acts as a quality-performance knob. Because merging is recomputed in screen space per view, the error is naturally view-dependent: zoomed-out views tolerate more merging, while zoomed-in views converge toward full KDE.
 
-These empirical results support using merge thresholds on the order of $\sigma$ to balance quality and performance.
+These empirical results support the use of merge thresholds on the order of $\sigma$ to balance quality and performance.
 
 \subsection{Limitations}
 
 The technique requires a GPU that supports floating-point render target formats with additive blending. This is widely supported on desktop hardware but may not be available on all mobile devices.
 
-At very high zoom levels --- sub-millisecond time windows for tick data --- the view contains so few points that the density field degenerates into isolated splats, and the heatmap character of the visualization disappears. At that scale a plain line or scatter chart is more appropriate.
+At very high zoom levels --- sub-millisecond time windows for tick data --- the view contains so few points that the density field degenerates into isolated splats, and the heatmap character of the visualization disappears. At that scale, a plain line or scatter chart is more appropriate.
 
-The colormap is defined in display color space, while kernel accumulation operates in linear space. For saturated color palettes this can produce a minor perceptual inconsistency that would be corrected by linearizing the palette entries before upload.
+The colormap is defined in display color space, while kernel accumulation operates in linear space. For saturated color palettes, this can produce a minor perceptual inconsistency that would be corrected by linearizing the palette entries before upload.
 
 \subsection{Future Work}
 
-The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price trace without inflating kernel weights. Combining both representations in the same view would make the relationship between price trajectory and activity density immediately readable.
+The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price trace without inflating kernel weights. As future work, we plan to combine both representations in a single view, making the relationship between price trajectory and activity density (negotiated volume) immediately readable.
 
 
 
