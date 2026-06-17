@@ -1,57 +1,24 @@
-# pink-lemonade
+# Supplementary Material
 
-Canvas2D-style API rendered with WebGPU.
+This repository contains the interactive artifact accompanying the paper. The reviewer-facing entry point is the built page at `./index.html`.
 
-## Requirements
+## How to use it
 
-- Node.js 18+
-- Chromium-compatible environment for browser-mode tests
-- Rust nightly with wasm target support
-- wasm-bindgen CLI
+1. Open `index.html` in a recent Chromium-based browser.
+2. On the home screen, choose the artifact you want to inspect:
+   - `application`
+   - `benchmark`
+   - `Mean Squared Error`
+   - `full KDE figure`
+   - `merge points figure`
+   - `Integral selection + zoom figure`
+   - `Bitcoin figure`
+   - `Distribution figure (Plotly)`
+3. The selected page runs directly in the browser and displays the resulting visualization or table.
 
-## Setup
+## Notes for the reviewer
 
-```bash
-npm install
-npx playwright install chromium
-rustup target add wasm32-unknown-unknown --toolchain nightly
-cargo install wasm-bindgen-cli
-```
+- The `benchmark` and `Mean Squared Error` pages perform computation in the browser and may take a short time to finish.
+- Some visualizations rely on WebGPU support. If WebGPU is unavailable on the machine/browser, affected views may not render correctly.
+- The source-level `index.html` at the repository root is for development. For review, use `/index.html`.
 
-## Scripts
-
-- `npm run typecheck`: run TypeScript checks
-- `npm run wasm`: compile Rust to WebAssembly and generate JS bindings in `pkg/`
-- `npm run build`: build ESM library output with Vite
-- `npm run test`: run Vitest in browser mode (Chromium/Playwright)
-- `npm run test:watch`: run Vitest in watch mode
-
-## Quick start
-
-```ts
-import { createCanvas2DContext, Rect, Scene } from "pink-lemonade";
-
-const canvas = document.querySelector("canvas");
-
-if (canvas instanceof HTMLCanvasElement) {
-  const ctx = await createCanvas2DContext(canvas);
-  ctx.clear({ r: 1, g: 0.9, b: 0.6, a: 1 });
-
-  const scene = new Scene();
-  scene.add(
-    new Rect({
-      x: 40,
-      y: 40,
-      width: 160,
-      height: 120,
-      fill: "#ff3366",
-    }),
-  );
-
-  await ctx.draw(scene);
-}
-```
-
-## Notes
-
-WebGPU availability depends on browser/runtime support and system GPU capabilities. Tests intentionally account for unavailable or unusable WebGPU states.

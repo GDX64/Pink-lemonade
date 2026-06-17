@@ -48,12 +48,12 @@ export async function renderFigureChart(
   await chart.start();
   if (kind === "figure-4") {
     // chart.setViewRangeX(0.6500622508888406, 1);
-    chart.setSelection({
-      x: 226,
-      y: 341.5,
-      width: 173,
-      height: 200,
-    });
+    // chart.setSelection({
+    //   x: 226,
+    //   y: 341.5,
+    //   width: 173,
+    //   height: 200,
+    // });
   }
   chart.setupRenderLoop();
   return chart;
