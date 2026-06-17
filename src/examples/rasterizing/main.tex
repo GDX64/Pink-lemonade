@@ -272,7 +272,7 @@
 \newif\iffinal
 \finalfalse
 %\finaltrue
-\newcommand{\cmtid}{99999}
+\newcommand{\cmtid}{115}
 %------------------------------------------------------------------------- 
 
 \iffinal
@@ -288,7 +288,7 @@
 % not capitalized unless they are the first or last word of the title.
 % Linebreaks \\ can be used within to get better formatting as desired.
 % Do not put math or special symbols in the title.
-\title{GPU-Accelerated Density Heatmap Rendering for Large-Scale Timeseries}
+\title{Resolution-Bounded KDE: Real-Time Density Heatmaps for Large Weighted Timeseries}
 
 
 % author names and affiliations
@@ -402,7 +402,7 @@ Finally, our accumulation stage is methodologically a splatting technique: each 
 %Our approach is most closely related to the interactive KDE \cite{5742387} and Gaussian-mixture rendering \cite{article} lines of work, combining the interactive KDE perspective for exploratory analysis with Gaussian-mixture rendering ideas from large-scale particle visualization, while targeting weighted financial timeseries heatmaps and screen-space merge control.
 
 
-\section{Data Preparation and Adaptive Downsampling}
+\section{Overview}
 \label{sec:data}
 
 \subsection{Data Preparation}
@@ -454,7 +454,7 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
   \centering
   \begin{minipage}[t]{\linewidth}
     \vspace{0pt}
-    \raggedright
+    \centering
     \begin{tikzpicture}[
       font=\scriptsize,
       >=Latex,
@@ -468,7 +468,7 @@ Figure~\ref{fig:merge-downsample} illustrates the exact decision used in our imp
       \node[flow] (centroid) at (2.4,1.05) {Compute hypothetical\\centroid $\mu'$};
       \node[decision] (inside) at (2.4,-0.55) {All inside\\$\tau$?};
       \node[flow] (flush) at (0.25,-2.2) {Flush previous cluster\\Start new one with $p_i$};
-      \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, weight, end};
+      \node[flow] (absorb) at (4.55,-2.2) {Absorb point\\update centroid, weight};
 
       \draw[->] (start) -- (centroid);
       \draw[->] (centroid) -- (inside);
@@ -507,7 +507,7 @@ At the component level, we use the full matrix-form weighted Gaussian
 \begin{equation}
 \mathcal{N}(\overrightarrow{\boldsymbol{x}}; A, \overrightarrow{\boldsymbol{\mu}}, \overrightarrow{\mathbf{P}}) = A\,\exp\!\left(-\frac{1}{2}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})^T \overrightarrow{\mathbf{P}}^{-1}(\overrightarrow{\boldsymbol{x}}-\overrightarrow{\boldsymbol{\mu}})\right),
 \end{equation}
-with amplitude defined from the total weight as
+with amplitude defined from the total weight $w$ as
 \begin{equation}
 A(w)=\frac{w}{\sqrt{(2\pi)^d\det(\overrightarrow{\mathbf{P}})}},
 \end{equation}
@@ -529,42 +529,12 @@ w = \sum_{i=1}^{N} w_i,
 \begin{equation}
 \overrightarrow{\mathbf{P}} = \frac{1}{w}\sum_{i=1}^{N} w_i\left[\overrightarrow{\mathbf{P}}_i + (\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}})(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}})^T\right].
 \end{equation}
-In one dimension, this covariance reduces to the scalar variance
-\begin{equation}
-\sigma^2 = \frac{1}{w}\sum_{i=1}^{N} w_i\left[\sigma_i^2 + (\mu_i-\mu)^2\right].
-\end{equation}
-These equations preserve the zeroth (total mass), first (centroid), and second (covariance) moments of the mixture.
-
-Given two components $i$ and $j$, the moment-preserving merge replaces them with one component
-\begin{equation}
-w_{ij} = w_i + w_j,
-\end{equation}
-\begin{equation}
-\overrightarrow{\boldsymbol{\mu}}_{ij} = \frac{w_i}{w_i + w_j}\overrightarrow{\boldsymbol{\mu}}_i + \frac{w_j}{w_i + w_j}\overrightarrow{\boldsymbol{\mu}}_j,
-\end{equation}
-\begingroup
-\scriptsize
-\begin{equation}
-\begin{aligned}
-\overrightarrow{\mathbf{P}}_{ij} = \frac{w_i}{w_i + w_j}\overrightarrow{\mathbf{P}}_i + \frac{w_j}{w_i + w_j}\overrightarrow{\mathbf{P}}_j + \frac{w_i w_j}{(w_i + w_j)^2}(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}}_j)(\overrightarrow{\boldsymbol{\mu}}_i-\overrightarrow{\boldsymbol{\mu}}_j)^T.
-\end{aligned}
-\end{equation}
-\endgroup
-
-The two-component equations above are the $N=2$ special case of the general formulation.
 
 For the merged Gaussian component, the peak amplitude in 2D can be written from its total weight and covariance determinant as
 \begin{equation}
 A = \frac{w}{2\pi\sqrt{\det(\overrightarrow{\mathbf{P}})}},
 \end{equation}
 which follows from the normalization constant of a weighted Gaussian density.
-
-
-
-\subsection{Why Merging in Pixel Space}
-
-Our goal is perceptual: to help users estimate how much aggregated activity is present in each visible region of the chart. Because this judgment is made on what is currently shown on screen, aggregation should be computed in screen (pixel) space rather than only in data space. Merging in pixel space aligns the approximation with the displayed resolution; contributions that are visually indistinguishable are combined, while separable structures remain distinct.
-
 
 \section{GPU Rendering Pipeline}
 \label{sec:pipeline}
@@ -581,8 +551,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     arrow/.style={-Latex, line width=0.5pt}
   ]
     \node[io] (raw) {Raw points $(t,p,w)$};
-    \node[stage, below=of raw] (clip) {CPU view-range clipping (binary search)};
-    \node[stage, below=of clip] (merge) {CPU weighted merge ($\tau$ in pixel space)};
+    \node[stage, below=of raw] (merge) {CPU weighted merge ($\tau$ in pixel space)};
     \node[io, below=of merge] (inst) {Merged kernels (instance buffer upload)};
     \node[stage, below=of inst] (vs) {Pass 1a: Vertex shader (instanced screen-aligned quads, one instance per kernel)};
     \node[stage, below=of vs] (acc) {Pass 1b: Fragment shader accumulation (quad rasterization + additive blending into HDR KDE texture)};
@@ -590,8 +559,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \node[stage, below=of red] (tone) {Pass 3: Dynamic color mapping (normalization, colormap, opacity threshold)};
     \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
 
-    \draw[arrow] (raw) -- (clip);
-    \draw[arrow] (clip) -- (merge);
+    \draw[arrow] (raw) -- (merge);
     \draw[arrow] (merge) -- (inst);
     \draw[arrow] (inst) -- (vs);
     \draw[arrow] (vs) -- (acc);
@@ -599,7 +567,6 @@ The rendering pipeline consists of three GPU passes submitted together per frame
     \draw[arrow] (red) -- (tone);
     \draw[arrow] (tone) -- (out);
 
-    \draw[arrow] (red.east) -- ++(5mm,0) |- node[pos=0.75, right, align=left]{max buffer} (tone.east);
     \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
   \end{tikzpicture}
   \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs dynamic color mapping. The reduction output is consumed by both the color-mapping shader (in the same frame) and by asynchronous CPU readback for legend scaling.}
@@ -611,7 +578,7 @@ The rendering pipeline consists of three GPU passes submitted together per frame
   \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
     \includegraphics[width=\linewidth]{figs/full_image.png}%
   }\\[0.5em]
-  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures, and integrating with only 1.67\% of error .]{%
+  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures.]{%
     \includegraphics[width=\linewidth]{figs/approx_image.png}%
   }
   \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology. See supplementary material for these visualizations and more examples.}
@@ -628,11 +595,7 @@ For an isotropic 2D Gaussian, the truncation error outside a disk of radius $R$ 
 \begin{equation}
 \varepsilon_{2}(R,\sigma)=\exp\left(-\frac{R^2}{2\sigma^2}\right).
 \end{equation}
-Setting $R=3\sigma$ gives
-\begin{equation}
-\varepsilon_{2}(3\sigma,\sigma)=\exp\left(-\frac{9}{2}\right)\approx 0.011109,
-\end{equation}
-that is, about $1.11\%$ omitted mass. For our purposes, this error level is acceptable.
+Setting $R=3\sigma$ gives $\varepsilon_{2}(3\sigma,\sigma)\approx 0.011109$. That is, about $1.11\%$ omitted mass. For our purposes, this error level is acceptable.
 
 For each merged kernel, we keep its center $\overrightarrow{\boldsymbol{\mu}}\in\mathbb{R}^2$, weight $w$, and covariance $\overrightarrow{\mathbf{P}}\in\mathbb{R}^{2\times 2}$, splatting each as an anisotropic Gaussian footprint in the spirit of covariance-driven Gaussian splatting \cite{10.1145/3592433}. In the vertex shader, we build a Cholesky factor $\overrightarrow{\mathbf{L}}$ (as in Gaussian sampling methods \cite{Bishop2006}) such that
 \begin{equation}
@@ -771,11 +734,11 @@ The technique requires a GPU that supports floating-point render target formats 
 
 At very high zoom levels --- sub-millisecond time windows for tick data --- the view contains so few points that the density field degenerates into isolated splats, and the heatmap character of the visualization disappears. At that scale, a plain line or scatter chart is more appropriate.
 
-The colormap is defined in display color space, while kernel accumulation operates in linear space. For saturated color palettes, this can produce a minor perceptual inconsistency that would be corrected by linearizing the palette entries before upload.
-
 \subsection{Future Work}
 
-The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price trace without inflating kernel weights. As future work, we plan to combine both representations in a single view, making the relationship between price trajectory and activity density (negotiated volume) immediately readable.
+The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price chart without inflating kernel weights. As future work, we plan to combine both representations in a single view, making the relationship between price trajectory and activity density (negotiated volume) immediately readable.
+
+The colormap is defined in display color space, while kernel accumulation operates in linear space. Perceptual tone-mapping could be used to improve visual encoding, making information easier to interpret.
 
 
 
