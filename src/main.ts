@@ -194,7 +194,7 @@ function updateMenuHighlight() {
 }
 
 function navigateToPage(page: string) {
-  const target = new URL(window.location.origin);
+  const target = new URL(window.location.href);
   target.searchParams.set("page", page);
   window.location.assign(target.toString());
 }
@@ -234,4 +234,3 @@ function renderTable(rows: Array<Record<string, string>>) {
   table.appendChild(body);
   return table;
 }
-
