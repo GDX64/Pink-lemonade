@@ -300,22 +300,18 @@
 % author names and affiliations
 % use a multiple column layout for up to three different
 % affiliations
-\author{\IEEEauthorblockN{Michael Shell}
-\IEEEauthorblockA{School of Electrical and\\Computer Engineering\\
-Georgia Institute of Technology\\
-Atlanta, Georgia 30332--0250\\
-Email: http://www.michaelshell.org/contact.html}
+\author{\IEEEauthorblockN{Gabriel Eduardo de Lima Machado}
+\IEEEauthorblockA{Institute of Informatics \\
+Federal University of Rio Grande do Sul\\
+Porto Alegre, RS, Brazil\\
+Email: gabriel.delmachado@gmail.com}
 \and
-\IEEEauthorblockN{Homer Simpson}
-\IEEEauthorblockA{Twentieth Century Fox\\
-Springfield, USA\\
-Email: homer@thesimpsons.com}
-\and
-\IEEEauthorblockN{James Kirk\\ and Montgomery Scott}
-\IEEEauthorblockA{Starfleet Academy\\
-San Francisco, California 96678--2391\\
-Telephone: (800) 555--1212\\
-Fax: (888) 555--1212}}
+\IEEEauthorblockN{Carla M. Dal Sasso Freitas}
+\IEEEauthorblockA{Institute of Informatics \\
+Federal University of Rio Grande do Sul\\
+Porto Alegre, RS, Brazil\\
+Email: carla@inf.ufrgs.br}
+}
 
 % conference papers do not typically use \thanks and this command
 % is locked out in conference mode. If really needed, such as for
@@ -418,7 +414,7 @@ Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our
 \begin{figure}[t]
   \centering
   \includegraphics[width=1\linewidth]{figs/bitcoin-negotiation.png}
-  \caption{Bitcoin trading sample from Coinbase, with 88,956 minutes compressed into 271 Gaussian kernels (December 2025 to May 2026), highlighting the February downturn and unusual volume concentration around Feb 05.}
+  \caption{Bitcoin trading sample from Coinbase, with 100 thousand samples of 5 minutes compressed into 205 Gaussian kernels, highlighting the February downturn and unusual volume concentration around Feb 05 where more than 390 thousand bitcoins were traded.}
   \label{fig:bitcoin-sample}
 \end{figure}
 
@@ -662,10 +658,10 @@ The normalized value is then mapped through a three-stop colormap with a user-ad
 An optional quantization step maps the normalized value to a discrete number of levels before color lookup, producing a contour-map aesthetic that can make density gradients easier to read.
 
 
-\section{Discussion and Conclusions}
-\label{sec:conclusion}
+\section{Results and Discussion}
+\label{sec:results}
 
-We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and dynamic color mapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
+%We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and dynamic color mapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
 
 \subsection{Benchmark Results}
 
@@ -734,13 +730,22 @@ The technique requires a GPU that supports floating-point render target formats 
 
 At very high zoom levels --- sub-millisecond time windows for tick data --- the view contains so few points that the density field degenerates into isolated splats, and the heatmap character of the visualization disappears. At that scale, a plain line or scatter chart is more appropriate.
 
+\section{Conclusions}
+\label{sec:conclusions}
+
+We presented an interactive density-heatmap pipeline for weighted timeseries data. Three GPU passes --- additive Gaussian accumulation, max-reduction, and dynamic color mapping --- are sufficient for real-time visualization at financial-tick scale. Adaptive weighted-merge downsampling bounds work to display resolution, so performance scales with visible data rather than total dataset size.
+
+Although we have not conducted formal usability tests, the technique was motivated by the need to provide users with support for analyzing large time series of stock trading and detecting patterns of value and volume over time. After an informal assessment by an expert from a fintech company, the technique is being integrated into their product as an indicator available to their clients. 
+
 \subsection{Future Work}
 
-The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price chart without inflating kernel weights. As future work, we plan to combine both representations in a single view, making the relationship between price trajectory and activity density (negotiated volume) immediately readable.
+There are several venues we are envisioning as future work. At first, we will compare our approach with other techniques in terms of performance and error.  
+
+The shape-preserving downsampling strategies (LTTB, RDP) could drive a dedicated line chart pass in parallel with the density heatmap, providing a geometrically accurate price chart without inflating kernel weights. We plan to combine both representations in a single view, making the relationship between price trajectory and activity density (negotiated volume) immediately readable.
 
 The colormap is defined in display color space, while kernel accumulation operates in linear space. Perceptual tone-mapping could be used to improve visual encoding, making information easier to interpret.
 
-
+Finally, we will assess it across different time series to demonstrate its generalizability. Such time series might contain multiple stocks, different temporal scales, and also different volume distributions.
 
 % conference papers do not normally have an appendix
 
