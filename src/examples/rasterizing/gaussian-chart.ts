@@ -82,6 +82,7 @@ export class GaussianChart {
   private downsampler!: Awaited<ReturnType<typeof wasmMerge>>;
   private viewManager!: ViewManager;
   private chartCanvas!: ChartCanvas;
+  private profiler: GpuProfiler | null = null;
   private destroyed = false;
 
   private hdrW = 0;
@@ -145,6 +146,13 @@ export class GaussianChart {
     this.renderedPointsController = null;
   }
 
+  /** Spreadable timestampWrites for a pass descriptor; empty when profiling is off. */
+  private timestampWrites(
+    pass: string,
+  ): { timestampWrites: GPURenderPassTimestampWrites } | {} {
+    return this.profiler ? { timestampWrites: this.profiler.timestampWrites(pass) } : {};
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -180,6 +188,7 @@ export class GaussianChart {
     this.statsReadbackBuffer?.destroy();
     this.colorBuffer?.destroy();
     this.hdrTexture?.destroy();
+    this.profiler?.destroy();
   }
 
   async start(): Promise<void> {
@@ -197,6 +206,13 @@ export class GaussianChart {
       this.gpu.device,
       this.gpu.format,
     );
+    if (this.gpu.canTimestamp) {
+      this.profiler = new GpuProfiler(this.gpu.device, [
+        "accumulation",
+        "reduction",
+        "tonemap",
+      ]);
+    }
 
     const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
       this.gpu.device,
@@ -489,6 +505,7 @@ export class GaussianChart {
           storeOp: "store",
         },
       ],
+      ...this.timestampWrites("accumulation"),
     });
 
     const viewMinX = this.viewManager.getViewMinX();
@@ -534,7 +551,9 @@ export class GaussianChart {
     accPass.draw(6, this.lastMergedCount);
     accPass.end();
 
-    const reductionPass = encoder.beginComputePass();
+    const reductionPass = encoder.beginComputePass({
+      ...this.timestampWrites("reduction"),
+    });
     reductionPass.setPipeline(this.reductionPipeline);
     reductionPass.setBindGroup(0, this.reductionBindGroup);
     reductionPass.dispatchWorkgroups(
@@ -551,13 +570,18 @@ export class GaussianChart {
           storeOp: "store",
         },
       ],
+      ...this.timestampWrites("tonemap"),
     });
     tonemapPass.setPipeline(this.tonemapPipeline);
     tonemapPass.setBindGroup(0, this.tonemapBindGroup);
     tonemapPass.draw(3);
     tonemapPass.end();
 
+    const profileReadBuffer = this.profiler?.resolve(encoder) ?? null;
     this.gpu.device.queue.submit([encoder.finish()]);
+    if (profileReadBuffer) {
+      void this.profiler?.read(profileReadBuffer);
+    }
     this.scheduleReadback();
     await this.gpu.device.queue.onSubmittedWorkDone();
     this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
@@ -895,13 +919,122 @@ async function initWebGPU(canvas: HTMLCanvasElement) {
   if (!navigator.gpu) throw new Error("WebGPU not supported");
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("No WebGPU adapter found");
-  const device = await adapter.requestDevice({
-    requiredFeatures: ["float32-blendable"],
-  });
+  const requiredFeatures: GPUFeatureName[] = ["float32-blendable"];
+  if (adapter.features.has("timestamp-query")) {
+    requiredFeatures.push("timestamp-query");
+  }
+  const device = await adapter.requestDevice({ requiredFeatures });
   const context = canvas.getContext("webgpu")!;
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: "premultiplied" });
-  return { device, context, format };
+  return {
+    device,
+    context,
+    format,
+    canTimestamp: device.features.has("timestamp-query"),
+  };
+}
+
+/**
+ * Times GPU passes on-device via timestamp queries. Each pass gets a
+ * begin/end timestamp pair; results are read back asynchronously and the
+ * per-pass averages are logged roughly once per second.
+ *
+ * Requires the "timestamp-query" device feature. Timestamps are nanoseconds,
+ * but browsers quantize them for Spectre mitigation, so treat single-frame
+ * numbers as noisy — the logged averages are what to trust.
+ */
+class GpuProfiler {
+  private readonly querySet: GPUQuerySet;
+  private readonly resolveBuffer: GPUBuffer;
+  private readonly readBuffers: GPUBuffer[] = [];
+  private readonly byteSize: number;
+  private readonly accum = new Map<string, { total: number; count: number }>();
+  private lastLog = 0;
+
+  constructor(
+    device: GPUDevice,
+    private readonly passNames: readonly string[],
+  ) {
+    const count = passNames.length * 2;
+    this.byteSize = count * 8; // one u64 per timestamp
+    this.querySet = device.createQuerySet({ type: "timestamp", count });
+    this.resolveBuffer = device.createBuffer({
+      size: this.byteSize,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    // A small pool so the CPU can read frame N while frames N+1/N+2 are inflight.
+    for (let i = 0; i < 3; i++) {
+      this.readBuffers.push(
+        device.createBuffer({
+          size: this.byteSize,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+        }),
+      );
+    }
+  }
+
+  /** Pass this to a pass descriptor's `timestampWrites` field. */
+  timestampWrites(pass: string): GPURenderPassTimestampWrites {
+    const i = this.passNames.indexOf(pass);
+    return {
+      querySet: this.querySet,
+      beginningOfPassWriteIndex: i * 2,
+      endOfPassWriteIndex: i * 2 + 1,
+    };
+  }
+
+  /**
+   * Resolve queries into a free readback buffer. Call once per frame just
+   * before `encoder.finish()`; returns the buffer to hand to `read()` after
+   * submit, or null if none is free (that frame is simply skipped).
+   */
+  resolve(encoder: GPUCommandEncoder): GPUBuffer | null {
+    const readBuffer = this.readBuffers.find((b) => b.mapState === "unmapped");
+    if (!readBuffer) return null;
+    encoder.resolveQuerySet(this.querySet, 0, this.passNames.length * 2, this.resolveBuffer, 0);
+    encoder.copyBufferToBuffer(this.resolveBuffer, 0, readBuffer, 0, this.byteSize);
+    return readBuffer;
+  }
+
+  /** Map the readback buffer, accumulate durations, and log averages ~1/s. */
+  async read(readBuffer: GPUBuffer): Promise<void> {
+    try {
+      await readBuffer.mapAsync(GPUMapMode.READ);
+    } catch {
+      return; // device lost / buffer destroyed
+    }
+    const times = new BigInt64Array(readBuffer.getMappedRange());
+    this.passNames.forEach((name, i) => {
+      const begin = times[i * 2] ?? 0n;
+      const end = times[i * 2 + 1] ?? 0n;
+      const ns = Number(end - begin);
+      if (ns <= 0) return;
+      const entry = this.accum.get(name) ?? { total: 0, count: 0 };
+      entry.total += ns;
+      entry.count += 1;
+      this.accum.set(name, entry);
+    });
+    readBuffer.unmap();
+
+    const now = performance.now();
+    if (now - this.lastLog >= 1000) {
+      this.lastLog = now;
+      const parts = this.passNames.map((name) => {
+        const e = this.accum.get(name);
+        const us = e && e.count ? e.total / e.count / 1000 : 0;
+        return `${name}: ${us.toFixed(1)}µs`;
+      });
+      console.log(`[gpu] ${parts.join("  ")}`);
+      this.accum.clear();
+    }
+  }
+
+  destroy(): void {
+    this.querySet.destroy();
+    this.resolveBuffer.destroy();
+    this.readBuffers.forEach((b) => b.destroy());
+  }
 }
 
 function createHDRTexture(device: GPUDevice, width: number, height: number) {
