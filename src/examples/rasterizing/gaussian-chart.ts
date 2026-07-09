@@ -69,6 +69,7 @@ export class GaussianChart {
   private accumulationPipeline!: GPURenderPipeline;
   private reductionPipeline!: GPUComputePipeline;
   private tonemapPipeline!: GPURenderPipeline;
+  private blurPipeline!: GPURenderPipeline;
   private quadBuffer!: GPUBuffer;
   private instanceBuffer!: GPUBuffer;
   private uniformBuffer!: GPUBuffer;
@@ -77,8 +78,10 @@ export class GaussianChart {
   private colorBuffer!: GPUBuffer;
   private accBindGroup!: GPUBindGroup;
   private hdrTexture!: GPUTexture;
+  private ldrTexture!: GPUTexture;
   private reductionBindGroup!: GPUBindGroup;
   private tonemapBindGroup!: GPUBindGroup;
+  private blurBindGroup!: GPUBindGroup;
   private downsampler!: Awaited<ReturnType<typeof wasmMerge>>;
   private viewManager!: ViewManager;
   private chartCanvas!: ChartCanvas;
@@ -150,7 +153,9 @@ export class GaussianChart {
   private timestampWrites(
     pass: string,
   ): { timestampWrites: GPURenderPassTimestampWrites } | {} {
-    return this.profiler ? { timestampWrites: this.profiler.timestampWrites(pass) } : {};
+    return this.profiler
+      ? { timestampWrites: this.profiler.timestampWrites(pass) }
+      : {};
   }
 
   destroy() {
@@ -188,6 +193,7 @@ export class GaussianChart {
     this.statsReadbackBuffer?.destroy();
     this.colorBuffer?.destroy();
     this.hdrTexture?.destroy();
+    this.ldrTexture?.destroy();
     this.profiler?.destroy();
   }
 
@@ -206,11 +212,13 @@ export class GaussianChart {
       this.gpu.device,
       this.gpu.format,
     );
+    this.blurPipeline = createBlurPipeline(this.gpu.device, this.gpu.format);
     if (this.gpu.canTimestamp) {
       this.profiler = new GpuProfiler(this.gpu.device, [
         "accumulation",
         "reduction",
         "tonemap",
+        "blur",
       ]);
     }
 
@@ -247,6 +255,12 @@ export class GaussianChart {
     this.hdrW = this.canvas.width;
     this.hdrH = this.canvas.height;
     this.hdrTexture = createHDRTexture(this.gpu.device, this.hdrW, this.hdrH);
+    this.ldrTexture = createLDRTexture(
+      this.gpu.device,
+      this.gpu.format,
+      this.hdrW,
+      this.hdrH,
+    );
     this.reductionBindGroup = createReductionBindGroup(
       this.gpu.device,
       this.reductionPipeline,
@@ -259,6 +273,11 @@ export class GaussianChart {
       this.hdrTexture,
       this.statsBuffer,
       this.colorBuffer,
+    );
+    this.blurBindGroup = createBlurBindGroup(
+      this.gpu.device,
+      this.blurPipeline,
+      this.ldrTexture,
     );
 
     this.viewManager = new ViewManager(this.dataF64);
@@ -565,7 +584,7 @@ export class GaussianChart {
     const tonemapPass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.gpu.context.getCurrentTexture().createView(),
+          view: this.ldrTexture.createView(),
           loadOp: "clear",
           storeOp: "store",
         },
@@ -576,6 +595,21 @@ export class GaussianChart {
     tonemapPass.setBindGroup(0, this.tonemapBindGroup);
     tonemapPass.draw(3);
     tonemapPass.end();
+
+    const blurPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.gpu.context.getCurrentTexture().createView(),
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+      ...this.timestampWrites("blur"),
+    });
+    blurPass.setPipeline(this.blurPipeline);
+    blurPass.setBindGroup(0, this.blurBindGroup);
+    blurPass.draw(3);
+    blurPass.end();
 
     const profileReadBuffer = this.profiler?.resolve(encoder) ?? null;
     this.gpu.device.queue.submit([encoder.finish()]);
@@ -771,6 +805,13 @@ export class GaussianChart {
     this.lastViewMinX = NaN;
     this.hdrTexture.destroy();
     this.hdrTexture = createHDRTexture(this.gpu.device, this.hdrW, this.hdrH);
+    this.ldrTexture.destroy();
+    this.ldrTexture = createLDRTexture(
+      this.gpu.device,
+      this.gpu.format,
+      this.hdrW,
+      this.hdrH,
+    );
     this.reductionBindGroup = createReductionBindGroup(
       this.gpu.device,
       this.reductionPipeline,
@@ -783,6 +824,11 @@ export class GaussianChart {
       this.hdrTexture,
       this.statsBuffer,
       this.colorBuffer,
+    );
+    this.blurBindGroup = createBlurBindGroup(
+      this.gpu.device,
+      this.blurPipeline,
+      this.ldrTexture,
     );
   }
 
@@ -992,8 +1038,20 @@ class GpuProfiler {
   resolve(encoder: GPUCommandEncoder): GPUBuffer | null {
     const readBuffer = this.readBuffers.find((b) => b.mapState === "unmapped");
     if (!readBuffer) return null;
-    encoder.resolveQuerySet(this.querySet, 0, this.passNames.length * 2, this.resolveBuffer, 0);
-    encoder.copyBufferToBuffer(this.resolveBuffer, 0, readBuffer, 0, this.byteSize);
+    encoder.resolveQuerySet(
+      this.querySet,
+      0,
+      this.passNames.length * 2,
+      this.resolveBuffer,
+      0,
+    );
+    encoder.copyBufferToBuffer(
+      this.resolveBuffer,
+      0,
+      readBuffer,
+      0,
+      this.byteSize,
+    );
     return readBuffer;
   }
 
@@ -1161,6 +1219,74 @@ function createAccumulationPipeline(device: GPUDevice, heatmapcssH: number) {
       ],
     },
     primitive: { topology: "triangle-list" },
+  });
+}
+
+function createLDRTexture(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  width: number,
+  height: number,
+) {
+  return device.createTexture({
+    size: [width, height],
+    format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+}
+
+/**
+ * Fullscreen 3x3 box blur. Reads the tonemapped LDR color (including alpha)
+ * and averages each pixel with its 8 neighbours, softening the hard edges
+ * produced by the opacity cut and colour-band quantization in tonemap.
+ */
+function createBlurPipeline(device: GPUDevice, format: GPUTextureFormat) {
+  const module = device.createShaderModule({
+    code: /* wgsl */ `
+      @group(0) @binding(0) var src: texture_2d<f32>;
+
+      @vertex
+      fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+        var positions = array<vec2f, 3>(
+          vec2f(-1.0, -1.0),
+          vec2f( 3.0, -1.0),
+          vec2f(-1.0,  3.0),
+        );
+        return vec4f(positions[vi], 0.0, 1.0);
+      }
+
+      @fragment
+      fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+        let size = vec2i(textureDimensions(src));
+        let center = vec2i(pos.xy);
+        var sum = vec4f(0.0);
+        for (var dy = -1; dy <= 1; dy++) {
+          for (var dx = -1; dx <= 1; dx++) {
+            let c = clamp(center + vec2i(dx, dy), vec2i(0), size - vec2i(1));
+            sum += textureLoad(src, c, 0);
+          }
+        }
+        return sum / 9.0;
+      }
+    `,
+  });
+
+  return device.createRenderPipeline({
+    layout: "auto",
+    vertex: { module, entryPoint: "vs_main" },
+    fragment: { module, entryPoint: "fs_main", targets: [{ format }] },
+    primitive: { topology: "triangle-list" },
+  });
+}
+
+function createBlurBindGroup(
+  device: GPUDevice,
+  pipeline: GPURenderPipeline,
+  ldrTexture: GPUTexture,
+) {
+  return device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: ldrTexture.createView() }],
   });
 }
 
