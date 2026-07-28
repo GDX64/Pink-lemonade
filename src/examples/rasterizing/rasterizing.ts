@@ -195,14 +195,21 @@ async function randomImageFull() {
   });
 }
 
+async function loadJson(): Promise<string> {
+  throw Error(
+    "Loading JSON from URL is not supported in this environment. Please provide the data directly.",
+  );
+  // const jsonData = (await import("./data.json?url")).default;
+  // return jsonData;
+}
+
 async function loadData(kind: "random" | "data"): Promise<LoadedData> {
   if (kind === "random") {
     return createNoiseFloatData();
   }
 
-  const jsonData = (await import("./data.json?url")).default;
   const { base64: base64Data }: { base64: string } = await (
-    await fetch(jsonData)
+    await fetch(await loadJson())
   ).json();
   const other = base64Data.replaceAll("'", "");
   const decoded = atob(other);
