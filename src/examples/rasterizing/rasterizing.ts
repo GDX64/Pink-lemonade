@@ -196,11 +196,8 @@ async function randomImageFull() {
 }
 
 async function loadJson(): Promise<string> {
-  throw Error(
-    "Loading JSON from URL is not supported in this environment. Please provide the data directly.",
-  );
-  // const jsonData = (await import("./data.json?url")).default;
-  // return jsonData;
+  const jsonData = (await import("./data.json?url")).default;
+  return jsonData;
 }
 
 async function loadData(kind: "random" | "data"): Promise<LoadedData> {
