@@ -1,13 +1,24 @@
 import { createNoiseFloatData } from "../chart/chart";
 import { wasmMerge } from "../examples/rasterizing/downsampling";
 import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
+import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
 
 /**
  * Dataset sizes at which Runnalls' reduction is also benchmarked. It is
  * O(N^2) to set up, so it is capped well below the merge sizes: at N=10,000 a
  * single run already takes ~1 minute, and N=100,000 would take hours.
  */
-const KL_SCENARIOS = new Map<string, number>([["1_000", 50]]);
+const KL_SCENARIOS = new Map<string, number>([["1_000", 10]]);
+
+/**
+ * Salmond's clustering reduction is far cheaper than Runnalls --- a whole pass
+ * per iteration rather than a rescan per merge --- so it can be timed at 10,000
+ * too. Still O(N^2) per pass, so 100,000 stays out of reach.
+ */
+const SALMOND_SCENARIOS = new Map<string, number>([
+  ["1_000", 50],
+  ["10_000", 10],
+]);
 
 export async function runBenchmarkPage(onProgress?: (message: string) => void) {
   const downsampler = await wasmMerge();
@@ -65,6 +76,27 @@ export async function runBenchmarkPage(onProgress?: (message: string) => void) {
       }
     }
     rows.push(makeBenchRow(`${name} | runnalls`, target, durations));
+  }
+
+  // Salmond clusters in groups, so it can only guarantee *at most* the merge's
+  // kernel budget. The achieved count is read back rather than asserted.
+  const salmondDownsampler = await wasmSalmondMerge();
+  for (const [name, sample] of samples) {
+    const iterations = SALMOND_SCENARIOS.get(name);
+    if (iterations === undefined) continue;
+
+    const target = mergedCount.get(name) ?? 0;
+    salmondDownsampler.setDataF64(sample.dataF64);
+    const durations: number[] = [];
+    let achieved = 0;
+    for (let i = 0; i < iterations; i++) {
+      onProgress?.(`Salmond, N = ${name} (${i + 1}/${iterations})`);
+      await waitForNextFrame();
+      const start = performance.now();
+      achieved = calcSalmond(salmondDownsampler, sample, target);
+      durations.push(performance.now() - start);
+    }
+    rows.push(makeBenchRow(`${name} | salmond`, achieved, durations));
   }
 
   return rows;
@@ -144,6 +176,27 @@ function calcWithoutData(
   const result = downsampler.mergePoints();
   if (result.count <= 0) {
     throw new Error("Expected merged points for benchmark");
+  }
+  return result.count;
+}
+
+function calcSalmond(
+  downsampler: Awaited<ReturnType<typeof wasmSalmondMerge>>,
+  { yMin, yMax }: ReturnType<typeof createNoiseFloatData>,
+  targetCount: number,
+) {
+  downsampler.setViewMinX(0);
+  downsampler.setViewMaxX(1);
+  downsampler.setViewMinY(yMin);
+  downsampler.setViewMaxY(yMax);
+  downsampler.setScreenW(1920);
+  downsampler.setScreenH(1080);
+  downsampler.setSigmaSizePx(16);
+  downsampler.setTargetCount(targetCount);
+
+  const result = downsampler.mergePoints();
+  if (result.count <= 0) {
+    throw new Error("Expected reduced kernels for benchmark");
   }
   return result.count;
 }

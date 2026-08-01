@@ -1,6 +1,7 @@
 import { createNoiseFloatData } from "../chart/chart";
 import { mergePoints } from "../examples/rasterizing/downsampling";
 import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
+import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
 
 /**
  * Largest dataset for which Runnalls' reduction is also evaluated. It is
@@ -8,6 +9,12 @@ import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
  * columns read "n/a".
  */
 const KL_MAX_N = 1_000;
+
+/**
+ * Same for Salmond's clustering reduction, which reduces a whole pass at a time
+ * instead of rescanning after every merge and so reaches 10,000 comfortably.
+ */
+const SALMOND_MAX_N = 10_000;
 
 type GaussianComponent = {
   x: number;
@@ -32,6 +39,12 @@ type MonteCarloMetrics = {
   mergedCount: number;
   /** Runnalls at the same kernel budget, or null when N exceeds KL_MAX_N. */
   kl: { mse: number; nrmse: number; rme: number } | null;
+  /**
+   * Salmond clustering, or null when N exceeds SALMOND_MAX_N. It combines
+   * components in groups, so `count` can land below the merge's budget rather
+   * than exactly on it --- the comparison is only fair read alongside it.
+   */
+  salmond: { mse: number; nrmse: number; rme: number; count: number } | null;
 };
 
 type MonteCarloEstimationEvent =
@@ -78,10 +91,15 @@ export async function runMsePage(
   const rows: Array<Record<string, string>> = [];
   const progressUi = createMseProgressUi();
   const klDownsampler = await wasmKlMerge();
+  const salmondDownsampler = await wasmSalmondMerge();
 
   for (const [scenarioIndex, n] of scenarios.entries()) {
     let metrics: MonteCarloMetrics | null = null;
-    for (const event of estimateMonteCarloMetrics(n, klDownsampler)) {
+    for (const event of estimateMonteCarloMetrics(
+      n,
+      klDownsampler,
+      salmondDownsampler,
+    )) {
       if (event.kind === "scenario-start") {
         progressUi.resetPlot({
           n: event.n,
@@ -144,6 +162,13 @@ export async function runMsePage(
       nrmseRatio: metrics.kl
         ? `${(metrics.nrmse / metrics.kl.nrmse).toFixed(1)}x`
         : "n/a",
+      salmondKernels: metrics.salmond ? String(metrics.salmond.count) : "n/a",
+      salmondNrmsePct: metrics.salmond
+        ? `${(metrics.salmond.nrmse * 100).toFixed(4)}%`
+        : "n/a",
+      salmondRme: metrics.salmond
+        ? `±${metrics.salmond.rme.toFixed(2)}%`
+        : "n/a",
       samples: String(metrics.acceptedSamples),
     });
   }
@@ -156,6 +181,7 @@ export async function runMsePage(
 function* estimateMonteCarloMetrics(
   n: number,
   klDownsampler: Awaited<ReturnType<typeof wasmKlMerge>>,
+  salmondDownsampler: Awaited<ReturnType<typeof wasmSalmondMerge>>,
 ): Generator<MonteCarloEstimationEvent, void, void> {
   const { dataF64, yMin, yMax } = createNoiseFloatData(n);
 
@@ -208,6 +234,26 @@ function* estimateMonteCarloMetrics(
     klComponents = decodeComponents(klDownsampler.mergePoints().gpuInstances);
   }
 
+  // Salmond clustering at the same budget. It reaches a larger N than Runnalls
+  // but can only guarantee *at most* the merge's kernel count, so the achieved
+  // count is carried through to the table.
+  let salmondComponents: GaussianComponent[] | null = null;
+  let salmondCount = 0;
+  if (n <= SALMOND_MAX_N) {
+    salmondDownsampler.setViewMinX(viewMinX);
+    salmondDownsampler.setViewMaxX(viewMaxX);
+    salmondDownsampler.setViewMinY(viewMinY);
+    salmondDownsampler.setViewMaxY(viewMaxY);
+    salmondDownsampler.setScreenW(screenW);
+    salmondDownsampler.setScreenH(screenH);
+    salmondDownsampler.setSigmaSizePx(sigmaSizePx);
+    salmondDownsampler.setTargetCount(merged.count);
+    salmondDownsampler.setDataF64(dataF64);
+    const salmondResult = salmondDownsampler.mergePoints();
+    salmondCount = salmondResult.count;
+    salmondComponents = decodeComponents(salmondResult.gpuInstances);
+  }
+
   const toSX = buildToSX(viewMinX, viewMaxX, screenW, sigmaSizePx);
   const toSY = buildToSY(viewMinY, viewMaxY, screenH, sigmaSizePx);
 
@@ -221,6 +267,8 @@ function* estimateMonteCarloMetrics(
   let maxReference = Number.NEGATIVE_INFINITY;
   let klSqErrorSum = 0;
   let klSqErrorSumSq = 0;
+  let salmondSqErrorSum = 0;
+  let salmondSqErrorSumSq = 0;
   while (acceptedSamples < SAMPLE_COUNT) {
     const x = lerp(viewMinX, viewMaxX, rng());
     const y = lerp(viewMinY, viewMaxY, rng());
@@ -256,6 +304,14 @@ function* estimateMonteCarloMetrics(
       const klSqError = klDiff * klDiff;
       klSqErrorSum += klSqError;
       klSqErrorSumSq += klSqError * klSqError;
+    }
+
+    if (salmondComponents) {
+      const salmondDiff =
+        evaluateKdeAt(salmondComponents, x, y, toSX, toSY) - reference;
+      const salmondSqError = salmondDiff * salmondDiff;
+      salmondSqErrorSum += salmondSqError;
+      salmondSqErrorSumSq += salmondSqError * salmondSqError;
     }
 
     if (
@@ -305,6 +361,27 @@ function* estimateMonteCarloMetrics(
     };
   }
 
+  let salmond: MonteCarloMetrics["salmond"] = null;
+  if (salmondComponents) {
+    const salmondMse = salmondSqErrorSum / Math.max(acceptedSamples, 1);
+    const salmondVariance =
+      acceptedSamples > 1
+        ? (salmondSqErrorSumSq -
+            (salmondSqErrorSum * salmondSqErrorSum) / acceptedSamples) /
+          (acceptedSamples - 1)
+        : 0;
+    const salmondStdErr = Math.sqrt(
+      Math.max(salmondVariance, 0) / Math.max(acceptedSamples, 1),
+    );
+    salmond = {
+      mse: salmondMse,
+      nrmse: referenceRange > 0 ? Math.sqrt(salmondMse) / referenceRange : 0,
+      rme:
+        salmondMse > 0 ? ((1.96 * salmondStdErr) / salmondMse) * 100 : 0,
+      count: salmondCount,
+    };
+  }
+
   yield {
     kind: "result",
     n,
@@ -315,6 +392,7 @@ function* estimateMonteCarloMetrics(
       acceptedSamples,
       mergedCount: merged.count,
       kl,
+      salmond,
     },
   };
 }
