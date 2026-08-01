@@ -1,5 +1,13 @@
 import { createNoiseFloatData } from "../chart/chart";
 import { mergePoints } from "../examples/rasterizing/downsampling";
+import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
+
+/**
+ * Largest dataset for which Runnalls' reduction is also evaluated. It is
+ * O(N^2), so N=100,000 is out of reach (hours); above this the comparison
+ * columns read "n/a".
+ */
+const KL_MAX_N = 1_000;
 
 type GaussianComponent = {
   x: number;
@@ -22,6 +30,8 @@ type MonteCarloMetrics = {
   rme: number;
   acceptedSamples: number;
   mergedCount: number;
+  /** Runnalls at the same kernel budget, or null when N exceeds KL_MAX_N. */
+  kl: { mse: number; nrmse: number; rme: number } | null;
 };
 
 type MonteCarloEstimationEvent =
@@ -67,10 +77,11 @@ export async function runMsePage(
   const scenarios = [1_000, 10_000, 100_000] as const;
   const rows: Array<Record<string, string>> = [];
   const progressUi = createMseProgressUi();
+  const klDownsampler = await wasmKlMerge();
 
   for (const [scenarioIndex, n] of scenarios.entries()) {
     let metrics: MonteCarloMetrics | null = null;
-    for (const event of estimateMonteCarloMetrics(n)) {
+    for (const event of estimateMonteCarloMetrics(n, klDownsampler)) {
       if (event.kind === "scenario-start") {
         progressUi.resetPlot({
           n: event.n,
@@ -126,6 +137,13 @@ export async function runMsePage(
       merged: String(metrics.mergedCount),
       nrmsePct: `${(metrics.nrmse * 100).toFixed(4)}%`,
       rme: `±${metrics.rme.toFixed(2)}%`,
+      klNrmsePct: metrics.kl
+        ? `${(metrics.kl.nrmse * 100).toFixed(4)}%`
+        : "n/a",
+      klRme: metrics.kl ? `±${metrics.kl.rme.toFixed(2)}%` : "n/a",
+      nrmseRatio: metrics.kl
+        ? `${(metrics.nrmse / metrics.kl.nrmse).toFixed(1)}x`
+        : "n/a",
       samples: String(metrics.acceptedSamples),
     });
   }
@@ -137,6 +155,7 @@ export async function runMsePage(
 
 function* estimateMonteCarloMetrics(
   n: number,
+  klDownsampler: Awaited<ReturnType<typeof wasmKlMerge>>,
 ): Generator<MonteCarloEstimationEvent, void, void> {
   const { dataF64, yMin, yMax } = createNoiseFloatData(n);
 
@@ -173,6 +192,22 @@ function* estimateMonteCarloMetrics(
   const mergedComponents = decodeComponents(merged.gpuInstances);
   const originalComponents = decodeOriginalComponents(dataF64);
 
+  // Runnalls at the same kernel budget: the quality ceiling for this many
+  // kernels, against which the one-pass merge is judged.
+  let klComponents: GaussianComponent[] | null = null;
+  if (n <= KL_MAX_N) {
+    klDownsampler.setViewMinX(viewMinX);
+    klDownsampler.setViewMaxX(viewMaxX);
+    klDownsampler.setViewMinY(viewMinY);
+    klDownsampler.setViewMaxY(viewMaxY);
+    klDownsampler.setScreenW(screenW);
+    klDownsampler.setScreenH(screenH);
+    klDownsampler.setSigmaSizePx(sigmaSizePx);
+    klDownsampler.setTargetCount(merged.count);
+    klDownsampler.setDataF64(dataF64);
+    klComponents = decodeComponents(klDownsampler.mergePoints().gpuInstances);
+  }
+
   const toSX = buildToSX(viewMinX, viewMaxX, screenW, sigmaSizePx);
   const toSY = buildToSY(viewMinY, viewMaxY, screenH, sigmaSizePx);
 
@@ -184,6 +219,8 @@ function* estimateMonteCarloMetrics(
   let sqErrorSumSq = 0;
   let minReference = Number.POSITIVE_INFINITY;
   let maxReference = Number.NEGATIVE_INFINITY;
+  let klSqErrorSum = 0;
+  let klSqErrorSumSq = 0;
   while (acceptedSamples < SAMPLE_COUNT) {
     const x = lerp(viewMinX, viewMaxX, rng());
     const y = lerp(viewMinY, viewMaxY, rng());
@@ -211,6 +248,15 @@ function* estimateMonteCarloMetrics(
     acceptedSamples++;
     if (reference < minReference) minReference = reference;
     if (reference > maxReference) maxReference = reference;
+
+    // Scored on exactly the same accepted samples as the merge, so the two
+    // NRMSE figures are directly comparable.
+    if (klComponents) {
+      const klDiff = evaluateKdeAt(klComponents, x, y, toSX, toSY) - reference;
+      const klSqError = klDiff * klDiff;
+      klSqErrorSum += klSqError;
+      klSqErrorSumSq += klSqError * klSqError;
+    }
 
     if (
       acceptedSamples % PROGRESS_STEP === 0 ||
@@ -241,10 +287,35 @@ function* estimateMonteCarloMetrics(
   const referenceRange = maxReference - minReference;
   const nrmse = referenceRange > 0 ? Math.sqrt(mse) / referenceRange : 0;
 
+  let kl: MonteCarloMetrics["kl"] = null;
+  if (klComponents) {
+    const klMse = klSqErrorSum / Math.max(acceptedSamples, 1);
+    const klVariance =
+      acceptedSamples > 1
+        ? (klSqErrorSumSq - (klSqErrorSum * klSqErrorSum) / acceptedSamples) /
+          (acceptedSamples - 1)
+        : 0;
+    const klStdErr = Math.sqrt(
+      Math.max(klVariance, 0) / Math.max(acceptedSamples, 1),
+    );
+    kl = {
+      mse: klMse,
+      nrmse: referenceRange > 0 ? Math.sqrt(klMse) / referenceRange : 0,
+      rme: klMse > 0 ? ((1.96 * klStdErr) / klMse) * 100 : 0,
+    };
+  }
+
   yield {
     kind: "result",
     n,
-    metrics: { mse, nrmse, rme, acceptedSamples, mergedCount: merged.count },
+    metrics: {
+      mse,
+      nrmse,
+      rme,
+      acceptedSamples,
+      mergedCount: merged.count,
+      kl,
+    },
   };
 }
 

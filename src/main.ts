@@ -57,7 +57,9 @@ const actions: Array<{
     run: async () => {
       setInfo("Running merge benchmark in browser...");
       clearOutput();
-      const table = await runBenchmarkPage();
+      const table = await runBenchmarkPage((message) => {
+        setInfo(`Benchmarking ${message}...`);
+      });
       output.appendChild(renderTable(table));
       setInfo("Benchmark completed.");
     },

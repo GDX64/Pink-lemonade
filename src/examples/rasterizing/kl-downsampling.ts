@@ -1,3 +1,4 @@
+import initWasm, { KlDownsampler } from "../../../pkg/pink_lemonade_wasm";
 import { lowerBound, upperBound } from "./view-manager";
 
 /**
@@ -233,6 +234,16 @@ export function runnallsReduce(
 export interface KLMergeResult {
   gpuInstances: Float32Array;
   count: number;
+}
+
+/**
+ * wasm-backed Runnalls reduction, mirroring `wasmMerge`. Use this rather than
+ * the TypeScript class whenever the result is being timed against the wasm
+ * merge, so both sides run under the same runtime.
+ */
+export async function wasmKlMerge() {
+  await initWasm();
+  return new KlDownsampler();
 }
 
 /**

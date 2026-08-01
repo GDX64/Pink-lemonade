@@ -1,7 +1,15 @@
 import { createNoiseFloatData } from "../chart/chart";
 import { wasmMerge } from "../examples/rasterizing/downsampling";
+import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
 
-export async function runBenchmarkPage() {
+/**
+ * Dataset sizes at which Runnalls' reduction is also benchmarked. It is
+ * O(N^2) to set up, so it is capped well below the merge sizes: at N=10,000 a
+ * single run already takes ~1 minute, and N=100,000 would take hours.
+ */
+const KL_SCENARIOS = new Map<string, number>([["1_000", 50]]);
+
+export async function runBenchmarkPage(onProgress?: (message: string) => void) {
   const downsampler = await wasmMerge();
   const samples = [
     ["1_000", createNoiseFloatData(1_000), 16_570],
@@ -17,6 +25,7 @@ export async function runBenchmarkPage() {
 
   const rows: Array<Record<string, string>> = [];
   for (const [name, sample, iterations] of [...samples].reverse()) {
+    onProgress?.(`merge, N = ${name} (${iterations} iterations)`);
     downsampler.setDataF64(sample.dataF64);
     const durations: number[] = [];
     for (let i = 0; i < iterations; i++) {
@@ -24,10 +33,47 @@ export async function runBenchmarkPage() {
       calcWithoutData(downsampler, sample);
       durations.push(performance.now() - start);
     }
-    rows.push(makeBenchRow(name, mergedCount.get(name) ?? 0, durations));
+    rows.push(
+      makeBenchRow(`${name} | merge`, mergedCount.get(name) ?? 0, durations),
+    );
+  }
+
+  // Runnalls runs at the same kernel budget the merge produced, so the two
+  // methods are timed for the same amount of output.
+  const klDownsampler = await wasmKlMerge();
+  for (const [name, sample] of samples) {
+    const iterations = KL_SCENARIOS.get(name);
+    if (iterations === undefined) continue;
+
+    const target = mergedCount.get(name) ?? 0;
+    // Uploaded once, outside the timed region, exactly as for the merge rows.
+    klDownsampler.setDataF64(sample.dataF64);
+    const durations: number[] = [];
+    for (let i = 0; i < iterations; i++) {
+      onProgress?.(
+        `Runnalls, N = ${name} (${i + 1}/${iterations}, this is slow)`,
+      );
+      // Yield so the progress message paints before the blocking wasm call.
+      await waitForNextFrame();
+      const start = performance.now();
+      const count = calcKl(klDownsampler, sample, target);
+      durations.push(performance.now() - start);
+      if (count !== target) {
+        throw new Error(
+          `Runnalls returned ${count} kernels, expected ${target}`,
+        );
+      }
+    }
+    rows.push(makeBenchRow(`${name} | runnalls`, target, durations));
   }
 
   return rows;
+}
+
+function waitForNextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 function makeBenchRow(name: string, merged: number, durationsMs: number[]) {
@@ -51,7 +97,7 @@ function makeBenchRow(name: string, merged: number, durationsMs: number[]) {
     p99: quantile(sorted, 0.99).toFixed(4),
     p995: quantile(sorted, 0.995).toFixed(4),
     p999: quantile(sorted, 0.999).toFixed(4),
-    rme: `±${rme.toFixed(2)}%`,
+    rme: n > 1 ? `±${rme.toFixed(2)}%` : "n/a",
     samples: String(n),
   };
 }
@@ -101,3 +147,25 @@ function calcWithoutData(
   }
   return result.count;
 }
+
+function calcKl(
+  downsampler: Awaited<ReturnType<typeof wasmKlMerge>>,
+  { yMin, yMax }: ReturnType<typeof createNoiseFloatData>,
+  targetCount: number,
+) {
+  downsampler.setViewMinX(0);
+  downsampler.setViewMaxX(1);
+  downsampler.setViewMinY(yMin);
+  downsampler.setViewMaxY(yMax);
+  downsampler.setScreenW(1920);
+  downsampler.setScreenH(1080);
+  downsampler.setSigmaSizePx(16);
+  downsampler.setTargetCount(targetCount);
+
+  const result = downsampler.mergePoints();
+  if (result.count <= 0) {
+    throw new Error("Expected reduced kernels for benchmark");
+  }
+  return result.count;
+}
+
