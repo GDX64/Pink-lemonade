@@ -58,9 +58,9 @@ const actions: Array<{
     run: async () => {
       setInfo("Running merge benchmark in browser...");
       clearOutput();
-      const results = await runBenchmarkPage((message) => {
-        setInfo(`Benchmarking ${message}...`);
-      });
+      // Progress is reported by the page's own overlay: the timing loops block
+      // the main thread, so anything outside them cannot repaint.
+      const results = await runBenchmarkPage();
       const chartMount = document.createElement("div");
       output.appendChild(chartMount);
       await renderBenchmarkChart(results, chartMount);

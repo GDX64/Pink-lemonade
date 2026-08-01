@@ -2,6 +2,18 @@ import { createNoiseFloatData } from "../chart/chart";
 import { wasmMerge } from "../examples/rasterizing/downsampling";
 import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
 import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
+import {
+  createBenchmarkProgressUi,
+  waitForRepaint,
+} from "./benchmark-progress";
+
+/**
+ * How long to stay inside the blocking timing loop before handing a frame back
+ * to the browser. Yields happen *between* timed iterations, never inside one, so
+ * the measurements are unaffected --- only wall-clock time grows, by roughly one
+ * frame per interval.
+ */
+const YIELD_INTERVAL_MS = 100;
 
 /**
  * Dataset sizes at which Runnalls' reduction is also benchmarked. It is
@@ -10,7 +22,7 @@ import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
  */
 const KL_SCENARIOS = new Map<string, number>([
   ["1_000", 5],
-  ["100", 5],
+  ["3_000", 2],
 ]);
 
 /**
@@ -20,8 +32,8 @@ const KL_SCENARIOS = new Map<string, number>([
  */
 const SALMOND_SCENARIOS = new Map<string, number>([
   ["1_000", 10],
-  ["5_000", 10],
-  ["10_000", 10],
+  ["10_000", 5],
+  ["100_000", 3],
 ]);
 
 export type BenchmarkMethod = "merge" | "runnalls" | "salmond";
@@ -49,92 +61,169 @@ export interface BenchmarkResult {
   rmePct: number | null;
 }
 
-export async function runBenchmarkPage(
-  onProgress?: (message: string) => void,
-): Promise<BenchmarkResult[]> {
-  const downsampler = await wasmMerge();
-  const samples = [
-    ["1_000", 1_000, createNoiseFloatData(1_000), 1_000],
-    ["10_000", 10_000, createNoiseFloatData(10_000), 1_000],
-    ["100_000", 100_000, createNoiseFloatData(100_000), 497],
-    ["1000_000", 1_000_000, createNoiseFloatData(1_000_000), 50],
-  ] as const;
+/** Dataset sizes and how many times each is timed for the merge. */
+const SCENARIOS = [
+  ["1_000", 1_000, 1_000],
+  ["3_000", 3_000, 1_000],
+  ["10_000", 10_000, 1_000],
+  ["100_000", 100_000, 500],
+  ["1000_000", 1_000_000, 50],
+] as const;
 
-  const mergedCount = new Map<string, number>();
-  for (const [name, , sample] of samples) {
-    mergedCount.set(name, calc(downsampler, sample));
-  }
-
-  const rows: BenchmarkResult[] = [];
-  for (const [name, n, sample, iterations] of [...samples].reverse()) {
-    onProgress?.(`merge, N = ${name} (${iterations} iterations)`);
-    downsampler.setDataF64(sample.dataF64);
-    const durations: number[] = [];
-    for (let i = 0; i < iterations; i++) {
-      const start = performance.now();
-      calcWithoutData(downsampler, sample);
-      durations.push(performance.now() - start);
-    }
-    rows.push(makeResult("merge", n, mergedCount.get(name) ?? 0, durations));
-  }
-
-  // Runnalls runs at the same kernel budget the merge produced, so the two
-  // methods are timed for the same amount of output.
-  const klDownsampler = await wasmKlMerge();
-  for (const [name, n, sample] of samples) {
-    const iterations = KL_SCENARIOS.get(name);
-    if (iterations === undefined) continue;
-
-    const target = mergedCount.get(name) ?? 0;
-    // Uploaded once, outside the timed region, exactly as for the merge rows.
-    klDownsampler.setDataF64(sample.dataF64);
-    const durations: number[] = [];
-    for (let i = 0; i < iterations; i++) {
-      onProgress?.(
-        `Runnalls, N = ${name} (${i + 1}/${iterations}, this is slow)`,
-      );
-      // Yield so the progress message paints before the blocking wasm call.
-      await waitForNextFrame();
-      const start = performance.now();
-      const count = calcKl(klDownsampler, sample, target);
-      durations.push(performance.now() - start);
-      if (count !== target) {
-        throw new Error(
-          `Runnalls returned ${count} kernels, expected ${target}`,
-        );
-      }
-    }
-    rows.push(makeResult("runnalls", n, target, durations));
-  }
-
-  // Salmond clusters in groups, so it can only guarantee *at most* the merge's
-  // kernel budget. The achieved count is read back rather than asserted.
-  const salmondDownsampler = await wasmSalmondMerge();
-  for (const [name, n, sample] of samples) {
-    const iterations = SALMOND_SCENARIOS.get(name);
-    if (iterations === undefined) continue;
-
-    const target = mergedCount.get(name) ?? 0;
-    salmondDownsampler.setDataF64(sample.dataF64);
-    const durations: number[] = [];
-    let achieved = 0;
-    for (let i = 0; i < iterations; i++) {
-      onProgress?.(`Salmond, N = ${name} (${i + 1}/${iterations})`);
-      await waitForNextFrame();
-      const start = performance.now();
-      achieved = calcSalmond(salmondDownsampler, sample, target);
-      durations.push(performance.now() - start);
-    }
-    rows.push(makeResult("salmond", n, achieved, durations));
-  }
-
-  return rows;
+/**
+ * One timed configuration, resolved before any measuring starts so the progress
+ * bar knows how many there are. `run` performs exactly one reduction and returns
+ * the kernel count; the driver times it and owns the loop.
+ */
+interface Phase {
+  method: BenchmarkMethod;
+  label: string;
+  n: number;
+  iterations: number;
+  /** Uploads data. Runs once, outside the timed region. */
+  prepare: () => void;
+  run: () => number;
 }
 
-function waitForNextFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
+export async function runBenchmarkPage(): Promise<BenchmarkResult[]> {
+  const ui = createBenchmarkProgressUi();
+
+  try {
+    ui.setPreparing("Loading wasm modules...");
+    await waitForRepaint();
+    const downsampler = await wasmMerge();
+    const klDownsampler = await wasmKlMerge();
+    const salmondDownsampler = await wasmSalmondMerge();
+
+    // Generating a million points is itself slow enough to look like a hang, so
+    // it reports too.
+    const samples = new Map<
+      string,
+      { n: number; data: ReturnType<typeof createNoiseFloatData> }
+    >();
+    for (const [name, n] of SCENARIOS) {
+      ui.setPreparing(`Generating dataset N = ${n.toLocaleString("en-US")}...`);
+      await waitForRepaint();
+      samples.set(name, { n, data: createNoiseFloatData(n) });
+    }
+
+    ui.setPreparing("Measuring kernel budgets...");
+    await waitForRepaint();
+    const mergedCount = new Map<string, number>();
+    for (const [name, sample] of samples) {
+      mergedCount.set(name, calc(downsampler, sample.data));
+    }
+
+    const phases: Phase[] = [];
+
+    // Largest first, matching the original ordering.
+    for (const [name, n, iterations] of [...SCENARIOS].reverse()) {
+      const sample = samples.get(name)!;
+      phases.push({
+        method: "merge",
+        label: `Screen-space merge, N = ${n.toLocaleString("en-US")}`,
+        n,
+        iterations,
+        prepare: () => downsampler.setDataF64(sample.data.dataF64),
+        run: () => calcWithoutData(downsampler, sample.data),
+      });
+    }
+
+    // Runnalls runs at the same kernel budget the merge produced, so the two
+    // methods are timed for the same amount of output.
+    for (const [name, n] of SCENARIOS) {
+      const iterations = KL_SCENARIOS.get(name);
+      if (iterations === undefined) continue;
+
+      const sample = samples.get(name)!;
+      const target = mergedCount.get(name) ?? 0;
+      phases.push({
+        method: "runnalls",
+        label: `Runnalls KL, N = ${n.toLocaleString("en-US")} (slow)`,
+        n,
+        iterations,
+        prepare: () => klDownsampler.setDataF64(sample.data.dataF64),
+        run: () => {
+          const count = calcKl(klDownsampler, sample.data, target);
+          if (count !== target) {
+            throw new Error(
+              `Runnalls returned ${count} kernels, expected ${target}`,
+            );
+          }
+          return count;
+        },
+      });
+    }
+
+    // Salmond clusters in groups, so it can only guarantee *at most* the merge's
+    // kernel budget. The achieved count is read back rather than asserted.
+    for (const [name, n] of SCENARIOS) {
+      const iterations = SALMOND_SCENARIOS.get(name);
+      if (iterations === undefined) continue;
+
+      const sample = samples.get(name)!;
+      const target = mergedCount.get(name) ?? 0;
+      phases.push({
+        method: "salmond",
+        label: `Salmond clustering, N = ${n.toLocaleString("en-US")}`,
+        n,
+        iterations,
+        prepare: () => salmondDownsampler.setDataF64(sample.data.dataF64),
+        run: () => calcSalmond(salmondDownsampler, sample.data, target),
+      });
+    }
+
+    const rows: BenchmarkResult[] = [];
+    const startedAt = performance.now();
+
+    for (const [phaseIndex, phase] of phases.entries()) {
+      phase.prepare();
+      ui.update({
+        phaseLabel: phase.label,
+        phaseIndex,
+        phaseCount: phases.length,
+        phaseProgress: 0,
+        phaseEtaMs: null,
+        elapsedMs: performance.now() - startedAt,
+      });
+      await waitForRepaint();
+
+      const durations: number[] = [];
+      const phaseStart = performance.now();
+      let lastYield = phaseStart;
+      let kernels = 0;
+
+      for (let i = 0; i < phase.iterations; i++) {
+        const start = performance.now();
+        kernels = phase.run();
+        durations.push(performance.now() - start);
+
+        const now = performance.now();
+        const isLast = i === phase.iterations - 1;
+        if (now - lastYield < YIELD_INTERVAL_MS && !isLast) continue;
+
+        const completed = i + 1;
+        // Wall-clock rate, so the estimate already accounts for yield overhead.
+        const perIteration = (now - phaseStart) / completed;
+        ui.update({
+          phaseLabel: phase.label,
+          phaseIndex,
+          phaseCount: phases.length,
+          phaseProgress: completed / phase.iterations,
+          phaseEtaMs: perIteration * (phase.iterations - completed),
+          elapsedMs: now - startedAt,
+        });
+        await waitForRepaint();
+        lastYield = performance.now();
+      }
+
+      rows.push(makeResult(phase.method, phase.n, kernels, durations));
+    }
+
+    return rows;
+  } finally {
+    ui.done();
+  }
 }
 
 function makeResult(

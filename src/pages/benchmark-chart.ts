@@ -138,7 +138,8 @@ export async function renderBenchmarkChart(
       height: 620,
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
-      margin: { l: 78, r: 28, t: 64, b: 66 },
+      // Wide right margin reserves the gutter the legend sits in.
+      margin: { l: 78, r: 240, t: 64, b: 66 },
       title: {
         text: "Reduction latency vs dataset size",
         font: { color: "#16324f", size: 18 },
@@ -168,10 +169,10 @@ export async function renderBenchmarkChart(
           type: "line",
           xref: "x",
           yref: "y",
-          x0: Math.log10(xMin),
-          x1: Math.log10(xMax),
-          y0: Math.log10(FRAME_BUDGET_MS),
-          y1: Math.log10(FRAME_BUDGET_MS),
+          x0: xMin,
+          x1: xMax,
+          y0: FRAME_BUDGET_MS,
+          y1: FRAME_BUDGET_MS,
           line: { color: "#7a8ba0", width: 2, dash: "dash" },
         },
       ],
@@ -189,8 +190,12 @@ export async function renderBenchmarkChart(
         },
       ],
       legend: {
-        x: 0.02,
-        y: 0.98,
+        // Outside the plotting area, in the right gutter. x > 1 is measured in
+        // plot-width fractions, so this sits just past the axis.
+        x: 1.02,
+        y: 1,
+        xanchor: "left",
+        yanchor: "top",
         bgcolor: "rgba(255,255,255,0.85)",
         bordercolor: "#d8e2ee",
         borderwidth: 1,
@@ -203,3 +208,4 @@ export async function renderBenchmarkChart(
 
   return plotHost;
 }
+
