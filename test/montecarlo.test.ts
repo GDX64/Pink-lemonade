@@ -1,16 +1,15 @@
 import { describe, expect, test } from "vitest";
 import { createNoiseFloatData } from "../src/chart/chart";
 import { mergePoints } from "../src/examples/rasterizing/downsampling";
-
-type GaussianComponent = {
-  x: number;
-  y: number;
-  w: number;
-  p00: number;
-  p01: number;
-  p10: number;
-  p11: number;
-};
+import {
+  buildToSX,
+  buildToSY,
+  createRng,
+  decodeComponents,
+  decodeOriginalComponents,
+  evaluateKdeAt,
+  lerp,
+} from "./kde-metrics";
 
 const sampleCount = 10_000;
 
@@ -120,106 +119,4 @@ function estimateMonteCarloMetrics(n: number) {
   const nrmse = referenceRange > 0 ? Math.sqrt(mse) / referenceRange : 0;
 
   return { mse, nrmse, rme, acceptedSamples, mergedCount: merged.count };
-}
-
-function decodeOriginalComponents(dataF64: Float64Array): GaussianComponent[] {
-  const components: GaussianComponent[] = [];
-  for (let i = 0; i < dataF64.length; i += 3) {
-    const x = dataF64[i]!;
-    const y = dataF64[i + 1]!;
-    const weight = dataF64[i + 2]!;
-    components.push({
-      x,
-      y,
-      // Single-point kernels use identity covariance in merge implementation.
-      w: weight / (2 * Math.PI),
-      p00: 1,
-      p01: 0,
-      p10: 0,
-      p11: 1,
-    });
-  }
-  return components;
-}
-
-function decodeComponents(instances: Float32Array): GaussianComponent[] {
-  const components: GaussianComponent[] = [];
-  for (let i = 0; i < instances.length; i += 7) {
-    components.push({
-      x: instances[i]!,
-      y: instances[i + 1]!,
-      w: instances[i + 2]!,
-      p00: instances[i + 3]!,
-      p01: instances[i + 4]!,
-      p10: instances[i + 5]!,
-      p11: instances[i + 6]!,
-    });
-  }
-  return components;
-}
-
-function buildToSX(
-  viewMinX: number,
-  viewMaxX: number,
-  screenW: number,
-  sigmaSizePx: number,
-) {
-  const xFactor = screenW / (viewMaxX - viewMinX) / sigmaSizePx;
-  return (x: number) => (x - viewMinX) * xFactor;
-}
-
-function buildToSY(
-  viewMinY: number,
-  viewMaxY: number,
-  screenH: number,
-  sigmaSizePx: number,
-) {
-  const yFactor = screenH / (viewMaxY - viewMinY) / sigmaSizePx;
-  return (y: number) => (y - viewMinY) * yFactor;
-}
-
-function evaluateKdeAt(
-  components: GaussianComponent[],
-  x: number,
-  y: number,
-  toSX: (x: number) => number,
-  toSY: (y: number) => number,
-): number {
-  const sx = toSX(x);
-  const sy = toSY(y);
-  let sum = 0;
-
-  for (const c of components) {
-    const mux = toSX(c.x);
-    const muy = toSY(c.y);
-    const dx = sx - mux;
-    const dy = sy - muy;
-
-    const det = c.p00 * c.p11 - c.p01 * c.p10;
-    if (det <= 1e-12) {
-      continue;
-    }
-
-    const inv00 = c.p11 / det;
-    const inv01 = -c.p01 / det;
-    const inv10 = -c.p10 / det;
-    const inv11 = c.p00 / det;
-    const d2 = dx * (inv00 * dx + inv01 * dy) + dy * (inv10 * dx + inv11 * dy);
-
-    sum += c.w * Math.exp(-0.5 * d2);
-  }
-
-  return sum;
-}
-
-function createRng(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (1664525 * s + 1013904223) >>> 0;
-    return s / 0x1_0000_0000;
-  };
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
 }

@@ -1,0 +1,1593 @@
+Mixture Reduction Algorithms
+for Point and Extended Object
+Tracking in Clutter
+D. J. SALMOND
+Defence Science and Technology Laboratory
+UK
+The Bayesian solution to the problem of tracking a target
+with measurement association uncertainty gives rise to mixture
+distributions, which are composed of an ever increasing number
+of components. To produce a practical tracking filter, the growth
+of components must be controlled by approximating the mixture
+distribution. Two mixture reduction schemes (a joining algorithm
+and a clustering algorithm) have been derived for this purpose.
+If significant well spaced mixture components are present,
+these techniques can provide a useful improvement over the
+probabilistic data association filter (PDAF) approach, which
+reduces the mixture to a single Gaussian component at each
+time step. For the standard problem of tracking a point target in
+uniform random clutter, a Monte Carlo simulation study has been
+employed to identify the region of the problem parameter space
+where significant performance improvement is obtained over the
+PDAF.
+In the second part of this paper, the formal Bayesian filter
+is derived for an extended target consisting of an array of
+measurement sources with association uncertainty. A practical
+multiple hypothesis filter is implemented using mixture reduction
+and simulation results are presented.
+Manuscript received May 27, 2007; revised October 26, 2007;
+released for publication January 25, 2008.
+IEEE Log No. T-AES/45/2/933013.
+Refereeing of this contribution was handled by P. Willett.
+This work is published with the permission of the Defence Science
+and Technology Laboratory on behalf of the Controller of HMSO.
+Author’s address: Defence Science and Technology Laboratory, A2
+Building, Ively Road, Farnborough, Hants GU14 0LX, UK, E-mail:
+(djsalmond@gmail.com).
+0018-9251/09/$25.00 °c 2009 British Crown Copyright
+I. INTRODUCTION
+This paper is a revision and extension of a
+conference publication [1] from 1990 on mixture
+reduction methods for target tracking with
+measurement association uncertainty. In that paper two
+schemes were proposed for reducing the number of
+components in a Gaussian mixture without modifying
+some measure of the mixture structure beyond
+acceptable limits. These methods were applied to
+the classical problem of tracking a single target in
+random, uniformly distributed clutter. Performance
+was compared with the probabilistic data association
+filter (PDAF) [2] for a point target moving on a plane
+with a near constant velocity dynamics model and
+Cartesian measurements. More recently, we have
+employed the reduction method to control hypothesis
+growth for a number of other tracking problems
+including extended object and group tracking [3]. In
+this paper, the contribution of the original conference
+publication [1] is included and these applications are
+summarised. We also briefly review modifications,
+improvements and shortcomings of the original
+mixture reduction algorithms that have been pointed
+out by a number of authors in the last few years.
+This work was motivated by the problem of
+tracking a target in random clutter, when the origin of
+sensor measurements is uncertain. The full Bayesian
+solution to this problem [2, 4] gives rise to mixture
+distributions for the required target state vector of the
+form
+p(x)=X
+N
+i=1
+¯i
+pi
+(x) (1)
+where x is the state vector of the target (or target
+group), N is the number of components in the
+mixture, pi
+(x) is a component probability density
+function (pdf), and ¯i is a probability associated with
+the ith component such that ¯i > 0 and PN
+i=1 ¯i = 1.
+Each component of the mixture corresponds to a
+feasible measurement association history. ¯i is the
+probability that the ith measurement history is correct.
+If the equation of motion of the target (or target
+group) to be tracked is linear with Gaussian driving
+noise, and measurements originating from the target
+are linearly related to the state vector but corrupted by
+Gaussian measurement noise, then each of the mixture
+components is a Gaussian pdf. In this case the pdf (1)
+is a Gaussian mixture, and the mean and covariance
+of each component may be obtained from a Kalman
+filter.
+While uncertainty persists, the number of feasible
+hypotheses on the origin of measurements grows, as
+does the number N of mixture components. Since
+every component must be propagated at each time
+step, to implement a practical tracking filter it is
+essential to control the growth in the number of
+components by approximating the mixture. The
+IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009 667
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+PDAF [2] is a popular and economical approximation
+which reduces the complete mixture to a single
+Gaussian component after processing each set of
+measurements. However this may destroy valuable
+information, especially if significant well-spaced
+components are present. Thus it may be useful to
+consider approximations which allow the retention
+of more than one component.
+In Section II we describe the development
+of two mixture reduction schemes known as the
+joining algorithm and the clustering algorithm.
+The performance of these methods is assessed in
+Section III for the problem of tracking a point target
+in uniform random clutter. Multiple hypothesis filters
+employing the reduction schemes are compared with
+the PDAF over the problem parameter space. Recent
+developments by other authors are briefly reviewed
+in Section IV. An application of the clustering
+algorithm to an extended object tracking example [3]
+is presented in Section V.
+II. DEVELOPMENT OF MIXTURE REDUCTION
+ALGORITHMS
+A. Requirements
+The following criteria have been selected for the
+design of an algorithm for approximating Gaussian
+mixtures.
+1) The approximation should result in another
+Gaussian mixture. This allows the tracking filter to
+be implemented as a bank of Kalman filters, extended
+Kalman filters (EKFs), or unscented Kalman filters
+(UKFs).
+2) The algorithm should allow an upper limit on
+the number NT of components after approximation to
+be specified.
+3) If possible, reduction should be achieved
+without modifying the “structure” of the distribution
+beyond some acceptable limit. Conversely, to avoid
+retaining unnecessary components, reduction should
+continue until this limit is reached, so that the
+approximation may contain less than NT components.
+4) The approximation should preserve the mean
+and covariance of the original mixture. The PDAF
+approximation is also based on this requirement.
+5) The algorithm should be computationally
+efficient (reduction must be accomplished within the
+filter update period), even when the original mixture
+consists of a large number of components, each with a
+different covariance matrix.
+The mixture reduction algorithms described
+below may be viewed as developments of the direct
+approximation methods of Alspach [5] and Lainiotis
+and Park [6]. Several other approaches, most of which
+are essentially variations on these methods, are also
+reviewed in [4]; also see Section IV. These algorithms
+operate by successively merging similar components
+so as to meet requirement 3. (Other schemes which
+do not directly use a measure of mixture structure
+include the N-scan memory of Singer et al. [7].) The
+measure of mixture structure used in this development
+is derived from a decomposition of the mixture
+covariance matrix.
+B. Mixture Structure: the Covariance Matrix
+The covariance matrix P of any mixture with N
+components may be written
+P = W + B (2)
+where W = PN
+i=1 ¯i
+Pi
+, B = PN
+i=1 ¯i
+(xˆi ¡ xˆ)(xˆi ¡ xˆ)
+T,
+xˆ = PN
+i=1 ¯i
+xˆi is the mean of the distribution, and
+xˆi and Pi are, respectively, the mean and covariance
+of the ith component of the mixture. Here W and
+B are both symmetric matrices, W being positive
+definite and B being positive semi-definite. W may
+be interpreted as the contribution from the covariance
+“within” each component of the mixture, while B may
+be interpreted as the between component contribution
+(or spread of means) due to the separation between
+the mixture components.
+Suppose that the mixture distribution is
+approximated by merging several components
+together. If C is the set of subscripts of components
+to be merged, then in order to preserve the mean and
+covariance of the mixture, the probability mass ¯0
+, the
+mean xˆ0
+, and the covariance P0 of the new component
+should be chosen as
+¯0 =X
+i2C
+¯i
+, xˆ0 = (1=¯0
+)
+X
+i2C
+¯i
+xˆi
+P0 = (1=¯0
+)
+X
+i2C
+¯i
+(Pi + xˆi
+xˆT
+i ) ¡ xˆ0
+xˆ0T:
+(3)
+Although the overall covariance matrix P is
+unchanged, this merging of components results in
+a loss of between component covariance B which is
+balanced by an increase in W. More precisely, if W† is
+the within-component covariance of the approximated
+mixture, then the difference L = W† ¡ W is a positive
+semi-definite matrix given by
+L = ¯0
+P0
+¡
+X
+i2C
+¯i
+Pi =X
+i2C
+¯i
+(xˆi ¡ xˆ0
+)(xˆi ¡ xˆ0
+)
+T:
+This shift of covariance from B to W provides a basis
+for a measure of the modification of mixture structure
+(i.e., a cost function) resulting from the merging of
+components.
+C. The Joining Algorithm
+Ideally the final partition of components into sets
+for merging, should be such that the cost function
+is minimized. However this could involve a search
+668 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+through every possible partition which would be far
+too time consuming. Instead, a technique, which we
+call the joining algorithm, has been developed where
+components are merged successively in pairs, so
+that the increase in the cost function is minimized
+at each iteration of the algorithm. Clearly there is
+no guarantee that the final partition from such a
+procedure will achieve the smallest possible value of
+the cost function.
+To implement the joining algorithm using a cost
+function based on an increase in the within-component
+covariance, a suitable scalar measure is required. If
+components i and j are merged, the increase in W is
+given by
+Lij = ¯i
+¯j
+¯i + ¯j
+(xˆi ¡ xˆ j )(xˆi ¡ xˆ j )
+T:
+One possible measure is the trace of Lij which is
+the squared Euclidean distance between component
+means modified by the factor ¯i
+¯j=(¯i + ¯j ). However
+this has the disadvantage that it is dependent on the
+scaling of the elements of the state vector and so is
+problem dependent. This difficulty is avoided by using
+the Mahalanobis distance to give
+d2
+ij = ¯i
+¯j
+¯i + ¯j
+(xˆi ¡ xˆ j )
+TP¡1(xˆi ¡ xˆ j ) (4)
+which is related to Lij by d2
+ij = tr(P¡1Lij ) where P
+is the overall mixture covariance given by (2). This
+measure is invariant under all nonsingular linear
+transformations of the state vector. At each iteration
+of the joining algorithm, the two components which
+are closest in the sense of the distance measure (4)
+are combined to form a new component defined by
+the relations (3). (Note that d2
+ij is loosely referred to a
+“distance” although actually it is a squared distance.)
+The minimum value of the distance measure
+at each iteration is an indicator of the change in
+distribution structure resulting from the merging of
+the two closest components. Thus if a threshold T
+defining the acceptable modification to the distribution
+is specified, approximation should proceed until the
+minimum distance exceeds this threshold. (It can
+be shown [4] that this minimum distance between
+components increases monotonically as reduction
+proceeds.) In choosing a value for the threshold T,
+it is useful to note that the distance d2
+ij is bounded:
+d2
+ij < dim(x). Simulation studies indicate that a value
+of T =0:001 dim(x) retains sufficient components to
+give, on visual inspection, a good approximation to
+the mixture. If d2
+ij exceeds T before the number of
+components has been reduced below the specified
+maximum NT, then approximation continues beyond
+the acceptable limit of modification.
+To implement the joining algorithm, a symmetric
+matrix (d2
+ij ) containing the distance between every pair
+of components in the original mixture is evaluated.
+Fig. 1. Original mixture (24 components).
+Fig. 2. Joining algorithm (NT = 8).
+Fig. 3. Joining algorithm (NT = 4).
+At each iteration, the smallest element of the matrix
+is found and the corresponding pair of components
+are merged. The distance matrix is then reduced and
+updated. The storage requirement for the algorithm is
+O(N2), the number of distance evaluations is O(N2),
+and the number of comparisons is O(N3), where N is
+the number of components in the original mixture.
+Figs. 1—3 show an example of mixture reduction
+with the joining algorithm for a two-dimensional
+distribution.
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 669
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+D. The Clustering Algorithm
+With this second method, components are
+combined in groups rather than in pairs. Thus
+reduction proceeds more rapidly, although more
+components may be combined than is necessary to
+achieve the limit NT.
+This algorithm is based on the proposition that
+the mixture components with the largest ¯ weights
+carry the most important information. Thus starting
+with the largest component, this algorithm gathers in
+all surrounding components that are in some sense
+close to the principal component. Subsequently the
+largest component of the remainder is selected and the
+process is repeated until all the components have been
+clustered. This is called the clustering algorithm.
+The distance measure chosen to represent the
+closeness of components to the cluster centre is
+defined by
+D2
+i = ¯i
+¯c
+¯i + ¯c
+(xˆi ¡ xˆc)
+TP¡1 c (xˆi ¡ xˆc) (5)
+where ¯c, xˆ c, and Pc are the probability mass, mean,
+and covariance of the principal component, and ¯i
+and xˆi are the probability mass and mean of the ith
+component. This is the same as the distance measure
+d2
+ij of the previous section, except the distance is
+normalized to the covariance of the cluster centre
+rather than the complete mixture. Any component
+i for which D2
+i <T1 is selected as a cluster member.
+Leaving aside the factor ¯i
+¯c(=¯i + ¯c), the clustering
+boundary would be a hyper-ellipsoid in the state
+space, which is a surface of constant probability
+density of the principal component. The factor
+¯i
+¯c(=¯i + ¯c) biases the distance measure so that
+small components are more easily clustered while
+large components retain their individuality. The
+threshold T1 defines the acceptable modification to
+the distribution and it is suggested that to give a good
+mixture approximation, T1 should be set to T1 =0:05T0
+1
+where T0
+1 defines the hyper-ellipsoid in state space
+which contains only 1% of the probability mass of
+the principal component. This choice of threshold is
+further discussed in [4].
+Each cluster of components (some clusters may
+consist of a single component) is approximated by a
+single Gaussian defined by (3). After all components
+have been clustered, the approximation is complete
+if the number of components in the approximation is
+below the specified maximum NT. Otherwise further
+reduction is necessary. This is achieved by repeating
+the clustering procedure on the first approximation,
+but with the threshold incremented by ¢T. This
+clustering operation is iterated until the necessary
+reduction has been effected. The choice of the
+increment ¢T is a compromise between the number
+Fig. 4. Clustering algorithm (NT = 8).
+Fig. 5. Clustering algorithm (NT = 4).
+of iterations required and the possibility of clustering
+more components than necessary. In this study, the
+value of ¢T is fixed: ¢T =0:05¢T0
+, where T0
+1 + ¢T0
+defines the hyper-ellipsoid which contains 6% of the
+probability mass of the principal component (see [4]).
+However, an override is provided which may increase
+the clustering threshold further to ensure that at least
+one component is clustered on each iteration.
+The computational cost of this algorithm depends
+on how many iterations are required to adequately
+reduce the mixture. It is most efficient when the
+entire approximation is accomplished within a single
+iteration, which requires between N and NM distance
+evaluations and comparisons, and M matrix inversions
+to reduce the mixture from N to M components. In
+the worst case when only one component is clustered
+on each iteration, the number of distance evaluations
+and comparisons is O(N3) and the number of matrix
+inversions is O(N2). The algorithm requires minimal
+extra storage above that needed to hold the mixture
+components.
+Figs. 4 and 5 show the result of applying
+the clustering algorithm to the mixture shown in
+Fig. 1. Note there are visible differences with the
+approximations from the joining algorithm. Fig. 6
+shows the single Gaussian fit equivalent to the
+670 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 6. Single Gaussian fit (PDAF).
+PDAF (there is a substantial loss of structure in this
+case).
+III. PERFORMANCE ASSESSMENT FOR A POINT
+TARGET IN RANDOM CLUTTER
+A. The Tracking Problem
+The performance of Bayesian filters employing
+the reduction algorithms has been assessed for the
+problem of tracking a point target in the presence
+of random clutter. The target moves on a 2-D plane
+according to a discrete second-order (near constant
+velocity) model with time interval ¢t between
+measurement frames: xk+1 = ©xk + ¡wk where
+x =(x,x_,y,y_)T, w =(wX,wY)
+T, © = diagf©C,©Cg,
+¡ = diagf¡C,¡Cg,
+©C =
+μ1 ¢t
+01 ¶
+and ¡C =
+μ¢t2=2
+¢t ¶
+:
+The acceleration process wk is modelled as zero mean,
+white Gaussian noise with covariance E[wkwT
+k ]= qI2
+where I2 is the 2 £ 2 identity matrix. At each time step
+the filter receives a set of position measurements, one
+of which (the true measurement) originates from the
+target and is related to the state vector by the equation
+zk =
+μ1000
+0010¶
+xk + vk
+where vk is zero mean, white Gaussian measurement
+noise with covariance E[vkvT
+k ]= rI2, so the detection
+probability PD is unity. (This assumption that PD =1
+is imposed to avoid introducing a third independent
+problem parameter in the performance analysis–see
+below.) The clutter measurements, which are
+independent of the target, are uniformly distributed
+over the sensor surveillance region with density ½
+per unit area. It is assumed that at each time step,
+the target is well inside this surveillance region and
+the identity of the true measurement is unknown
+to the tracking filter. This is similar to the problem
+considered by Bar-Shalom and Birmiwal [8]; the
+equation of motion of the target has been widely
+used in tracking problems and is the basis of the ®-¯
+filter. If it is further assumed that the initial position
+and velocity of the target are perfectly known, then
+the problem may be completely described by two
+nondimensional parameters:
+q¢t4=r and ½r:
+(This can be seen by making the substitution x0 =
+x=pr, x_0 = x¢t= _ pr, y0 = y=pr, and y_0 = y¢t= _ pr, so
+transforming the state vector into a nondimensional
+form.) The parameters q¢t4=r and ½r represent the
+normalized variance of the target acceleration and the
+normalized density of the clutter.
+The measure of tracking performance for this
+problem is the average time that a filter maintains
+track on the target. A track is deemed to be lost if
+either of the following criteria are satisfied:
+1) the true measurement is rejected by a coarse
+acceptance test (see below) for five consecutive time
+steps.
+2) jxˆk ¡ xkj > 10¾xk or jyˆk ¡ ykj > 10¾yk for five
+consecutive time steps, where (xˆk,yˆk) is the filter’s
+estimate (the mean of posterior distribution) of the
+target position at time step k,(xk,yk) is the actual
+target position at time step k, and ¾xk and ¾yk are the
+standard deviations of the position estimates of the
+equivalent Kalman filter (i.e., the optimal filter for the
+same problem but with ½ = 0).
+These criteria are testing for consistent rejection
+of the true measurement, or for a tracking error which
+is consistently large in comparison with the expected
+error of the equivalent Kalman filter; consistent being
+defined as five time steps and large being defined as
+10 standard deviations.
+B. Effect of Varying NT
+Three filters were implemented for this problem:
+the joining algorithm filter (JAF), the clustering
+algorithm filter (CAF), and the PDAF. Each of these
+filters is based on the Bayesian solution of the above
+problem (which is essentially a special case of the
+extended object filter presented in Section V). For
+each filter the growth of mixture components is
+controlled in two stages. First, the measurements
+received at each time step are subjected to a coarse
+acceptance test (gating) which eliminates any
+measurements that are very unlikely to originate
+from the target. As is standard practice, an ellipsoidal
+gate in observation space centred on the expected
+value of the target measurement was employed [9].
+The threshold for this test was set to ensure that the
+probability of rejecting the true measurement was
+less than 0.001. The posterior distribution of the
+state vector is based on the accepted measurements.
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 671
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 7. Average track lifetime comparison.
+The second stage of control is the mixture reduction
+algorithm which is applied before the next set of
+measurements is processed. In the case of the PDAF, a
+full propagation of all components is unnecessary and
+a very efficient filter algorithm may be used [2].
+To compare the performance of the filters as a
+function of NT, simulations have been carried out
+for a single pair of problem parameters: q¢t4=r =1
+and ½r =0:012. At this point in the parameter space,
+the JAF and CAF outperform the PDAF. For these
+parameters, the equivalent Kalman filter (receiving
+only true measurements) would rapidly reach steady
+state conditions: the standard deviation of the position
+error would approach within 1% of its final steady
+state value after only four time steps. The expected
+number of clutter measurements that would pass the
+coarse acceptance test based on steady state Kalman
+filter covariances is 2.084.
+For the assessment, 100 target trajectories with
+associated measurements were generated. The filters
+were allowed to continue tracking until one of the
+track loss criteria was satisfied. The average track
+lifetime NAVE for a constant velocity prediction from
+the perfectly known initial state vector (i.e., ignoring
+all measurements) is 13.6 time steps. Fig. 7 shows
+NAVE (from the 100 trials) as a function for NT for the
+CAF and the JAF with thresholds set to the values
+given in Section II. NT = 1 corresponds to the special
+case of the PDAF, and clearly the filters which retain
+more than one mixture component perform better
+than the PDAF. The JAF generally gives slightly
+larger values of NAVE than the CAF, possibly due
+to the settings of T and T1. For NT < 10, NAVE rises
+approximately linearly with NT. In this region the
+number of components in the mixture approximation
+is usually determined by NT. For NT > 10, NAVE is
+nearly constant, and in this region acceptable mixture
+approximation (defined by T and T1) can usually be
+achieved with less than NT components (see [4] for
+more details). The performance of the filter using
+the joining algorithm with T = 0 is also shown in
+Fig. 7. With this threshold setting the algorithm never
+reduces the number of mixture components below NT.
+Even at NT = 30, this gives only a very small increase
+in NAVE over the results from the joining algorithm
+with the original threshold setting. Thus, for this
+example, it appears that the thresholds T1 and T select
+the minimum number of components for near optimal
+performance.
+Fig. 8 shows the average CPU time TAVE (again
+from the 100 trials) for the filters to perform one
+time step. The timescale is normalized to the average
+CPU time for a single PDAF time step. For the two
+filters with the original threshold settings, TAVE falls
+rapidly to nearly constant values for NT > 10. The
+initial high values of TAVE are due to time spent
+reducing very large mixtures which result from
+inadequate approximations at values of NT < 6 (see
+[4]). Except for case NT = 6, the JAF was clearly
+more time consuming than the CAF, and, as expected,
+the execution times for the filters were in all cases
+considerably greater than the PDAF. Also plotted in
+Fig. 8 is the time taken by the JAF with T = 0. This
+clearly shows the value of the acceptable modification
+check in the reduction algorithms: for the small
+improvement over the filter with the original threshold
+settings, there is a large increase in computational
+overheads. The extra processing time is required
+672 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 8. Average CPU time for single time step.
+for the propagation of all NT components which are
+always retained with T = 0.
+C. Performance over the Problem Parameter Space
+As already noted, the performance of the tracking
+filters depends on only two parameters: q¢t4=r
+and ½r. The primary aim here is to examine the
+performance of the CAF and the PDAF as a function
+of these two parameters. The CAF has been chosen
+for this assessment in preference to the JAF, since in
+the example of the previous section, the JAF almost
+always required greater computation time, and the
+performance of the filters was similar. Also in light
+of the previous section, NT has been set to 20.
+The average track survival time NAVE for the
+CAF and the PDAF is shown as a function of ½r in
+Figs. 9—13 for q¢t4=r = 10¡4, 10¡2, 1, 102, and 104,
+respectively. As in the previous section, the initial
+state vector was known perfectly, and the filters were
+run until one of the track loss criteria was satisfied.
+NAVE is the average of 100 Monte Carlo runs and 95%
+confidence limits are shown as a vertical bar with
+each point. Also shown is the average track lifetime
+NL for a constant velocity prediction on the basis
+of the perfectly known initial state vector. For this
+prediction, measurements are ignored, so that NL is
+independent of ½r. NL should provide a lower limit on
+filter performance which may be approached as the
+relative density ½r of clutter measurements becomes
+large. Figs. 9—13 also show values of n1 which
+is an alternative, but equivalent, to the parameter
+½r. The parameter n1 is the expected number of
+clutter measurements that would be passed by the
+coarse acceptance test based on covariances from the
+equivalent steady state Kalman filter. This parameter
+may give a more meaningful measure of problem
+difficulty.
+The filters show similar performance trends in
+each of Figs. 9—13. As would be expected, for given
+q¢t4=r, track survival time increases as ½r and n1
+decrease. Also the track survival time of the CAF
+approaches that of the PDAF for both small and
+large values of ½r. (This convergence for small ½r is
+not shown in Figs. 9 and 10 as track survival time
+is so long in these cases, that the computation time
+for the simulation would be prohibitive.) Between
+these extremes, the CAF outperforms the PDAF. The
+average track lifetime of the CAF exceeds that of
+the PDAF by a factor of 10 in some cases, although
+an improvement factor between 3 and 5 is more
+common. The region of the q¢t4=r, ½r space where
+the CAF gives a significant improvement over the
+PDAF is sketched in Fig. 14. Here the parameter
+space is divided into three regions. For dense clutter
+and a highly manoeuvrable target, the problem is so
+adverse that neither the PDAF nor the CAF provide
+any significant performance improvement over simple
+prediction from the initial state vector. In other words
+the measurements are of little use here. For sparse
+clutter and a low level of target manoeuvre, the
+performance of the PDAF is very similar to that of the
+CAF. This implies that for this range of parameters,
+both filters are nearly optimal. Between these two
+regions, there is a significant range of parameters
+where the CAF outperforms the PDAF. Figs. 9—14
+are intended to provide a guide as to whether the
+PDAF is adequate for this type of application, and if
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 673
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 9. Average track lifetime for q¢t4=r = 10¡4.
+Fig. 10. Average track lifetime for q¢t4=r = 10¡2.
+not, whether the more complex CAF can provide the
+necessary improvement.
+As already stated, these results are for PD = 1. For
+PD < 1 track lifetimes will be reduced, but further
+study is required to determine the possible advantage
+of a multiple component approximation relative to
+the PDAF in this regime. Also note that although
+consistency of the filters (i.e., compatibility of filter
+internal covariance with achieved tracking errors) has
+not been presented here, this has been confirmed for
+sample cases in [4].
+IV. BRIEF REVIEW OF IMPROVEMENTS BY OTHERS
+Since the original conference publication [1],
+several authors have pointed out shortcomings in the
+original schemes and have suggested improvements.
+These are mainly in terms of the choice of distance
+measure and chiefly relate to the joining algorithm.
+Williams and Maybeck [10, 11] have suggested
+using the integrated squared difference (ISD) as an
+indicator of the difference between two pdfs p1(x) and
+p2(x). This is defined by R
+(p1(x) ¡ p2(x))2dx. This
+674 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 11. Average track lifetime for q¢t4=r = 1.
+Fig. 12. Average track lifetime for q¢t4=r = 102.
+has the great advantage that the ISD between two
+Gaussian mixtures can be expressed in closed form.
+Thus the cost of merging a pair of components can
+be exactly quantified for the overall mixture (in terms
+of the ISD). This avoids the rather ad hoc step in the
+derivation of the joining algorithm from Lij to d2
+ij of
+(4). Also, as pointed out by Runnalls [12], because
+d2
+ij does not depend on the individual covariances of
+components i and j, the joining algorithm will merge
+a pair of components that have identical means but
+very different covariances in preference to a pair
+with incrementally separated means but identical
+covariances. The ISD approach does not suffer from
+this unfortunate characteristic and superior tracking
+performance has been reported [10]. (Also see [13]
+where the performance comparisons are made for
+several different approaches to the standard tracking
+in random clutter problem.) Maybeck and Smith [14]
+have also applied ISD-based mixture reduction to
+multiple model tracking. However, the ISD metric
+is scale-dependent and it is computationally more
+expensive to calculate than d2
+ij .
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 675
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 13. Average track lifetime for q¢t4=r = 104.
+Fig. 14. Filter performance over problem parameter space.
+Runnalls [12] has proposed an approach based
+on the Kullback-Leibler discrimination measure.
+The suggested metric is an upper bound on the
+Kullback-Leibler discrimination of the mixture
+after merging from the mixture before merging.
+This provides a scale-independent measure and
+good performance has been demonstrated for a
+fairly high dimensional (15 dimensions) example
+from a terrain-referenced navigation application.
+The scheme has not yet been applied to a tracking
+example.
+In a development independent of the above and
+of [1], Kan and Krogmeier [15] have derived a
+cluster-based mixture reduction technique for tracking
+in clutter. In this scheme, clustering is performed on
+the predicted density prior to measurement update.
+The method attempts to partition the mixture into
+a specified number of clusters which minimise the
+mean-squared difference between the estimates before
+and after reduction. The partition is formed using a
+coordinate descent algorithm (that does not guarantee
+a global minimum). For the standard tracking in
+676 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+clutter problem, improved performance over the
+PDAF is demonstrated for a reduction to two clusters
+at each time step.
+Finally, it should be noted that mixture reduction
+via pair-wise merging has also been addressed by
+the statistics community (see for example Scott and
+Szewczyk [16]). Also see Titterington et al. [17]
+which includes a table of distance measures.
+V. APPLICATION TO EXTENDED OBJECT TRACKING
+A. Introduction
+The mixture reduction algorithms described
+in Section II have been applied to a range of
+target tracking applications including multi-target,
+multi-sensor problems Pao [18] and particle filter
+regularization Gordon [19] (also see [20]). In this
+section we describe an application to extended object
+tracking which was originally presented in [3] with an
+enhancement in [21].
+In the standard target tracking problem, it is
+assumed that only a single point measurement is
+received from the target at each time step. However,
+in many cases, high resolution sensors may be able
+to resolve individual features or measurement sources
+on an extended object. If these measurements can be
+adequately interpreted, they may provide valuable
+information on target behaviour, for example, body
+orientation or a manoeuvre regime. However, the
+problem can be highly challenging, particularly if the
+structure (geometry of measurement sources) and the
+association between received measurements and their
+originating sources is uncertain. A related problem
+is the tracking of a group of point targets moving in
+formation.
+B. General Problem Formulation
+An extended multisource target may be represented
+via a two-component model consisting of a body
+or bulk component B and the measurement sources
+si : i = 1,:::,NS. This scheme was proposed in
+[22], [23] (also see Broida et al. [24, 25], Huang
+and Netravali [26], Dezert [27], Blasch and Connare
+[28], and Koch and Saul [29]). In this development,
+B specifies a reference point (the “centroid”) on the
+target and includes target orientation, velocity, and
+possibly other terms. The vector si is the position
+of measurement source i in target body axes, i.e.,
+it is relative to the target centroid and the target
+orientation. For this (formal) problem statement, it
+will be assumed that the number NS of sources is
+known. However, in practice, this may well not be
+the case, although a fairly tight upper bound will often
+be available. For a group tracking problem, the two
+components correspond to the “bulk” motion of the
+overall formation and the motion of individual targets
+within the group.
+1) Dynamics: The dynamics of the target are
+assumed to obey a two-component linear-Gaussian
+model of the form:
+Bk+1 = ©0kBk + ¡0kw0k (6)
+sik+1 = ©iksik + ¡ikwik for i = 1,:::,NS (7)
+where the driving noise terms wik are independent,
+zero mean, Gaussian random variables with known
+covariances Qik. This formulation allows the
+measurement sources to move relative to the target
+body axes, although the motions of the individual
+sources are independent of one another. If the sources
+are fixed in body axes, the dynamics equations (7)
+clearly collapse to sik+1 = sik. (Furthermore, the point
+target problem of Section III is recovered if NS =1
+and prior information places the source unequivocally
+at the target centroid, i.e., s1k ´ 0.) For a group
+tracking problem, the bulk component B represents
+the centroid and dynamics of the target formation
+and the si represents the individual targets within the
+group. A joint state is defined as
+XT
+k =(BT
+k , s
+T
+1k, s
+T
+2k,:::, s
+T
+NS k)
+so the dynamics model may be written
+Xk+1 = ©¤
+kXk + ¡¤
+k Wk (8)
+where ©¤
+k = diagf©0k,©1k,:::,©NS kg, ¡¤
+k =
+diagf¡0k,¡1k,:::,¡NS kg, and WT
+k =(wT
+0k,wT
+1k,:::,wT
+NS k).
+The system noise Wk is therefore a zero mean,
+Gaussian random process with covariance Q¤
+k =
+diagfQ0k,Q1k,:::,QNS kg. (An extension to a nonlinear
+model would be straightforward.)
+2) Measurements: At each time step k, a set Zk
+of mk measurements is received from the sensor:
+Zk = fzjk; j = 1,:::,mkg. Each of these measurements
+may originate from one of the measurement sources
+or it may be the result of random clutter. It is assumed
+that a single measurement zjk cannot originate from
+multiple sources, i.e., perfect sensor resolution is
+assumed. If measurement zjk originates from source
+sik, then the measurement equation may be written
+zjk = h(sik,Bk)+ vjk (9)
+where the measurement error vjk is a zero mean,
+independent, Gaussian random variable of known
+covariance Rk. Note that the measurement function
+h, which is a function of Bk as well as sik, is the
+same for all sources. It is assumed that a source
+is detected (and so produces a measurement) with
+known probability PD, and detection is independent
+for each source and for each time step. Obscuration
+of sources by the target body, possibly leading to
+periods when certain sources are not visible, has
+not been modelled in this present development. If a
+measurement originates from clutter, it is assumed to
+be an independent sample from a uniform distribution
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 677
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+over the field of view (FOV) of the sensor: pC(z)=
+1=V, where V is the volume of the FOV (which
+comfortably encompasses the target). Furthermore,
+the number NCk of clutter measurements is assumed to
+have a Poisson distribution with mean ½V : PrfNCkg =
+e¡½V(½V)
+NCk=NCk!, where ½ is the spatial density of
+clutter (assumed known).
+3) Measurement-Source Association: The
+(unknown) association between the received
+measurements and the sources may be described by
+a mapping ¸k from the set of measurement subscripts
+to source subscripts:
+¸k : f1,:::,mkg!f0,1,:::,NSg:
+Here ¸k(j)= i implies that measurement zjk originates
+from source sik if i> 0, and ¸k(j) = 0 implies that
+measurement zjk is the result of a random clutter
+process. Since it is assumed that a measurement can
+originate from at most one source, f¸k(i)= ¸k(j) 6=0g
+)fi = jg. It is convenient to define the set U(¸k)
+of measurement subscripts corresponding to source
+detections, i.e.,
+U(¸k)= fu1,u2,:::,uND(¸k )g
+= fj : ¸k(j) 6= 0, j = 1,:::,mkg (10)
+where ND(¸k) is the number of measurement sources
+detected under hypothesis ¸k.
+4) Measurement Model given ¸: The measurement
+equation depends on the association ¸k between
+measurements and sources. We form a measurement
+vector composed of the measurement detections under
+¸k (which would be available in the case of labelled
+measurements):
+z¤
+k(¸k)
+T =(zT
+u1k,zT
+u2k,:::,zT
+uND(¸k )k)
+where the ui are given by (10). The corresponding
+measurement function for this composite measurement
+vector is
+h¤
+(Xk,¸k)
+T =(h(s¸k (u1)k,Bk)
+T,:::,h(s¸k (uND(¸k ))k,Bk)
+T):
+(11)
+Thus the measurement model for the composite state
+vector is
+z¤
+k(¸k)= h¤
+(Xk,¸k)+ Vk (12)
+where the measurement error vector VT
+k =
+(vT
+1k,vT
+2k,:::,vT
+ND(¸k )k) is a zero mean Gaussian process
+with covariance R¤
+k (¸k) = diagfRk,:::,Rkg (ND(¸k)
+times).
+5) Prior Information: It is assumed that at
+the initial time step, prior to the receipt of the first
+measurement set Z1, the pdfs for the bulk and source
+states are known Gaussians.
+6) Requirement: Given the set of measurements
+Z0
+k and the prior pdf p(X1), the requirement is to
+determine the posterior pdf p(Xk j Z0
+k) via a recursive
+filter, where Z0
+k = fZ1,Z2,:::,Zkg.
+C. Multiple Hypothesis EKF Algorithm
+1) Prediction: Suppose that at time step k ¡ 1,
+the posterior pdf of the state is given by the Gaussian
+mixture with NEk¡1 components:
+p(Xk¡1 j Z0
+k¡1)=
+N
+XEk¡1
+i=1
+¯ik¡1N (Xk¡1;Xˆ
+ik¡1,Pik¡1)
+(13)
+where ¯ik¡1 is the probability weight on component
+i (so PNEk¡1
+i=1 ¯ik¡1 = 1) and N (Xk¡1;Xˆ
+ik¡1,Pik¡1) is a
+Gaussian pdf with mean Xˆ
+ik¡1 and covariance Pik¡1.
+For the linear dynamics models of (8), the prior pdf
+at the next time step may be obtained by applying the
+Kalman prediction equations to each component:
+p(Xk j Z0
+k¡1)=
+N
+XEk¡1
+i=1
+¯ik¡1N (Xk;X¯
+ik,Mik) (14)
+where X¯
+ik = ©¤
+kXˆ
+ik¡1 and Mik = ©¤
+kPik¡1©¤T
+k + ¡¤
+k Q¤
+k¡¤T
+k ,
+and the mixture weights are unchanged. For nonlinear
+models, the prediction could be performed via the
+EKF or UKF relations.
+2) Update: An update procedure (in response
+to a frame of measurements Zk) may be obtained by
+applying Bayes rule to the Gaussian mixture prior
+pdf and the (linearized) Gaussian likelihood from the
+measurement model [4]. This results in each member
+of the prior pdf splitting into NHk components, each
+corresponding to a feasible association ¸k.(NHk is the
+total number of feasible association hypotheses for NS
+measurement sources and mk measurements: NHk = Pmin(NS ,mk )
+ND=0 ¡
+mk ND
+¢
+NS!=(NS ¡ ND)!.) The result is a
+posterior mixture with NEk = NEk¡1NHk components.
+Each member of the posterior mixture corresponds
+to a prior component updated by measurements Zk
+according to a hypothesis ¸k:
+p(Xk j Zk,Z0
+k¡1)=X
+i
+X
+¸k
+Prfi,¸k j Z0
+kgp(Xk j i,¸k,Z0
+k):
+(15)
+For an EKF approximation, each of these updated
+components is Gaussian: the mixture component pdf
+p(Xk j i,¸k,Z0
+k) corresponding to prior component i and
+current association hypotheses ¸k is given by
+p(Xk j i,¸k,Z0
+k)= N (Xk;Xˆ ¤
+ik(¸k),P¤
+ik (¸k))
+update for given ¸k:
+Xˆ ¤
+ik(¸k)= X¯
+ik + K¤
+ik(¸k)º¤
+ik(¸k)
+P¤
+ik (¸k)=[I ¡ K¤
+ik(¸k)H¤
+(X¯
+i
+,¸k)]Mik
+678 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+where
+º¤
+ik(¸k)= z¤
+k(¸k) ¡ h¤
+(X¯
+ik,¸k)
+K¤
+ik(¸k)= MikH¤
+(X¯
+ik,¸k)
+TS¤
+ik(¸k)
+S¤
+ik(¸k)= H¤
+(X¯
+ik,¸k)MikH¤
+(X¯
+ik,¸k)
+T + R¤
+k (¸k):
+Here H¤(X¯
+ik,¸k)= @h¤
+(Xk,¸k)=@Xkj
+X¯ ik is the Jacobian
+of the measurement function h¤ of (11) with respect
+to the bulk and source states. This may be written
+(omitting the time and component subscripts) as the
+block matrix
+H¤
+(X¯ ,¸)
+T =(H¸(u1)(X¯ )
+T,:::,H¸(uND(¸))(X¯ )
+T)
+where
+H`(X¯ )= μ@h(s`,B)
+@B , @h(s`,B)
+@(s1, s2,:::, sNS )
+¶¯
+¯
+¯
+¯
+X¯
+:
+So the update is effectively performed by a bank of
+EKFs.
+The mixture weights Prfi,¸k j Z0
+kg of (15) are given
+by (assuming PD < 1)
+Prfi,¸k j Z0
+kg/ ¯ik¡1
+· PD
+½(1 ¡ PD)
+¸ND(¸k )
+N (º¤
+ik (¸k );0,S¤
+ik (¸k ))
+where N (º¤
+ik(¸k);0,S¤
+ik(¸k)) is the innovation likelihood
+and the normalizing constant is obtained by summing
+over all i and all ¸k.
+Rewriting the double summation (15) as a single
+summation over all possibilities indexed by a new
+subscript i, the posterior pdf is given by
+p(Xk j Z0
+k)=X
+NEk
+i=1
+¯ikN (Xk;Xˆ
+ik,Pik) (16)
+where the parameters ¯ik, Xˆ
+ik and Pik are obtained
+from the above equations according to a suitable
+relabelling scheme. This is of the same form as
+(13) and so one cycle of this recursive algorithm is
+specified.
+3) Hypothesis Construction and Mixture
+Reduction: For any nontrivial problem, some
+form of approximation to control the size of the
+mixture is essential. As in Section III, this may
+be achieved in two stages: rejection of any highly
+improbable hypotheses before processing each frame
+of measurements and approximation (reduction) of the
+posterior mixture (16).
+a) Hypothesis construction: In practice, this
+first stage is achieved by construction rather than
+rejection. Consider the prior pdf of the target state
+as represented by the Gaussian mixture (14). Each
+component of this mixture may be viewed as a
+root from which new ¸ hypotheses may grow.
+Hypotheses are constructed for each component
+in turn. Component i defines a set of expected
+measurement values in observation space: fh(s¯
+jik, ¯
+Bik):
+j = 1,:::,NSg where s¯
+jik and ¯
+Bik are elements of the
+prior mean X¯
+ik. Ellipsoidal acceptance gates based on
+the innovation covariance are defined about each of
+these expected source locations. Each measurement
+from the frame Zk is tested for membership of each
+source acceptance gate under component i and so a
+list of measurements that could have originated from
+the source is produced. These lists are then used to
+construct a set of feasible association hypotheses
+using the rules that a measurement may originate from
+at most one source, and a source may be the origin of
+at most one measurement. This procedure is repeated
+for each component of the prior mixture pdf.
+b) Mixture reduction: Mixture reduction is
+applied to the posterior mixture (16), i.e., after all
+the hypotheses from the construction algorithm
+have been processed. In this study, the clustering
+algorithm described in Section II with NT = 20 has
+been employed.
+D. Illustrative Simulation Example
+In this illustrative example, we consider an
+extended target which consists of a linear array of
+three measurement sources. The disposition of the
+sources along the array is unknown, the only prior
+information being that the location of each source is a
+Gaussian pdf about the target centroid. Furthermore,
+the sources may wander along the target during the
+observation period, the probability of detection is less
+than unity, and the measurements are corrupted by
+random clutter. This challenging problem is specified
+below [3].
+1) Extended Target Problem Definition:
+a) Bulk motion model: In this example the
+bulk motion of the target (6) is represented by a
+near constant velocity model in 3-D space with
+B =(x,x_,y,y_, z, z_)
+T, ©0 = diagf©C,©C,©Cg, ¡0 =
+diagf¡C,¡C,¡Cg, w0 =(wX,wY,wZ)T,
+©C =
+μ1 ¢t
+01 ¶
+and ¡C =
+μ¢t2=2
+¢t ¶
+:
+Here the state vector B describes the position and
+velocity of the centroid of the target with respect to
+fixed axes. The acceleration process w0 is modelled
+as zero mean, white Gaussian noise with covariance
+E[w0wT
+0 ]= Q0 = q0I3.
+b) Source model: The target structure is modelled
+as a straight, rigid “stick” with sources distributed
+along its length. The target stick is aligned with the
+velocity vector and it rotates about its centre point
+(which we call the centroid). The position of source
+i along the target axis from its centroid is specified by
+the scalar sik, and the possible motion of each source
+(7) along the axis is modelled by a random walk:
+sik+1 = sik + ¢twik for i = 1,:::,NS
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 679
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 15. Actual paths of target and observer (with line-of-sight vector at measurement times).
+where wik is an independent Gaussian random variable
+of zero mean and variance qS.
+c) Source measurements: The line-of-sight vector
+xLik from an observer at xobsk to source i is given by
+(xLik,yLik, zLik)
+T = xLik = xk + sik(x_
+k=jx_
+kj) ¡ xobsk:
+(17)
+Here the observer position xobsk is assumed to be
+perfectly known, and the xk and x_
+k are elements of Bk.
+The range, azimuth, and elevation of this line-of-sight
+vector relative to nonrotating axes are given by
+rik =
+q
+x2
+Lik + y2
+Lik + z2
+Lik
+μik = tan¡1(yLik=xLik)
+Ãik = tan¡1(zLik=
+q
+x2
+Lik + y2
+Lik):
+(18)
+Equations (17) and (18) define the measurement
+function h(sik,Bk) of (9). Clearly this is a significantly
+nonlinear function of the states. Thus, if a
+measurement zjk originates from source i, it is given
+by
+zT
+jk =(rik,μik,Ãik)+(vrjk,vμjk,vÃjk)
+where the error vector is a zero mean, Gaussian
+random vector of covariance Rk = diagf¾2
+r ,¾2
+μ ,¾2
+Ãg.
+2) Scenario and Measurement Generation:A
+single pair of target and observer trajectories has
+been simulated to demonstrate operation of the filter.
+Both parties are both moving in three-dimensional
+space and their paths are shown in Fig. 15. The target
+path was generated by fitting a trajectory to a set
+of way-points using splines to produce a credible,
+smooth course (mismatched to the filter dynamics
+model (8)) while the observer follows a constant
+velocity trajectory.
+The target measurement sources are distributed
+along the target’s principal axis as assumed by the
+filter. There are three sources nominally located at
+¡5, +2, and +5 units relative to the target centroid.
+(Note that in this case, the composite state vector
+X has nine elements and the clustering algorithm is
+applied to mixtures over this nine-dimensional space.)
+The sources wander within §1 units about these
+nominal locations along the target axis according to
+a random walk. The sensor carried by the observer
+detects each source with a probability of 0.8. If a
+source is detected, the sensor produces measurements
+of range, azimuth, and elevation; the angles being
+680 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 16. Estimated positions of target body: forward extremity–open diamond, rear extremity–solid disc. Actual locations of target
+centroid shown as circles. Note unequal axes.
+relative to nonrotating axes. The measurements are
+zero mean, Gaussian perturbations about the actual
+source position with standard deviations of ¾r =
+1 units, ¾μ = ¾Ã =1±. Random clutter is distributed
+uniformly over the sensor’s observation region with a
+density of about ½ = 10¡4 per unit per degree squared.
+The sensor has perfect resolution but a finite FOV
+(although this effect is not modelled within the filter).
+The sensor data rate is 0.5 Hz.
+The following filter parameters have been
+employed:
+Measurement errors and clutter density are
+matched to the simulated data.
+System noise for target centroid dynamics: pq0 =
+0:05 units/s2
+.
+Random walk modelling possible source motion:
+pqS =0:02 units/s.
+Standard deviation (SD) of initial estimate of
+centroid position and velocity: SD(x) = SD(y)=
+SD(z) = 5 units and SD(x_) = SD(y_) = SD(z_)=
+1 units/s. Filter supplied with initial estimates
+generated from Gaussian distributions with these SDs
+about the true initial position and velocity (x = y = z =
+0 units and x_ = y_ =0:25, z_ = ¡0:02 units/s.)
+Standard deviation of initial error in source
+locations: SD(s11) = SD(s21) = SD(s31) = 5 units and
+supplied initial estimate s¯
+11 = s¯
+21 = s¯
+31 = 0, i.e., all at
+the centroid. (As already stated, actual initial values
+for source locations: s11 = ¡5, s21 = 2, s31 = 5.)
+3) Simulation Results: Results are presented
+for a particular data set and for a Monte Carlo
+experiment. The filter output for a single simulation
+run is illustrated via four figures.
+a) Estimates of target body positions: Fig. 16
+shows estimates of the target stick model in
+X-Y-Z space. The stick estimate is drawn at each
+measurement time. The forward extremity (i.e.,
+estimated position of most forward source) is marked
+by an open diamond and the rear extremity (i.e.,
+estimated position of most rearward source) is
+marked by a solid disc. These estimates are derived
+from the mean of the most probable posterior
+mixture component before reduction. Useful
+estimates are obtained after the initial transient has
+passed.
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 681
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 17. Estimated ranges of measurement sources relative to actual range to centroid (continuous lines). Individual symbols show
+measurements (missed measurements encompassed by a circle, wrongly associated clutter encompassed by a square). Most probable
+association hypothesis before reduction shown by vertical links between measurements and source estimates.
+b) Estimates of source locations: Fig. 17 shows
+estimates of the three target source locations in
+range coordinates and also shows the received range
+measurements (including clutter). Range here is
+relative to the actual range to the target centroid.
+Again the estimates are derived from the mean of
+the most probable association hypothesis (before
+reduction) at each time step. The figure also shows the
+association between the measurements and the source
+estimates according to the most probable hypothesis.
+(Unassociated source measurements are circled
+and incorrectly associated clutter measurements
+are encompassed by squares.) Note that, after an
+initial period of uncertainty (due to an unfavourable
+geometry and large track initialisation errors), the
+most probable hypothesis provides a useful indication
+of measurement origin. Fig. 18 shows estimates of
+the target source locations in Cartesian coordinates.
+Again, these estimates correspond to the most
+probable hypothesis at each time step, and they are
+shown relative to the actual target centroid.
+c) Analysis of hypothesis management: An
+analysis of hypotheses management is presented
+in Fig. 19. The first trace shows the number of
+hypotheses generated by the construction scheme and
+the number of hypotheses remaining after reduction
+by the clustering algorithm at each measurement
+time. Note that after time step 7, by which time the
+filter has established the disposition of sources, the
+clustering algorithm always reduces the mixture to
+less than 20 components. For about a third of the
+measurement times, only one or two components
+are retained. Also, after the first few time steps,
+the number of hypotheses before reduction falls
+substantially–except for the period between time
+steps 33 and 39 which coincides with an increase
+in the Y coordinate error for the post probable
+hypothesis (see Fig. 18). The other traces in Fig. 19
+show the probabilities of the five most probable
+hypotheses before and after reduction.
+d) Monte Carlo experiment: To provide a
+statistically meaningful performance indication for
+this highly challenging example, a Monte Carlo
+experiment with 100 replications has been performed.
+For each replication, the target and observer paths
+of Fig. 15 were retained: only the measurement
+errors, source detections and initial estimate of the
+bulk state were varied between runs according to
+the statistics specified in Section VD2. Multiple
+hypothesis EKFs with three different mixture
+reduction or approximation strategies were applied
+to the measurement data sets: the clustering algorithm
+with NT = 20, with NT = 1, and simple selection of the
+most probable posterior hypothesis. This last option is
+a “hard decision” strategy that takes no account of the
+possibility of an incorrect selection (the covariance
+of the most probable component is not modified).
+The clustering algorithm with NT = 1 is equivalent
+682 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 18. Estimated positions of measurement sources relative to actual target centroid in Cartesian coordinates.
+Fig. 19. Analysis of hypothesis management by clustering algorithm.
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 683
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+Fig. 20. Monte Carlo results.
+to the joint probabilistic data association (JPDA)
+approximation [2].
+The top plot of Fig. 20 shows the cumulative
+distribution of the position error (Euclidean distance)
+at the final time step, up to an error of 10 units.
+To achieve a small error at this point, the filter
+must successfully initiate the track (including
+learning the disposition of sources with only vague
+prior information) and maintain track through the
+observation period. The advantage of retaining
+multiple mixture components is evident from Fig. 20,
+for example, it can be seen that the median of the
+final position error is about 3 units for the CAF with
+NT = 20 and about 7.5 units for the JPDA. Also
+note that for this stressing example, the strategy
+of retaining only the most probably component
+performs very poorly compared with the JPDA.
+The second plot in Fig. 20 shows the final errors
+with NT = 20 and NT = 1 (JPDA) for each individual
+replication; this is a valid comparison as all filters
+were applied to the same data set at each replication.
+In about 90% of cases the multiple component
+filter gives a smaller error, and when the JPDA
+is better, the difference is usually small (note the
+logarithmic scale). The final error exceeds 20 units
+for about 30% of JPDA cases. In only two cases
+does the final error of the CAF with NT = 20 exceed
+20 units.
+VI. CONCLUSIONS
+In this paper we have reviewed two mixture
+reduction methods (known as the joining algorithm
+and the clustering algorithm) originally proposed
+in [1]. These algorithms have been used to manage
+the proliferation of hypotheses that results from
+target tracking with measurement association
+uncertainty. For the standard problem of tracking
+a point target in uniform random clutter, these
+schemes give a substantial performance improvement
+over single-component methods such as the PDAF
+for a significant range of problem parameters.
+This improvement is at the expense of increased
+computational memory and processing requirements.
+The processing time for a filter using the clustering
+algorithm is usually within an order of magnitude of
+the PDAF processing time, although for very difficult
+cases, where performance is in any case poor, the
+excess may be several orders of magnitude.
+Recently other authors [10—12] have pointed
+out some shortcomings in these schemes and
+have proposed improvements resulting in reported
+improvement in tracking performance.
+In the second part of this paper, mixture reduction
+via the clustering algorithm has been used to manage
+the growth of hypotheses for an extended object
+tracking problem. This shows that the methods can be
+successfully applied to moderately high dimensional
+examples without modification.
+684 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+ACKNOWLEDGMENTS
+Initial development of the mixture reduction
+algorithms was carried out with Derek Atherton
+and John Bather of the University of Sussex, and
+with Roger Hollingworth of the Royal Aerospace
+Establishment Farnborough. The work on extended
+object tracking was carried out mainly at QinetiQ. The
+author would like to acknowledge valuable discussions
+with Neil Gordon of DSTO Australia, and with Kevin
+Gilholm, Graham Pulford, and Nick Everett (all of
+QinetiQ Farnborough). These studies were sponsored
+by various UK MOD programmes.
+REFERENCES
+[1] Salmond, D.
+Mixture reduction algorithms for target tracking in clutter.
+SPIE: Signal and Data Processing of Small Targets,
+vol. 1305, 1990, 434—445.
+[2] Bar-Shalom, Y., and Fortmann, T.
+Tracking and Data Association.
+San Diego, CA: Academic Press, 1988.
+[3] Gilholm, K., and Salmond, D.
+Extended object and group tracking.
+In RTO SET Symposium on Target Tracking and
+Sensor Data Fusion for Military Observation Systems,
+vol. RTO-MP-SET-059, Budapest, Hungary, NATO, Oct.
+2003, 10.1—10.15.
+[4] Salmond, D.
+Tracking in Uncertain Environments.
+Ph.D. dissertation, University of Sussex and Royal
+Aerospace Establishment Technical Memorandum AW
+121, 1989.
+[5] Alspach, D.
+A Gaussian sum approach to the multi-target
+identification-tracking problem.
+Automatica, 11 (May 1975), 285—296.
+[6] Lainiotis, D., and Park, S.
+On joint detection, estimation and system identification:
+Discrete data case.
+International Journal of Control, 17 (1973).
+[7] Singer, R., Sea, R., and Housewright, K.
+Derivation and evaluation of improved tracking filters for
+use in dense multi-target environments.
+IEEE Transactions on Information Theory, IT-20 (July
+1974), 423—432.
+[8] Bar-Shalom, Y., and Birmiwal, K.
+Consistency and robustness of the PDAF for target
+tracking in cluttered environments.
+Automatica, 19 (July 1983), 431—437.
+[9] Blackman, S., and Popoli, R.
+Design and Analysis of Modern Tracking Systems.
+Norwood, MA: Artech House, 1999.
+[10] Williams, J., and Maybeck, P.
+Cost-function-based hypothesis control techniques for
+multiple hypothesis tracking.
+Mathematical and Computer Modelling, 43 (2006),
+976—989.
+[11] Williams, J., and Maybeck, P.
+Cost-function-based Gaussian mixture reduction for target
+tracking.
+In Fusion 2003: Proceedings of the 6th International
+Conference on Information Fusion, 2003, 1047—1054.
+[12] Runnalls, A.
+A Kullback-Leibler approach to Gaussian mixture
+reduction.
+IEEE Transactions on Aerospace and Electronic
+Systems, 43 (July 2007), 989—999.
+[13] Pao, L., and Powers, R.
+A comparison of several different approaches for target
+tracking with clutter.
+In Proceedings of the American Control Conference, 2003,
+3919—3924.
+[14] Maybeck, P., and Smith, B.
+Multiple model tracker based on Gaussian mixture
+reduction for maneuvering targets in clutter.
+In Fusion 2005: Proceedings of the 8th International
+Conference on Information Fusion, 2005.
+[15] Kan, W., and Krogmeier, J.
+A generalization of the PDA target tracking algorithm
+using hypothesis clustering.
+In Proceedings of 13th Asilomar Conference on Signals,
+Systems and Computers, Nov. 1996.
+[16] Scott, D., and Szewczyk, W.
+From kernels to mixtures.
+Technometrics, 43 (Aug. 2001), 323—335.
+[17] Titterington, D., Smith, A., and Makov, U.
+Statistical Analysis of Finite Mixture Distributions.
+New York: Wiley, 1985.
+[18] Pao, L.
+Multisensor multitarget mixture reduction algorithms for
+target tracking.
+AIAA Journal of Guidance, Control and Dynamics, 17
+(1994), 1205—1211.
+[19] Gordon, N.
+A hybrid Bootstrap filter for target tracking in clutter.
+IEEE Transactions on Aerospace and Electronic
+Systems, 33 (Jan. 1997), 353—358.
+[20] Pulford, G.
+Taxonomy of multiple target tracking methods.
+IEE Proceedings on Radar, Sonar and Navigation, 152,5
+(2005), 291—304.
+[21] Pulford, G., and Salmond, D.
+A Gaussian mixture filter for near-far object tracking.
+In Fusion 2005: Proceedings of the 8th International
+Conference on Information Fusion, 2005, 337—344.
+[22] Gordon, N., Salmond, D., and Fisher, D.
+Bayesian target tracking after group pattern distortion.
+SPIE: Signal and Data Processing of Small Targets,
+vol. 3163, 1997, 238—248.
+[23] Salmond, D., and Gordon, N.
+Group and extended object tracking.
+SPIE: Signal and Data Processing of Small Targets,
+vol. 3809, 1999, 284—296.
+[24] Broida, T., Chandrashekhar, S., and Chellappa, R.
+Recursive 3-D motion estimation from a monocular
+image sequence.
+IEEE Transactions on Aerospace and Electronic
+Systems, 26, 4 (1990), 639—656.
+[25] Broida, T., and Chellappa, R.
+Estimating the kinematics and structure of a rigid object
+from a sequence of monocular images.
+IEEE Transactions on Pattern Analysis and Machine
+Intelligence, 13, 6 (1991), 497—513.
+[26] Huang, T., and Netravali, A.
+Motion and structure from feature correspondences: A
+review.
+Proceedings of the IEEE, 82, 2 (1994), 252—268.
+SALMOND: MIXTURE REDUCTION ALGORITHMS FOR POINT AND EXTENDED OBJECT TRACKING IN CLUTTER 685
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply.
+[27] Dezert, J.
+Tracking manoeuvring and bending extended target in
+cluttered environment.
+SPIE: Signal and Data Processing of Small Targets,
+vol. 3373, 1998, 283—294.
+[28] Blasch, E., and Connare, T.
+Improving track maintenance through group tracking.
+In Proceedings of the Workshop on Estimation, Tracking
+and Fusion, Monterey, CA, 2001, 360—371.
+David Salmond has a D.Phil. in “Tracking in Uncertain Environments,”
+University of Sussex, 1989.
+He is a Fellow at the UK MOD Defence Science and Technology Laboratory,
+Farnborough. He has worked in target tracking and missile guidance for over
+30 years (formally at the Royal Aircraft Establishment, the Defence Evaluation
+and Research Agency and QinetiQ). His research interests are mainly in the
+application of Bayesian methods to tracking and guidance, especially for
+uncertain systems, measurement association uncertainty, data fusion and target
+selection/acquisition.
+Dr. Salmond is an Associate Editor of the IEEE Transactions on Aerospace and
+Electronic Systems and a Fellow of the IET.
+[29] Koch, W., and Saul, R.
+A Bayesian approach to extended object tracking and
+tracking of loosely structured target groups.
+In Fusion 2005: Proceedings of the 8th International
+Conference on Information Fusion, 2005.
+686 IEEE TRANSACTIONS ON AEROSPACE AND ELECTRONIC SYSTEMS VOL. 45, NO. 2 APRIL 2009
+Authorized licensed use limited to: UNIVERSIDADE FEDERAL DO RIO GRANDE DO SUL. Downloaded on June 12,2026 at 02:05:57 UTC from IEEE Xplore. Restrictions apply. 
