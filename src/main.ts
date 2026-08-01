@@ -1,4 +1,5 @@
 import { runApplicationPage } from "./pages/application-page";
+import { renderBenchmarkChart } from "./pages/benchmark-chart";
 import { runBenchmarkPage } from "./pages/benchmark-page";
 import { runFigurePage } from "./pages/figures-page";
 import { runMsePage } from "./pages/mse-page";
@@ -57,10 +58,12 @@ const actions: Array<{
     run: async () => {
       setInfo("Running merge benchmark in browser...");
       clearOutput();
-      const table = await runBenchmarkPage((message) => {
+      const results = await runBenchmarkPage((message) => {
         setInfo(`Benchmarking ${message}...`);
       });
-      output.appendChild(renderTable(table));
+      const chartMount = document.createElement("div");
+      output.appendChild(chartMount);
+      await renderBenchmarkChart(results, chartMount);
       setInfo("Benchmark completed.");
     },
   },

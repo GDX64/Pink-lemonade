@@ -8,7 +8,10 @@ import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
  * O(N^2) to set up, so it is capped well below the merge sizes: at N=10,000 a
  * single run already takes ~1 minute, and N=100,000 would take hours.
  */
-const KL_SCENARIOS = new Map<string, number>([["1_000", 10]]);
+const KL_SCENARIOS = new Map<string, number>([
+  ["1_000", 5],
+  ["100", 5],
+]);
 
 /**
  * Salmond's clustering reduction is far cheaper than Runnalls --- a whole pass
@@ -16,26 +19,54 @@ const KL_SCENARIOS = new Map<string, number>([["1_000", 10]]);
  * too. Still O(N^2) per pass, so 100,000 stays out of reach.
  */
 const SALMOND_SCENARIOS = new Map<string, number>([
-  ["1_000", 50],
+  ["1_000", 10],
+  ["5_000", 10],
   ["10_000", 10],
 ]);
 
-export async function runBenchmarkPage(onProgress?: (message: string) => void) {
+export type BenchmarkMethod = "merge" | "runnalls" | "salmond";
+
+/**
+ * One timed configuration. Held as numbers rather than formatted strings so the
+ * chart can fit a scaling exponent and place a frame-budget line; formatting is
+ * the renderer's job.
+ */
+export interface BenchmarkResult {
+  method: BenchmarkMethod;
+  /** Dataset size. */
+  n: number;
+  /** Kernels emitted. The merge's count is the budget the others are held to. */
+  kernels: number;
+  samples: number;
+  meanMs: number;
+  minMs: number;
+  maxMs: number;
+  p75Ms: number;
+  p99Ms: number;
+  p995Ms: number;
+  p999Ms: number;
+  /** 95% relative margin of error, or null when there is only one sample. */
+  rmePct: number | null;
+}
+
+export async function runBenchmarkPage(
+  onProgress?: (message: string) => void,
+): Promise<BenchmarkResult[]> {
   const downsampler = await wasmMerge();
   const samples = [
-    ["1_000", createNoiseFloatData(1_000), 16_570],
-    ["10_000", createNoiseFloatData(10_000), 4_108],
-    ["100_000", createNoiseFloatData(100_000), 497],
-    ["1000_000", createNoiseFloatData(1_000_000), 50],
+    ["1_000", 1_000, createNoiseFloatData(1_000), 1_000],
+    ["10_000", 10_000, createNoiseFloatData(10_000), 1_000],
+    ["100_000", 100_000, createNoiseFloatData(100_000), 497],
+    ["1000_000", 1_000_000, createNoiseFloatData(1_000_000), 50],
   ] as const;
 
   const mergedCount = new Map<string, number>();
-  for (const [name, sample] of samples) {
+  for (const [name, , sample] of samples) {
     mergedCount.set(name, calc(downsampler, sample));
   }
 
-  const rows: Array<Record<string, string>> = [];
-  for (const [name, sample, iterations] of [...samples].reverse()) {
+  const rows: BenchmarkResult[] = [];
+  for (const [name, n, sample, iterations] of [...samples].reverse()) {
     onProgress?.(`merge, N = ${name} (${iterations} iterations)`);
     downsampler.setDataF64(sample.dataF64);
     const durations: number[] = [];
@@ -44,15 +75,13 @@ export async function runBenchmarkPage(onProgress?: (message: string) => void) {
       calcWithoutData(downsampler, sample);
       durations.push(performance.now() - start);
     }
-    rows.push(
-      makeBenchRow(`${name} | merge`, mergedCount.get(name) ?? 0, durations),
-    );
+    rows.push(makeResult("merge", n, mergedCount.get(name) ?? 0, durations));
   }
 
   // Runnalls runs at the same kernel budget the merge produced, so the two
   // methods are timed for the same amount of output.
   const klDownsampler = await wasmKlMerge();
-  for (const [name, sample] of samples) {
+  for (const [name, n, sample] of samples) {
     const iterations = KL_SCENARIOS.get(name);
     if (iterations === undefined) continue;
 
@@ -75,13 +104,13 @@ export async function runBenchmarkPage(onProgress?: (message: string) => void) {
         );
       }
     }
-    rows.push(makeBenchRow(`${name} | runnalls`, target, durations));
+    rows.push(makeResult("runnalls", n, target, durations));
   }
 
   // Salmond clusters in groups, so it can only guarantee *at most* the merge's
   // kernel budget. The achieved count is read back rather than asserted.
   const salmondDownsampler = await wasmSalmondMerge();
-  for (const [name, sample] of samples) {
+  for (const [name, n, sample] of samples) {
     const iterations = SALMOND_SCENARIOS.get(name);
     if (iterations === undefined) continue;
 
@@ -96,7 +125,7 @@ export async function runBenchmarkPage(onProgress?: (message: string) => void) {
       achieved = calcSalmond(salmondDownsampler, sample, target);
       durations.push(performance.now() - start);
     }
-    rows.push(makeBenchRow(`${name} | salmond`, achieved, durations));
+    rows.push(makeResult("salmond", n, achieved, durations));
   }
 
   return rows;
@@ -108,29 +137,35 @@ function waitForNextFrame(): Promise<void> {
   });
 }
 
-function makeBenchRow(name: string, merged: number, durationsMs: number[]) {
+function makeResult(
+  method: BenchmarkMethod,
+  n: number,
+  kernels: number,
+  durationsMs: number[],
+): BenchmarkResult {
   const sorted = [...durationsMs].sort((a, b) => a - b);
-  const n = sorted.length;
-  const mean = sorted.reduce((acc, v) => acc + v, 0) / Math.max(n, 1);
+  const count = sorted.length;
+  const mean = sorted.reduce((acc, v) => acc + v, 0) / Math.max(count, 1);
   const variance =
-    n > 1
-      ? sorted.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / (n - 1)
+    count > 1
+      ? sorted.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) /
+        (count - 1)
       : 0;
-  const stdErr = Math.sqrt(variance / Math.max(n, 1));
-  const rme = mean > 0 ? (1.96 * stdErr * 100) / mean : 0;
+  const stdErr = Math.sqrt(variance / Math.max(count, 1));
 
   return {
-    name: `N = ${name} | merged=${merged}`,
-    hz: (1000 / Math.max(mean, 1e-9)).toFixed(2),
-    min: sorted[0]!.toFixed(4),
-    max: sorted[n - 1]!.toFixed(4),
-    mean: mean.toFixed(4),
-    p75: quantile(sorted, 0.75).toFixed(4),
-    p99: quantile(sorted, 0.99).toFixed(4),
-    p995: quantile(sorted, 0.995).toFixed(4),
-    p999: quantile(sorted, 0.999).toFixed(4),
-    rme: n > 1 ? `±${rme.toFixed(2)}%` : "n/a",
-    samples: String(n),
+    method,
+    n,
+    kernels,
+    samples: count,
+    meanMs: mean,
+    minMs: sorted[0]!,
+    maxMs: sorted[count - 1]!,
+    p75Ms: quantile(sorted, 0.75),
+    p99Ms: quantile(sorted, 0.99),
+    p995Ms: quantile(sorted, 0.995),
+    p999Ms: quantile(sorted, 0.999),
+    rmePct: count > 1 && mean > 0 ? (1.96 * stdErr * 100) / mean : null,
   };
 }
 
