@@ -210,7 +210,17 @@ export async function renderBenchmarkChart(
       },
       hovermode: "closest",
     },
-    { responsive: true, displaylogo: false },
+    {
+      responsive: true,
+      displaylogo: false,
+      toImageButtonOptions: {
+        format: "png",
+        filename: "benchmark-latency",
+        width: 800,
+        height: 400,
+        scale: 3,
+      },
+    },
   );
 
   return plotHost;

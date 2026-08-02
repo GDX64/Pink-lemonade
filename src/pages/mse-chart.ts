@@ -15,9 +15,9 @@ import type { MseMethod, MseResult } from "./mse-page";
  */
 
 const SERIES: Array<{ method: MseMethod; label: string; color: string }> = [
-  { method: "merge", label: "screen-space merge", color: "#1f6fb2" },
-  { method: "salmond", label: "Salmond clustering", color: "#e08a1e" },
-  { method: "runnalls", label: "Runnalls KL", color: "#c0392b" },
+  { method: "merge", label: "Ours", color: "#1f6fb2" },
+  { method: "salmond", label: "Salmond", color: "#e08a1e" },
+  { method: "runnalls", label: "Runnalls", color: "#c0392b" },
 ];
 
 /** Fixed floor for the NRMSE axis, in percent. */
@@ -116,7 +116,17 @@ export async function renderMseChart(results: MseResult[], mount: HTMLElement) {
       },
       hovermode: "closest",
     },
-    { responsive: true, displaylogo: false },
+    {
+      responsive: true,
+      displaylogo: false,
+      toImageButtonOptions: {
+        format: "png",
+        filename: "mse-chart",
+        width: 800,
+        height: 400,
+        scale: 3,
+      },
+    },
   );
 
   return plotHost;

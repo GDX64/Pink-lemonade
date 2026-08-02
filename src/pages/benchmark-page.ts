@@ -31,7 +31,7 @@ const KL_SCENARIOS = new Map<string, number>([
  * too. Still O(N^2) per pass, so 100,000 stays out of reach.
  */
 const SALMOND_SCENARIOS = new Map<string, number>([
-  ["1_000", 2],
+  ["1_000", 10],
   ["10_000", 2],
   ["100_000", 2],
 ]);

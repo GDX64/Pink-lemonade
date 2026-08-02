@@ -8,7 +8,7 @@ import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
  * O(N^2), so N=100,000 is out of reach (hours); above this the comparison
  * columns read "n/a".
  */
-const KL_MAX_N = 10_000;
+const KL_MAX_N = 1_000;
 
 /**
  * Same for Salmond's clustering reduction, which reduces a whole pass at a time
