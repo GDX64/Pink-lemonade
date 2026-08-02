@@ -47,6 +47,22 @@ type MonteCarloMetrics = {
   salmond: { mse: number; nrmse: number; rme: number; count: number } | null;
 };
 
+export type MseMethod = "merge" | "runnalls" | "salmond";
+
+/**
+ * One method's NRMSE at one N. Held as numbers rather than formatted strings so
+ * a chart can fit a trend line; formatting is the renderer's job.
+ */
+export interface MseResult {
+  method: MseMethod;
+  n: number;
+  kernels: number;
+  nrmse: number;
+  /** 95% relative margin of error on the MSE estimate, as a percentage. */
+  rmePct: number;
+  samples: number;
+}
+
 type MonteCarloEstimationEvent =
   | {
       kind: "scenario-start";
@@ -86,9 +102,9 @@ export async function runMsePage(
     scenarioProgress: number;
     overallProgress: number;
   }) => void,
-) {
+): Promise<MseResult[]> {
   const scenarios = [1_000, 10_000, 100_000] as const;
-  const rows: Array<Record<string, string>> = [];
+  const results: MseResult[] = [];
   const progressUi = createMseProgressUi();
   const klDownsampler = await wasmKlMerge();
   const salmondDownsampler = await wasmSalmondMerge();
@@ -150,32 +166,40 @@ export async function runMsePage(
       throw new Error(`MSE estimation finished without result for N=${n}`);
     }
 
-    rows.push({
-      N: n.toLocaleString("en-US"),
-      merged: String(metrics.mergedCount),
-      nrmsePct: `${(metrics.nrmse * 100).toFixed(4)}%`,
-      rme: `±${metrics.rme.toFixed(2)}%`,
-      klNrmsePct: metrics.kl
-        ? `${(metrics.kl.nrmse * 100).toFixed(4)}%`
-        : "n/a",
-      klRme: metrics.kl ? `±${metrics.kl.rme.toFixed(2)}%` : "n/a",
-      nrmseRatio: metrics.kl
-        ? `${(metrics.nrmse / metrics.kl.nrmse).toFixed(1)}x`
-        : "n/a",
-      salmondKernels: metrics.salmond ? String(metrics.salmond.count) : "n/a",
-      salmondNrmsePct: metrics.salmond
-        ? `${(metrics.salmond.nrmse * 100).toFixed(4)}%`
-        : "n/a",
-      salmondRme: metrics.salmond
-        ? `±${metrics.salmond.rme.toFixed(2)}%`
-        : "n/a",
-      samples: String(metrics.acceptedSamples),
+    results.push({
+      method: "merge",
+      n,
+      kernels: metrics.mergedCount,
+      nrmse: metrics.nrmse,
+      rmePct: metrics.rme,
+      samples: metrics.acceptedSamples,
     });
+    if (metrics.kl) {
+      results.push({
+        method: "runnalls",
+        n,
+        // Runnalls is held to the merge's exact budget by construction.
+        kernels: metrics.mergedCount,
+        nrmse: metrics.kl.nrmse,
+        rmePct: metrics.kl.rme,
+        samples: metrics.acceptedSamples,
+      });
+    }
+    if (metrics.salmond) {
+      results.push({
+        method: "salmond",
+        n,
+        kernels: metrics.salmond.count,
+        nrmse: metrics.salmond.nrmse,
+        rmePct: metrics.salmond.rme,
+        samples: metrics.acceptedSamples,
+      });
+    }
   }
 
   progressUi.done();
 
-  return rows;
+  return results;
 }
 
 function* estimateMonteCarloMetrics(

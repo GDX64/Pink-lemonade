@@ -2,6 +2,7 @@ import { runApplicationPage } from "./pages/application-page";
 import { renderBenchmarkChart } from "./pages/benchmark-chart";
 import { runBenchmarkPage } from "./pages/benchmark-page";
 import { runFigurePage } from "./pages/figures-page";
+import { renderMseChart } from "./pages/mse-chart";
 import { runMsePage } from "./pages/mse-page";
 
 const root = document.createElement("div");
@@ -73,14 +74,16 @@ const actions: Array<{
     run: async () => {
       setInfo("Running Monte Carlo MSE estimation...");
       clearOutput();
-      const table = await runMsePage((progress) => {
+      const results = await runMsePage((progress) => {
         const overallPct = (progress.overallProgress * 100).toFixed(1);
         const scenarioPct = (progress.scenarioProgress * 100).toFixed(1);
         setInfo(
           `MSE estimation ${overallPct}% (N=${progress.n.toLocaleString("en-US")}, ${progress.acceptedSamples}/${progress.targetSamples}, scenario ${scenarioPct}%)`,
         );
       });
-      output.appendChild(renderTable(table));
+      const chartMount = document.createElement("div");
+      output.appendChild(chartMount);
+      await renderMseChart(results, chartMount);
       setInfo("MSE estimation completed.");
     },
   },
@@ -202,40 +205,4 @@ function navigateToPage(page: string) {
   const target = new URL(window.location.href);
   target.searchParams.set("page", page);
   window.location.assign(target.toString());
-}
-
-function renderTable(rows: Array<Record<string, string>>) {
-  const table = document.createElement("table");
-  table.style.borderCollapse = "collapse";
-  table.style.width = "100%";
-  if (rows.length === 0) return table;
-
-  const head = document.createElement("thead");
-  const headRow = document.createElement("tr");
-  for (const key of Object.keys(rows[0]!)) {
-    const th = document.createElement("th");
-    th.textContent = key;
-    th.style.border = "1px solid #d8e2ee";
-    th.style.padding = "8px";
-    th.style.textAlign = "left";
-    th.style.background = "#f6fbff";
-    headRow.appendChild(th);
-  }
-  head.appendChild(headRow);
-  table.appendChild(head);
-
-  const body = document.createElement("tbody");
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-    for (const value of Object.values(row)) {
-      const td = document.createElement("td");
-      td.textContent = value;
-      td.style.border = "1px solid #d8e2ee";
-      td.style.padding = "8px";
-      tr.appendChild(td);
-    }
-    body.appendChild(tr);
-  }
-  table.appendChild(body);
-  return table;
 }
