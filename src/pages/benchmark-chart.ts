@@ -17,19 +17,19 @@ import type { BenchmarkMethod, BenchmarkResult } from "./benchmark-page";
  */
 
 /** 60 fps. The line each method has to stay under to be a per-frame method. */
-const FRAME_BUDGET_MS = 1000 / 60;
+const FRAME_BUDGET_S = 1 / 60;
 
-/** Fixed floor for the latency axis: 1 microsecond. */
-const Y_MIN_MS = 0.001;
+/** Fixed floor for the latency axis: 1 microsecond, in seconds. */
+const Y_MIN_S = 1e-6;
 
 const SERIES: Array<{
   method: BenchmarkMethod;
   label: string;
   color: string;
 }> = [
-  { method: "merge", label: "screen-space merge", color: "#1f6fb2" },
-  { method: "salmond", label: "Salmond clustering", color: "#e08a1e" },
-  { method: "runnalls", label: "Runnalls KL", color: "#c0392b" },
+  { method: "merge", label: "Ours", color: "#1f6fb2" },
+  { method: "salmond", label: "Salmond", color: "#e08a1e" },
+  { method: "runnalls", label: "Runnalls", color: "#c0392b" },
 ];
 
 /**
@@ -80,6 +80,7 @@ export async function renderBenchmarkChart(
 
     const xs = points.map((p) => p.n);
     const ys = points.map((p) => p.meanMs);
+    const ysSec = points.map((p) => p.meanMs / 1000);
     const exponent = fitExponent(xs, ys);
     const name =
       exponent === null
@@ -88,7 +89,7 @@ export async function renderBenchmarkChart(
 
     traces.push({
       x: xs,
-      y: ys,
+      y: ysSec,
       name,
       type: "scatter",
       mode: points.length > 1 ? "lines+markers" : "markers",
@@ -96,10 +97,10 @@ export async function renderBenchmarkChart(
       marker: { color, size: 9 },
       error_y: {
         type: "data",
-        // 95% margin of error on the mean, as an absolute duration. A single
-        // run has no margin to report, so it gets a bare marker.
+        // 95% margin of error on the mean, as an absolute duration (seconds).
+        // A single run has no margin to report, so it gets a bare marker.
         array: points.map((p) =>
-          p.rmePct === null ? 0 : (p.meanMs * p.rmePct) / 100,
+          p.rmePct === null ? 0 : (p.meanMs / 1000) * (p.rmePct / 100),
         ),
         color,
         thickness: 1.5,
@@ -111,11 +112,12 @@ export async function renderBenchmarkChart(
         formatMs(p.maxMs),
         p.samples,
         p.rmePct === null ? "n/a" : `±${p.rmePct.toFixed(2)}%`,
+        formatMs(p.meanMs),
       ]),
       hovertemplate:
         `<b>${label}</b><br>` +
         "N = %{x:,}<br>" +
-        "mean %{y:.4f} ms<br>" +
+        "mean %{customdata[5]}<br>" +
         "p99 %{customdata[1]} · max %{customdata[2]}<br>" +
         "kernels %{customdata[0]}<br>" +
         "%{customdata[3]} runs, RME %{customdata[4]}" +
@@ -129,21 +131,22 @@ export async function renderBenchmarkChart(
 
   // Pinning the floor at 1 microsecond keeps the decades comparable between
   // runs; the top follows the slowest mean, which the error bars hug closely.
-  const yTopMs = Math.max(...results.map((r) => r.meanMs), Y_MIN_MS);
+  const yTopS = Math.max(...results.map((r) => r.meanMs / 1000), Y_MIN_S);
 
   await Plotly.newPlot(
     plotHost,
     traces,
     {
-      height: 620,
+      width: 800,
+      height: 400,
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
       // Wide right margin reserves the gutter the legend sits in.
-      margin: { l: 78, r: 240, t: 64, b: 66 },
-      title: {
-        text: "Reduction latency vs dataset size",
-        font: { color: "#16324f", size: 18 },
-      },
+      margin: { l: 60, r: 20, t: 20, b: 66 },
+      // title: {
+      //   text: "Reduction latency vs dataset size",
+      //   font: { color: "#16324f", size: 18 },
+      // },
       xaxis: {
         title: { text: "N (points)", font: { color: "#16324f", size: 14 } },
         type: "log",
@@ -154,12 +157,16 @@ export async function renderBenchmarkChart(
       },
       yaxis: {
         title: {
-          text: "latency per reduction (ms)",
+          text: "latency per reduction",
           font: { color: "#16324f", size: 14 },
         },
         type: "log",
         // Log axes take their range in log10 units, not data units.
-        range: [Math.log10(Y_MIN_MS), Math.log10(yTopMs * 2)],
+        range: [Math.log10(Y_MIN_S), Math.log10(yTopS * 2)],
+        // d3 "s" SI-prefix format renders the number with a magnitude prefix
+        // (µ, m, ...); the base unit is appended separately via ticksuffix.
+        tickformat: "~s",
+        ticksuffix: "s",
         gridcolor: "#e7eef6",
         zeroline: false,
         color: "#2d4d6c",
@@ -171,8 +178,8 @@ export async function renderBenchmarkChart(
           yref: "y",
           x0: xMin,
           x1: xMax,
-          y0: FRAME_BUDGET_MS,
-          y1: FRAME_BUDGET_MS,
+          y0: FRAME_BUDGET_S,
+          y1: FRAME_BUDGET_S,
           line: { color: "#7a8ba0", width: 2, dash: "dash" },
         },
       ],
@@ -181,7 +188,7 @@ export async function renderBenchmarkChart(
           xref: "x",
           yref: "y",
           x: Math.log10(xMax),
-          y: Math.log10(FRAME_BUDGET_MS),
+          y: Math.log10(FRAME_BUDGET_S),
           xanchor: "right",
           yanchor: "bottom",
           text: "60 fps frame budget (16.7 ms)",
@@ -192,9 +199,9 @@ export async function renderBenchmarkChart(
       legend: {
         // Outside the plotting area, in the right gutter. x > 1 is measured in
         // plot-width fractions, so this sits just past the axis.
-        x: 1.02,
+        x: 1,
         y: 1,
-        xanchor: "left",
+        xanchor: "right",
         yanchor: "top",
         bgcolor: "rgba(255,255,255,0.85)",
         bordercolor: "#d8e2ee",
@@ -208,4 +215,3 @@ export async function renderBenchmarkChart(
 
   return plotHost;
 }
-

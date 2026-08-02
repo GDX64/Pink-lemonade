@@ -8,13 +8,13 @@ import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
  * O(N^2), so N=100,000 is out of reach (hours); above this the comparison
  * columns read "n/a".
  */
-const KL_MAX_N = 1_000;
+const KL_MAX_N = 10_000;
 
 /**
  * Same for Salmond's clustering reduction, which reduces a whole pass at a time
  * instead of rescanning after every merge and so reaches 10,000 comfortably.
  */
-const SALMOND_MAX_N = 10_000;
+const SALMOND_MAX_N = 100_000;
 
 type GaussianComponent = {
   x: number;
@@ -400,8 +400,7 @@ function* estimateMonteCarloMetrics(
     salmond = {
       mse: salmondMse,
       nrmse: referenceRange > 0 ? Math.sqrt(salmondMse) / referenceRange : 0,
-      rme:
-        salmondMse > 0 ? ((1.96 * salmondStdErr) / salmondMse) * 100 : 0,
+      rme: salmondMse > 0 ? ((1.96 * salmondStdErr) / salmondMse) * 100 : 0,
       count: salmondCount,
     };
   }

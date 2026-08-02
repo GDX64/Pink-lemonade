@@ -21,7 +21,7 @@ const YIELD_INTERVAL_MS = 100;
  * single run already takes ~1 minute, and N=100,000 would take hours.
  */
 const KL_SCENARIOS = new Map<string, number>([
-  ["1_000", 5],
+  ["1_000", 2],
   ["3_000", 2],
 ]);
 
@@ -31,9 +31,9 @@ const KL_SCENARIOS = new Map<string, number>([
  * too. Still O(N^2) per pass, so 100,000 stays out of reach.
  */
 const SALMOND_SCENARIOS = new Map<string, number>([
-  ["1_000", 10],
-  ["10_000", 5],
-  ["100_000", 3],
+  ["1_000", 2],
+  ["10_000", 2],
+  ["100_000", 2],
 ]);
 
 export type BenchmarkMethod = "merge" | "runnalls" | "salmond";
@@ -63,11 +63,11 @@ export interface BenchmarkResult {
 
 /** Dataset sizes and how many times each is timed for the merge. */
 const SCENARIOS = [
-  ["1_000", 1_000, 1_000],
-  ["3_000", 3_000, 1_000],
-  ["10_000", 10_000, 1_000],
-  ["100_000", 100_000, 500],
-  ["1000_000", 1_000_000, 50],
+  ["1_000", 1_000, 1000],
+  ["3_000", 3_000, 1000],
+  ["10_000", 10_000, 500],
+  ["100_000", 100_000, 100],
+  ["1000_000", 1_000_000, 20],
 ] as const;
 
 /**
@@ -345,4 +345,3 @@ function calcKl(
   }
   return result.count;
 }
-

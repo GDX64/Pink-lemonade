@@ -23,10 +23,7 @@ const SERIES: Array<{ method: MseMethod; label: string; color: string }> = [
 /** Fixed floor for the NRMSE axis, in percent. */
 const Y_MIN_PCT = 1e-4;
 
-export async function renderMseChart(
-  results: MseResult[],
-  mount: HTMLElement,
-) {
+export async function renderMseChart(results: MseResult[], mount: HTMLElement) {
   mount.innerHTML = "";
 
   const plotHost = document.createElement("div");
@@ -77,15 +74,16 @@ export async function renderMseChart(
     plotHost,
     traces,
     {
-      height: 620,
+      width: 800,
+      height: 400,
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
       // Wide right margin reserves the gutter the legend sits in.
-      margin: { l: 78, r: 240, t: 64, b: 66 },
-      title: {
-        text: "Reduction accuracy vs dataset size",
-        font: { color: "#16324f", size: 18 },
-      },
+      margin: { l: 80, r: 20, t: 20, b: 60 },
+      // title: {
+      //   text: "Reduction accuracy vs dataset size",
+      //   font: { color: "#16324f", size: 18 },
+      // },
       xaxis: {
         title: { text: "N (points)", font: { color: "#16324f", size: 14 } },
         type: "log",
@@ -107,12 +105,10 @@ export async function renderMseChart(
         color: "#2d4d6c",
       },
       legend: {
-        // Outside the plotting area, in the right gutter. x > 1 is measured in
-        // plot-width fractions, so this sits just past the axis.
-        x: 1.02,
-        y: 1,
-        xanchor: "left",
-        yanchor: "top",
+        x: 1,
+        y: 0.2,
+        xanchor: "right",
+        yanchor: "bottom",
         bgcolor: "rgba(255,255,255,0.85)",
         bordercolor: "#d8e2ee",
         borderwidth: 1,
