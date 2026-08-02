@@ -266,3 +266,130 @@ where
 
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROW: usize = 7;
+
+    fn identity(pts: &[(f64, f64, f64)], threshold_px: f64) -> Vec<f64> {
+        let flat: Vec<f64> = pts.iter().flat_map(|p| [p.0, p.1, p.2]).collect();
+        merge_pass(&flat, 0, pts.len(), threshold_px, |x| x, |y| y)
+    }
+
+    fn rows(out: &[f64]) -> Vec<&[f64]> {
+        out.chunks(ROW).collect()
+    }
+
+    #[test]
+    fn coincident_points_merge_into_one_kernel_with_summed_mass() {
+        // dx = dy = 0 for every member, so weighted_xx/xy/yy stay zero and the
+        // covariance is exactly the unit kernel: amplitude = total_w / (2*pi).
+        let out = identity(&[(2.0, -1.0, 3.0), (2.0, -1.0, 1.0), (2.0, -1.0, 5.0)], 1.0);
+        let r = rows(&out);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0][0], 2.0);
+        assert_eq!(r[0][1], -1.0);
+        assert!((r[0][2] - 9.0 / (2.0 * std::f64::consts::PI)).abs() < 1e-12);
+        assert!((r[0][3] - 1.0).abs() < 1e-12); // p00
+        assert!((r[0][4] - 0.0).abs() < 1e-12); // p01
+        assert!((r[0][6] - 1.0).abs() < 1e-12); // p11
+    }
+
+    #[test]
+    fn well_separated_points_stay_as_separate_kernels_in_order() {
+        // Every gap is far larger than the threshold, so no two points may merge
+        // and the output must preserve input order one-for-one.
+        let pts = [(0.0, 0.0, 1.0), (100.0, 0.0, 1.0), (200.0, 0.0, 1.0)];
+        let out = identity(&pts, 1.0);
+        let r = rows(&out);
+        assert_eq!(r.len(), pts.len());
+        for (row, p) in r.iter().zip(pts.iter()) {
+            assert_eq!(row[0], p.0);
+            assert_eq!(row[1], p.1);
+        }
+    }
+
+    #[test]
+    fn cluster_centre_is_the_mass_weighted_mean() {
+        // Two nearby, unequal-weight points: the merged centre must land at the
+        // ordinary weighted average, not the midpoint.
+        let out = identity(&[(0.0, 0.0, 1.0), (1.0, 0.0, 3.0)], 10.0);
+        let r = rows(&out);
+        assert_eq!(r.len(), 1);
+        let expected_x = (0.0 * 1.0 + 1.0 * 3.0) / 4.0;
+        assert!((r[0][0] - expected_x).abs() < 1e-12);
+        assert!((r[0][1] - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn total_mass_is_conserved_across_a_merged_run() {
+        // Amplitude = cluster_w / (2*pi*sqrt(det)); with the points spread out a
+        // little the covariance grows, so recover cluster_w from the reported
+        // amplitude and determinant and check it against the raw input sum.
+        let pts = [
+            (0.0, 0.0, 2.0),
+            (0.2, 0.1, 1.0),
+            (0.4, -0.1, 4.0),
+            (0.1, 0.2, 3.0),
+        ];
+        let total_in: f64 = pts.iter().map(|p| p.2).sum();
+        let out = identity(&pts, 5.0);
+        let r = rows(&out);
+        assert_eq!(r.len(), 1);
+        let (w, p00, p01, p11) = (r[0][2], r[0][3], r[0][4], r[0][6]);
+        let det = p00 * p11 - p01 * p01;
+        let recovered = w * 2.0 * std::f64::consts::PI * det.sqrt();
+        assert!((recovered - total_in).abs() < 1e-9);
+    }
+
+    #[test]
+    fn merging_never_pulls_a_member_outside_the_threshold_of_the_runs_first_point() {
+        // Construct a point exactly outside the threshold from the run's first
+        // sample: it must start its own cluster rather than being absorbed, even
+        // though it might land close to the running centroid.
+        let out = identity(&[(0.0, 0.0, 1.0), (0.0, 0.0, 1.0), (1.5, 0.0, 1.0)], 1.0);
+        let r = rows(&out);
+        // The third point is 1.5px from the first (outside threshold=1) even
+        // though it is close to the two-point centroid at (0,0).
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[1][0], 1.5);
+    }
+
+    #[test]
+    fn empty_and_singleton_input_produce_no_kernels() {
+        assert_eq!(identity(&[], 1.0), Vec::<f64>::new());
+        assert!(identity(&[(0.0, 0.0, 1.0)], 1.0).len() == ROW);
+    }
+
+    #[test]
+    fn merge_points_returns_empty_for_less_than_a_full_triplet() {
+        let mut d = Downsampler::new();
+        d.set_data_f64(vec![0.0, 0.0].into_boxed_slice()); // not even one full point
+        let result = d.merge_points();
+        assert_eq!(result.count(), 0);
+        assert_eq!(result.gpu_instances().len(), 0);
+    }
+
+    #[test]
+    fn merge_points_clips_to_the_view_window() {
+        let mut d = Downsampler::new();
+        d.set_view_min_x(0.0);
+        d.set_view_max_x(1.0);
+        d.set_view_min_y(0.0);
+        d.set_view_max_y(1.0);
+        d.set_screen_w(100.0);
+        d.set_screen_h(100.0);
+        d.set_merge_threshold(0.01); // tiny, so in-view points don't merge
+        d.set_data_f64(
+            vec![
+                -10.0, 0.5, 1.0, // outside view, must be dropped
+                0.2, 0.2, 1.0, 0.8, 0.8, 1.0, 50.0, 0.5, 1.0, // outside view, must be dropped
+            ]
+            .into_boxed_slice(),
+        );
+        let result = d.merge_points();
+        assert_eq!(result.count(), 2);
+    }
+}
