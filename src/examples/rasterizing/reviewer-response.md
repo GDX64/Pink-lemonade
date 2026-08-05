@@ -22,16 +22,27 @@ trade-off clearly.
 ### R1.2 — Automatic transition from heatmap to scatter plot at high zoom
 > Although the limitation of the heatmap pattern disappearing at high zoom levels is described appropriately, it would be helpful to include a brief discussion or illustration of how the automated transition from the heatmap to standard scatter plots could be triggered in the system to avoid an "empty" visualization.
 
-*Response:* We thank the reviewer for this suggestion. The revised text now
-discusses how the system detects this regime and adapts to it. The renderer
-applies a user-configurable opacity cut that suppresses very low densities, which
-improves legibility in the aggregated regime (particularly when quantization is
-enabled). Because that same cut is what produces an "empty" view once kernels no
-longer overlap, it is now disabled automatically when the on-screen density falls
-below one kernel per kernel bandwidth along the time axis — the point at which
-the visualization has effectively degenerated into a scatter plot and every
-kernel should remain visible. We have added a brief discussion of this criterion
-to the text.
+*Response:* We thank the reviewer for this suggestion, and we agree that the
+"empty" view is the practical failure mode to avoid. The mechanism responsible
+for it in our pipeline is the opacity cut applied during dynamic color mapping,
+which suppresses very low densities and improves legibility in the aggregated
+regime (particularly when quantization is enabled), but which also hides isolated
+splats once kernels no longer overlap. In the current system this cut is
+user-configurable, so the degenerate view can be avoided by lowering or disabling
+the threshold; the paper describes the threshold in the Pass 3 discussion and
+identifies the high-zoom degeneration explicitly under Limitations, noting that a
+plain line or scatter chart is the more appropriate representation at that scale.
+
+Automating the switch is a natural next step, and we agree with the reviewer that
+it is worth stating how it would be triggered. The criterion we consider
+appropriate is a density test on the current view — disabling the cut once the
+on-screen density falls below roughly one merged kernel per kernel bandwidth
+along the time axis, which is precisely the point at which the density field has
+degenerated into a scatter plot and every kernel should remain visible. We have
+not implemented this automatic transition in the present version, and we prefer
+not to describe it in the manuscript as though it were part of the system; we
+would be glad to add it, together with an illustration of the transition, should
+the reviewer consider it within the scope of this submission.
 
 ## Reviewer 2
 
@@ -97,13 +108,19 @@ baseline is difficult here, as we are not aware of prior research or production
 systems that encode this second variable as a continuous field over the time
 series. The prevailing practice is either to display volume in a secondary
 synchronized chart or to draw discrete 2D marks with area proportional to volume,
-neither of which is directly comparable to a continuous-field representation. We
-have therefore addressed this point in two ways. First, we now compare our
-method quantitatively against established mixture-reduction methods on the
-component of the pipeline where a fair comparison is well posed, reporting both
-runtime and approximation error (see R1.1). Second, we have revised the text to
-describe the prevailing alternatives explicitly and to state why a direct
-head-to-head comparison against them is not meaningful.
+neither of which is directly comparable to a continuous-field representation: the
+comparison would measure the difference between two visual encodings rather than
+between two methods for producing the same one. The revised Introduction states
+the limitations of the synchronized-chart practice, which is the alternative our
+target users employ today, as part of the motivation added for R2.1 and R2.5.
+
+Rather than force such a comparison, we have addressed the reviewer's concern on
+the component of the pipeline where a fair comparison is well posed: we now
+compare our method quantitatively against established mixture-reduction methods
+at matched output budget, reporting both runtime and approximation error (see
+R1.1). We would be glad to expand the discussion of the prevailing alternatives
+in the text if the reviewer considers the current treatment insufficient, though
+the six-page limit constrains how far this can be developed.
 
 Regarding the complexity analysis, we did not attempt a formal derivation. Our
 merge is a single linear pass over the visible points, and the cost in the GPU rasterization depends on the number of surviving kernels and the screen resolution rather than on the dataset size; a formal
