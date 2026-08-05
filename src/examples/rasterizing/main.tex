@@ -374,9 +374,9 @@ Visual representations, mostly charts, have been used for centuries to depict te
 
 %A timeseries is naturally plotted as time versus value, but many datasets also include a third scalar (for example traded volume). We encode this third value as weighted KDE: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}.
 
-Temporal data may have multiple values per time point, and over the years, several visualization techniques have been developed, beyond the popular time-versus-value plot. However, when the problem at hand requires observing a large time series in real time, such complex visualizations do not scale. Even adding a second value to a time point requires a different approach. 
+Temporal data may have multiple values per time point, and over the years, several visualization techniques have been developed, beyond the popular time-versus-value plot. However, when the problem at hand requires observing a large time series in real time, such complex visualizations do not scale. Even adding a second value to a time point requires a different approach. A common practice in financial applications is to stack several plots one below the other, sharing a common time axis. While effective, this forces the analyst to compare across panels rather than locally, and it conveys neither the aggregation of values nor their joint structure in two dimensions.
 
-We propose encoding this second value as weighted Kernel Density Estimation: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density. %Prior work most closely related to this formulation is summarized in Section~\ref{sec:related-work}. 
+We propose encoding this second value as weighted Kernel Density Estimation: each sample contributes a weighted Gaussian in chart space, and color encodes accumulated density, capturing both aggregation and the two-dimensional relation between time and quantity in a single view.
 
 The challenge is scale. With hundreds of thousands of points, CPU evaluation is too slow for interactive pan/zoom and costs $O(N \times W \times H)$, where $N$ is the number of samples, $W$ is the kernel width, and $H$ is the kernel height. Na\"{i}ve GPU splatting (one kernel quad per point) reduces constants but still suffers heavy overdraw \cite{10.1109/TVCG.2013.65}; with strong overlap, fragment work can reach billions of evaluations per frame.
 
@@ -409,7 +409,7 @@ Our target application is the visual exploration of large series of financial da
 
 %Before rendering, timestamps are normalized to a unit interval. This ensures that coordinate arithmetic in subsequent stages operates on well-conditioned values regardless of the absolute time range, preventing precision loss at extreme zoom levels. The original scale factors are retained separately for axis label reconstruction.
 
-All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities (Figure~\ref{fig:synthetic-amplitude}), with Gaussian noise added. The only exception is the Bitcoin chart (Fig.~\ref{fig:bitcoin-sample}), which is built from real market data.
+All examples in this paper use the same synthetic dataset generation procedure: a random-walk trajectory for the signal, combined with the same amplitude function to define the distribution of quantities, with Gaussian noise added. The only exception is the Bitcoin chart (Fig.~\ref{fig:bitcoin-sample}), which is built from real market data.
 
 Figure~\ref{fig:bitcoin-sample} shows a representative dataset slice used in our experiments, where long-horizon price motion and localized bursts of trading activity coexist and motivate density-based rendering.
 
@@ -614,13 +614,13 @@ To situate our screen-space weighted merge against the broader Gaussian-mixture 
 \begin{figure}[t]
       \centering
       \includegraphics[width=1\linewidth]{figs/mse-chart.png}
-      \caption{Comparison of the MSE for Salmond, Runnalls and our method.}
+      \caption{Comparison of the MSE for the Salmond, Runnalls, and our reduction methods.}
     \label{fig:mse-chart}
 \end{figure}
 \begin{figure}
     \centering
     \includegraphics[width=1\linewidth]{figs/benchmark-latency.png}
-    \caption{Comparison of performance from Salmond, Runnalls and our method.}
+    \caption{Comparison of the performance of the Salmond, Runnalls, and our reduction methods.}
     \label{fig:benchmark-latency}
 \end{figure}
 
