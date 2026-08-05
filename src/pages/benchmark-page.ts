@@ -22,13 +22,13 @@ const YIELD_INTERVAL_MS = 100;
  */
 const KL_SCENARIOS = new Map<string, number>([
   ["1_000", 2],
-  ["3_000", 2],
+  // ["10_000", 1],
 ]);
 
 /**
  * Salmond's clustering reduction is far cheaper than Runnalls --- a whole pass
  * per iteration rather than a rescan per merge --- so it can be timed at 10,000
- * too. Still O(N^2) per pass, so 100,000 stays out of reach.
+ * too.
  */
 const SALMOND_SCENARIOS = new Map<string, number>([
   ["1_000", 10],
@@ -64,7 +64,6 @@ export interface BenchmarkResult {
 /** Dataset sizes and how many times each is timed for the merge. */
 const SCENARIOS = [
   ["1_000", 1_000, 1000],
-  ["3_000", 3_000, 1000],
   ["10_000", 10_000, 500],
   ["100_000", 100_000, 100],
   ["1000_000", 1_000_000, 20],
