@@ -55,7 +55,14 @@ introduced.
 ### R2.3 — Structure and clarity of the Related Work section
 > It would be more helpful to readers if the authors provided an overview of the rationale for their solution and then made the connections to previous work, explicitly stating where the new solution improves on prior approaches.
 
-*Response:* <!-- TODO: describe how Related Work was restructured. -->
+*Response:* We thank the reviewer for this suggestion. The section previously
+opened by naming the two closest lines of prior work, which did not convey why
+those particular lines were relevant. We have rewritten the opening paragraph to
+lead with the rationale instead: it decomposes the problem into the three
+requirements that an interactive weighted-KDE renderer must satisfy, identifies
+which body of prior work addresses each one, and then states how our solution
+differs from all three. The subsequent paragraphs, each of which already
+contrasts our approach with the work it reviews, now follow from that framing.
 
 ### R2.4 — Explicit statement of the novel contributions
 > Authors should explicitly state what is novel in the visual representation (the weighted KDE encoding of a second scalar variable) and what is novel in the rendering algorithm (the screen-space kernel reduction).
@@ -91,10 +98,25 @@ systems that encode this second variable as a continuous field over the time
 series. The prevailing practice is either to display volume in a secondary
 synchronized chart or to draw discrete 2D marks with area proportional to volume,
 neither of which is directly comparable to a continuous-field representation. We
-have therefore addressed this point in two ways: by comparing quantitatively
-against established mixture-reduction methods on the component of the pipeline
-where a fair comparison is possible (see R1.1), and by adding the complexity
-analysis of our rendering algorithm with all symbols defined (see R2.2). We have
-also revised the text to describe the prevailing alternatives and to state
-explicitly why a direct head-to-head comparison is not well posed.
+have therefore addressed this point in two ways. First, we now compare our
+method quantitatively against established mixture-reduction methods on the
+component of the pipeline where a fair comparison is well posed, reporting both
+runtime and approximation error (see R1.1). Second, we have revised the text to
+describe the prevailing alternatives explicitly and to state why a direct
+head-to-head comparison against them is not meaningful.
+
+Regarding the complexity analysis, we did not attempt a formal derivation. Our
+merge is a single linear pass over the visible points, and the cost in the GPU rasterization depends on the number of surviving kernels and the screen resolution rather than on the dataset size; a formal
+bound would therefore characterize the hardware more than the algorithm, and we
+did not think it would inform the reader enough to justify the space it would
+require within the six-page limit. Instead, we have added pseudocode for
+the merging algorithm and expanded its accompanying description, so that its
+cost per frame can be read directly from the procedure, and we have defined the
+symbols in the cost expression given in the Introduction (see R2.2). We would
+also note that the benchmark figure plots latency against the number of points
+on logarithmic axes, and that the legend annotates each method with the scaling
+exponent recovered by a least-squares fit of its curve. The scaling behaviour of
+each method can therefore be read off the figure directly, which we believe
+offers a measured counterpart to an asymptotic bound. We would of course be glad to include a formal analysis
+should the reviewer consider it essential.
 
