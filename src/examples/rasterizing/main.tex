@@ -277,10 +277,16 @@
 \newcommand{\cmtid}{115}
 %------------------------------------------------------------------------- 
 
+\IEEEoverridecommandlockouts
+\IEEEpubid{\makebox[\columnwidth]{979-8-3195-0255-1/26/\$31.00~\copyright2026 IEEE \hfill}
+\hspace{\columnsep}\makebox[\columnwidth]{ }}
+
 \iffinal
 \else
 \usepackage[switch]{lineno}
 \fi
+
+
 
 \begin{document}
 %
@@ -516,46 +522,35 @@ The rendering pipeline consists of three GPU passes submitted together per frame
 \begin{figure}[t]
   \centering
   \begin{tikzpicture}[
-    font=\footnotesize,
-    node distance=4.5mm,
-    stage/.style={draw, rounded corners=1.5pt, align=center, minimum height=9mm, text width=0.56\linewidth},
-    io/.style={draw, align=center, minimum height=8mm, text width=0.56\linewidth},
-    entry/.style={align=center, font=\itshape, text width=0.56\linewidth},
+    font=\scriptsize,
+    node distance=3.2mm,
+    stage/.style={draw, rounded corners=1.5pt, align=center, minimum height=7mm, text width=0.42\linewidth, inner sep=2pt},
+    io/.style={draw, align=center, minimum height=6mm, text width=0.42\linewidth, inner sep=2pt},
+    entry/.style={align=center, font=\scriptsize\itshape, text width=0.42\linewidth, inner sep=2pt},
     arrow/.style={-Latex, line width=0.5pt}
   ]
     \node[entry] (raw) {Raw points $(t,p,w)$};
-    \node[stage, below=of raw] (merge) {CPU weighted merge ($\tau$ in pixel space)};
-    \node[io, below=of merge] (inst) {Merged kernels (instance buffer upload)};
-    \node[stage, below=of inst] (vs) {Pass 1a: Vertex shader (instanced screen-aligned quads, one instance per kernel)};
-    \node[stage, below=of vs] (acc) {Pass 1b: Fragment shader accumulation (quad rasterization + additive blending into HDR KDE texture)};
-    \node[stage, below=of acc] (red) {Pass 2: Compute shader reduction (parallel max to compute global $\max(F)$)};
-    \node[stage, below=of red] (tone) {Pass 3: Dynamic color mapping (normalization, colormap, opacity threshold)};
-    \node[io, below=of tone] (out) {Final heatmap image + legend + Line Chart};
-
+    \node[stage, below=of raw] (merge) {CPU weighted merge\\($\tau$ in pixel space)};
+    \node[io, below=of merge] (inst) {Merged kernels\\(instance buffer)};
+    \node[stage, below=of inst] (vs) {Pass 1a: Vertex shader\\instanced quads, one per kernel};
+  
+    \node[stage, right=3mm of raw.north east, anchor=north west] (acc) {Pass 1b: Fragment accumulation\\additive blending into HDR};
+    \node[stage, below=of acc] (red) {Pass 2: Compute reduction\\parallel $\max(F)$};
+    \node[stage, below=of red] (tone) {Pass 3: Dynamic color mapping\\normalize, colormap, threshold};
+    \node[io, below=of tone] (out) {Heatmap + legend + line chart};
+  
     \draw[arrow] (raw) -- (merge);
     \draw[arrow] (merge) -- (inst);
     \draw[arrow] (inst) -- (vs);
-    \draw[arrow] (vs) -- (acc);
     \draw[arrow] (acc) -- (red);
     \draw[arrow] (red) -- (tone);
     \draw[arrow] (tone) -- (out);
-
-    \draw[arrow] (red.west) -- ++(-5mm,0) |- node[pos=0.25, left, align=right]{async readback} (out.west);
+    \draw[arrow] (vs.east) -- ++(2.5mm,0) |- (acc.west);
+    \draw[arrow] (red.east) -- ++(2.5mm,0) coordinate (rb) |- (out.east);
+    \node[font=\tiny, rotate=-90, anchor=south, inner sep=1.5pt] at (rb) {async readback};
   \end{tikzpicture}
-  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. In Pass 1, the vertex shader expands one instanced screen-aligned quad per merged kernel, and the fragment shader performs KDE accumulation via quad rasterization with additive blending into an HDR texture. Pass 2 is a compute shader that performs global-maximum reduction. Pass 3 performs dynamic color mapping. The reduction output is consumed by both the color-mapping shader (in the same frame) and by asynchronous CPU readback for legend scaling.}
+  \caption{End-to-end rendering pipeline. Visible samples are clipped and merged on the CPU, then submitted to a three-pass GPU pipeline. The Pass~2 maximum is consumed by Pass~3 in the same frame and by asynchronous CPU readback for legend scaling.}
   \label{fig:pipeline-overview}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \subfloat[Reference weighted KDE without point merging ($N=100{,}000$ visible samples).]{%
-    \includegraphics[width=\linewidth]{figs/full_image.png}%
-  }\\[0.5em]
-  \subfloat[Screen-space weighted-merge approximation with merge threshold $\tau=\sigma$, reducing the representation to 275 kernels while preserving the dominant density structures.]{%
-    \includegraphics[width=\linewidth]{figs/approx_image.png}%
-  }
-  \caption{Qualitative comparison between full KDE accumulation and the proposed screen-space weighted-merge approximation. The merged result substantially reduces kernel evaluations while maintaining the salient high-density regions and overall distributional morphology. See supplementary material for these visualizations and more examples.}
-  \label{fig:kde-full-vs-merged}
 \end{figure}
 
 \subsection{Pass 1 --- Accumulation}
@@ -609,19 +604,20 @@ An optional quantization step maps the normalized value to a discrete number of 
 
 \section{Results and Discussion}
 
-To situate our screen-space weighted merge against the broader Gaussian-mixture reduction literature discussed in Section~\ref{sec:gaussian-merging}, we implemented two baseline reduction methods and compare all three on the same synthetic dataset: Salmond's nearest-neighbor clustering \cite{Salmond2009} and Runnalls' KL-divergence-minimizing pairwise merge \cite{4383588}. Both baselines reduce the same input mixtures to a target component budget; we report approximation error (Figure~\ref{fig:mse-chart}) and latency (Figure~\ref{fig:benchmark-latency}) for all three methods across dataset sizes.
+To situate our screen-space weighted merge against the broader Gaussian-mixture reduction literature discussed in Section~\ref{sec:gaussian-merging}, we implemented two baseline reduction methods and compare all three on the same synthetic dataset: Salmond's nearest-neighbor clustering \cite{Salmond2009} and Runnalls' KL-divergence-minimizing pairwise merge \cite{4383588}. Both baselines reduce the same input mixtures to a target component budget; we report approximation error (Figure~\ref{fig:mse-chart}) and latency (Figure~\ref{fig:benchmark-latency}) for all three methods across dataset sizes. Qualitative side-by-side comparisons of the reference KDE field against our approximation --- at $\tau=\sigma$, where $N=100{,}000$ visible samples reduce to 275 kernels while preserving the dominant density structures --- are provided as supplementary material.
 
 \begin{figure}[t]
-      \centering
-      \includegraphics[width=1\linewidth]{figs/mse-chart.png}
-      \caption{Comparison of the MSE reduction methods.}
-    \label{fig:mse-chart}
-\end{figure}
-\begin{figure}
-    \centering
-    \includegraphics[width=1\linewidth]{figs/benchmark-latency.png}
-    \caption{Comparison of performance for reduction methods.}
-    \label{fig:benchmark-latency}
+  \centering
+  \subfloat[Approximation error (MSE).]{%
+    \includegraphics[width=0.49\linewidth]{figs/mse-chart.png}%
+    \label{fig:mse-chart}%
+  }\hfill
+  \subfloat[Merge latency.]{%
+    \includegraphics[width=0.49\linewidth]{figs/benchmark-latency.png}%
+    \label{fig:benchmark-latency}%
+  }
+  \caption{Comparison of reduction methods --- our screen-space weighted merge, Salmond's clustering, and Runnalls' KL-based merge --- at matched output budget across dataset sizes.}
+  \label{fig:reduction-comparison}
 \end{figure}
 
 
