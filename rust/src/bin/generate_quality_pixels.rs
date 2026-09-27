@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use fixture::{Random, SCREEN_H, SCREEN_W, SIGMA_PX, input_data};
+use fixture::{POINTS, Random, SCREEN_H, SCREEN_W, SIGMA_PX, input_data};
 
 const SAMPLES: usize = 1_000;
 const SEED: u64 = 0x510e_527f_ade6_82d1;
@@ -44,17 +44,42 @@ fn main() {
     }
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("benches/data/quality_pixels.csv");
+        .join(format!("benches/data/quality_pixels_{}m.csv", POINTS / 1_000_000));
     fs::write(&path, csv).unwrap();
     println!("wrote {SAMPLES} occupied pixels and original densities to {}", path.display());
 }
 
 fn original_density(data: &[f64], px: f64, py: f64) -> f64 {
-    data.chunks_exact(3)
+    // The input is x-sorted. Outside ten horizontal sigmas, even a million
+    // unit-weight kernels contribute less than 1e-16 in total density.
+    let x_min = (px - 10.0 * SIGMA_PX) / SCREEN_W;
+    let x_max = (px + 10.0 * SIGMA_PX) / SCREEN_W;
+    let start = data.partition_point_triplets(x_min, false);
+    let end = data.partition_point_triplets(x_max, true);
+    data[start * 3..end * 3].chunks_exact(3)
         .map(|point| {
             let dx = (px - point[0] * SCREEN_W) / SIGMA_PX;
             let dy = (py - point[1] * SCREEN_H) / SIGMA_PX;
             point[2] * (-0.5 * (dx * dx + dy * dy)).exp() / (2.0 * std::f64::consts::PI)
         })
         .sum()
+}
+
+trait TripletSearch {
+    fn partition_point_triplets(&self, x: f64, inclusive: bool) -> usize;
+}
+
+impl TripletSearch for [f64] {
+    fn partition_point_triplets(&self, x: f64, inclusive: bool) -> usize {
+        let (mut low, mut high) = (0, self.len() / 3);
+        while low < high {
+            let middle = (low + high) / 2;
+            if self[middle * 3] < x || (inclusive && self[middle * 3] == x) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
 }

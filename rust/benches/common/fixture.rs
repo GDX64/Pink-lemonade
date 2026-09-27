@@ -1,4 +1,4 @@
-pub const POINTS: usize = 100_000;
+pub const POINTS: usize = 1_000_000;
 pub const SCREEN_W: f64 = 1920.0;
 pub const SCREEN_H: f64 = 1080.0;
 pub const SIGMA_PX: f64 = 16.0;
@@ -7,7 +7,8 @@ pub fn input_data() -> Vec<f64> {
     let mut data = Vec::with_capacity(POINTS * 3);
     for i in 0..POINTS {
         let x = i as f64 / POINTS as f64;
-        let y = 0.5 + 0.25 * (i as f64 * 0.003).sin();
+        // Keep the same curve shape as the 100K fixture while varying density.
+        let y = 0.5 + 0.25 * (i as f64 * 300.0 / POINTS as f64).sin();
         data.extend_from_slice(&[x, y, 1.0]);
     }
     data
