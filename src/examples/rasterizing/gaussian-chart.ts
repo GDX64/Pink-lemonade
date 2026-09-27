@@ -1,6 +1,6 @@
 import GUI from "lil-gui";
 import { ChartCanvas } from "./chart-canvas";
-import { wasmMerge } from "./downsampling";
+import { wasmTreeMerge } from "./tree-downsampling";
 import { ViewManager } from "./view-manager";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis
@@ -82,7 +82,7 @@ export class GaussianChart {
   private reductionBindGroup!: GPUBindGroup;
   private tonemapBindGroup!: GPUBindGroup;
   private blurBindGroup!: GPUBindGroup;
-  private downsampler!: Awaited<ReturnType<typeof wasmMerge>>;
+  private downsampler!: Awaited<ReturnType<typeof wasmTreeMerge>>;
   private viewManager!: ViewManager;
   private chartCanvas!: ChartCanvas;
   private profiler: GpuProfiler | null = null;
@@ -198,7 +198,7 @@ export class GaussianChart {
   }
 
   async start(): Promise<void> {
-    this.downsampler = await wasmMerge();
+    this.downsampler = await wasmTreeMerge();
     this.downsampler.setDataF64(this.dataF64);
 
     this.canvas = this.createCanvas();
