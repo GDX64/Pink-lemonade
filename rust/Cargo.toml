@@ -9,6 +9,10 @@ wasm-bindgen = "0.2.113"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bench]]
+name = "merge"
+harness = false
+
 [profile.release]
 strip = true
 debug = false
