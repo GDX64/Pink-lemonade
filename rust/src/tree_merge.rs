@@ -5,8 +5,10 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::{MergeResult, View};
+use crate::common::{MergeResult, View, lower_bound_triplets, upper_bound_triplets};
 use crate::downsampler::Downsampler as DownsamplerTrait;
+
+const LEAF_POINTS: usize = 32;
 
 #[derive(Clone, Copy, Default)]
 struct Node {
@@ -23,6 +25,27 @@ struct Node {
 }
 
 impl Node {
+    fn from_points(data: &[f64], start: usize, end: usize) -> Self {
+        let mut node = Self::default();
+        for point in data[start * 3..end * 3].chunks_exact(3) {
+            let (x, y, mass) = (point[0], point[1], point[2]);
+            node = Self::combined(
+                node,
+                Self {
+                    mass,
+                    x,
+                    y,
+                    min_x: x,
+                    max_x: x,
+                    min_y: y,
+                    max_y: y,
+                    ..Self::default()
+                },
+            );
+        }
+        node
+    }
+
     fn combined(a: Self, b: Self) -> Self {
         if a.mass == 0.0 {
             return b;
@@ -54,7 +77,7 @@ impl Node {
 pub struct TreeDownsampler {
     view: View,
     merge_threshold: f64,
-    xs: Vec<f64>,
+    data_f64: Vec<f64>,
     nodes: Vec<Node>,
     leaf_base: usize,
 }
@@ -64,7 +87,7 @@ impl Default for TreeDownsampler {
         Self {
             view: View::default(),
             merge_threshold: 1.0,
-            xs: Vec::new(),
+            data_f64: Vec::new(),
             nodes: Vec::new(),
             leaf_base: 0,
         }
@@ -113,23 +136,15 @@ impl TreeDownsampler {
 
     #[wasm_bindgen(js_name = setDataF64)]
     pub fn set_data_f64(&mut self, data: Box<[f64]>) {
-        let count = data.len() / 3;
-        self.xs = Vec::with_capacity(count);
-        self.leaf_base = count.max(1).next_power_of_two();
+        self.data_f64 = data.into_vec();
+        let count = self.data_f64.len() / 3;
+        let leaf_count = count.div_ceil(LEAF_POINTS);
+        self.leaf_base = leaf_count.max(1).next_power_of_two();
         self.nodes = vec![Node::default(); self.leaf_base * 2];
-        for (index, point) in data.chunks_exact(3).enumerate() {
-            let (x, y, mass) = (point[0], point[1], point[2]);
-            self.xs.push(x);
-            self.nodes[self.leaf_base + index] = Node {
-                mass,
-                x,
-                y,
-                min_x: x,
-                max_x: x,
-                min_y: y,
-                max_y: y,
-                ..Node::default()
-            };
+        for index in 0..leaf_count {
+            let start = index * LEAF_POINTS;
+            let end = (start + LEAF_POINTS).min(count);
+            self.nodes[self.leaf_base + index] = Node::from_points(&self.data_f64, start, end);
         }
         for index in (1..self.leaf_base).rev() {
             self.nodes[index] = Node::combined(self.nodes[index * 2], self.nodes[index * 2 + 1]);
@@ -138,11 +153,11 @@ impl TreeDownsampler {
 
     #[wasm_bindgen(js_name = mergePoints)]
     pub fn merge_points(&self) -> MergeResult {
-        if self.xs.is_empty() {
+        if self.data_f64.len() < 3 {
             return MergeResult::empty();
         }
-        let start = self.xs.partition_point(|&x| x < self.view.view_min_x);
-        let end = self.xs.partition_point(|&x| x <= self.view.view_max_x);
+        let start = lower_bound_triplets(&self.data_f64, self.view.view_min_x);
+        let end = upper_bound_triplets(&self.data_f64, self.view.view_max_x);
         if start >= end {
             return MergeResult::empty();
         }
@@ -178,7 +193,7 @@ impl TreeDownsampler {
         y_factor: f64,
         out: &mut Vec<f32>,
     ) {
-        if end <= low || high <= start {
+        if end <= low * LEAF_POINTS || high * LEAF_POINTS <= start {
             return;
         }
         let node = self.nodes[index];
@@ -188,23 +203,22 @@ impl TreeDownsampler {
         let dx = (node.max_x - node.min_x) * x_factor;
         let dy = (node.max_y - node.min_y) * y_factor;
         let threshold = self.merge_threshold.max(1e-12);
-        if high - low == 1
-            || (start <= low && high <= end && dx * dx + dy * dy < threshold * threshold)
+        let node_end = (high * LEAF_POINTS).min(self.data_f64.len() / 3);
+        if start <= low * LEAF_POINTS
+            && node_end <= end
+            && dx * dx + dy * dy < threshold * threshold
         {
-            let p00 = 1.0 + node.m2_xx / node.mass * x_factor * x_factor;
-            let p01 = node.m2_xy / node.mass * x_factor * y_factor;
-            let p11 = 1.0 + node.m2_yy / node.mass * y_factor * y_factor;
-            let det = (p00 * p11 - p01 * p01).max(1e-12);
-            let amplitude = node.mass / (2.0 * std::f64::consts::PI * det.sqrt());
-            out.extend_from_slice(&[
-                node.x as f32,
-                node.y as f32,
-                amplitude as f32,
-                p00 as f32,
-                p01 as f32,
-                p01 as f32,
-                p11 as f32,
-            ]);
+            Self::emit(node, x_factor, y_factor, out);
+            return;
+        }
+        if high - low == 1 {
+            self.collect_points(
+                start.max(low * LEAF_POINTS),
+                end.min(node_end),
+                x_factor,
+                y_factor,
+                out,
+            );
             return;
         }
         let middle = (low + high) / 2;
@@ -219,6 +233,47 @@ impl TreeDownsampler {
             y_factor,
             out,
         );
+    }
+
+    fn collect_points(
+        &self,
+        start: usize,
+        end: usize,
+        x_factor: f64,
+        y_factor: f64,
+        out: &mut Vec<f32>,
+    ) {
+        if start >= end {
+            return;
+        }
+        let node = Node::from_points(&self.data_f64, start, end);
+        let dx = (node.max_x - node.min_x) * x_factor;
+        let dy = (node.max_y - node.min_y) * y_factor;
+        let threshold = self.merge_threshold.max(1e-12);
+        if end - start == 1 || dx * dx + dy * dy < threshold * threshold {
+            Self::emit(node, x_factor, y_factor, out);
+        } else {
+            let middle = (start + end) / 2;
+            self.collect_points(start, middle, x_factor, y_factor, out);
+            self.collect_points(middle, end, x_factor, y_factor, out);
+        }
+    }
+
+    fn emit(node: Node, x_factor: f64, y_factor: f64, out: &mut Vec<f32>) {
+        let p00 = 1.0 + node.m2_xx / node.mass * x_factor * x_factor;
+        let p01 = node.m2_xy / node.mass * x_factor * y_factor;
+        let p11 = 1.0 + node.m2_yy / node.mass * y_factor * y_factor;
+        let det = (p00 * p11 - p01 * p01).max(1e-12);
+        let amplitude = node.mass / (2.0 * std::f64::consts::PI * det.sqrt());
+        out.extend_from_slice(&[
+            node.x as f32,
+            node.y as f32,
+            amplitude as f32,
+            p00 as f32,
+            p01 as f32,
+            p01 as f32,
+            p11 as f32,
+        ]);
     }
 }
 

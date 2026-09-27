@@ -48,9 +48,7 @@ export function distribution(x: number): number {
 }
 
 export function createNoiseFloatData(N = 100_000) {
-  const points = createNoiseData(N, 578211);
-  const nFiltered = points.length;
-  if (nFiltered === 0) {
+  if (N === 0) {
     return {
       n: 0,
       dataF64: new Float64Array(0),
@@ -62,22 +60,27 @@ export function createNoiseFloatData(N = 100_000) {
     };
   }
 
-  // createNoiseData returns [time, price] points; normalize x and keep unit weight
-  const xMin = points[0]![0];
-  const xMax = points[nFiltered - 1]![0];
+  // Generate directly into the packed array instead of retaining N point arrays.
+  const xMin = Date.now() + 1000;
+  const xMax = xMin + (N - 1) * 1000;
   const xScale = xMax - xMin || 1;
+  const gen = createGen(578211);
+  let acc = N / 1000;
   let yMin = Infinity;
   let yMax = -Infinity;
-  const dataF64 = new Float64Array(nFiltered * 3);
-  for (let i = 0; i < nFiltered; i++) {
-    const [time, price] = points[i]!;
-    dataF64[i * 3] = (time - xMin) / xScale;
-    dataF64[i * 3 + 1] = price;
-    dataF64[i * 3 + 2] = points[i]![2] || 1; // weight
-    yMin = Math.min(yMin, price);
-    yMax = Math.max(yMax, price);
+  const dataF64 = new Float64Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    acc += gausianNoise(0, 1, gen);
+    const s = distribution(i / N) + gausianNoise(0, 1, gen) * 0.5;
+    const weight = Math.abs(s ** 5 * 100);
+    const base = i * 3;
+    dataF64[base] = (i * 1000) / xScale;
+    dataF64[base + 1] = acc;
+    dataF64[base + 2] = weight || 1;
+    yMin = Math.min(yMin, acc);
+    yMax = Math.max(yMax, acc);
   }
-  return { n: nFiltered, dataF64, xMin, xScale, xMax, yMin, yMax };
+  return { n: N, dataF64, xMin, xScale, xMax, yMin, yMax };
 }
 
 function gaussianSample(mean: number, stdDev: number, x: number): number {

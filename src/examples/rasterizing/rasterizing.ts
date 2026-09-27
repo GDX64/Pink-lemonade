@@ -202,7 +202,7 @@ async function loadJson(): Promise<string> {
 
 async function loadData(kind: "random" | "data"): Promise<LoadedData> {
   if (kind === "random") {
-    return createNoiseFloatData(1000_000);
+    return createNoiseFloatData(1_000_000);
   }
 
   const { base64: base64Data }: { base64: string } = await (
