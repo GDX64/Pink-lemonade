@@ -25,7 +25,9 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::{lower_bound_triplets, upper_bound_triplets, MergeResult, Mixture, View};
+use crate::downsampler::Downsampler;
+
+use crate::common::{MergeResult, Mixture, View, lower_bound_triplets, upper_bound_triplets};
 
 /// Squared Mahalanobis radius of the 2D ellipse holding 1% of a Gaussian's mass:
 /// -2 ln(0.99). The paper suggests T1 = 0.05 * that.
@@ -440,11 +442,7 @@ mod tests {
         let points: Vec<(f64, f64, f64)> = (0..30)
             .map(|i| {
                 let f = i as f64;
-                (
-                    (f * 2.3).sin() * 4.0,
-                    (f * 1.1).cos() * 4.0,
-                    1.0 + f * 0.37,
-                )
+                ((f * 2.3).sin() * 4.0, (f * 1.1).cos() * 4.0, 1.0 + f * 0.37)
             })
             .collect();
         let reversed: Vec<(f64, f64, f64)> = points.iter().rev().copied().collect();
@@ -499,5 +497,47 @@ mod tests {
         assert!((R2_1_PERCENT - (-2.0 * 0.99_f64.ln())).abs() < 1e-15);
         assert!((R2_6_PERCENT - (-2.0 * 0.94_f64.ln())).abs() < 1e-15);
         assert!(DEFAULT_T1 > 0.0 && DEFAULT_DELTA_T > DEFAULT_T1);
+    }
+}
+
+impl Downsampler for SalmondDownsampler {
+    fn set_view_min_x(&mut self, value: f64) {
+        SalmondDownsampler::set_view_min_x(self, value);
+    }
+
+    fn set_view_max_x(&mut self, value: f64) {
+        SalmondDownsampler::set_view_max_x(self, value);
+    }
+
+    fn set_view_min_y(&mut self, value: f64) {
+        SalmondDownsampler::set_view_min_y(self, value);
+    }
+
+    fn set_view_max_y(&mut self, value: f64) {
+        SalmondDownsampler::set_view_max_y(self, value);
+    }
+
+    fn set_screen_w(&mut self, value: f64) {
+        SalmondDownsampler::set_screen_w(self, value);
+    }
+
+    fn set_screen_h(&mut self, value: f64) {
+        SalmondDownsampler::set_screen_h(self, value);
+    }
+
+    fn set_merge_threshold(&mut self, value: f64) {
+        SalmondDownsampler::set_merge_threshold(self, value);
+    }
+
+    fn set_sigma_size_px(&mut self, value: f64) {
+        SalmondDownsampler::set_sigma_size_px(self, value);
+    }
+
+    fn set_data_f64(&mut self, data: Box<[f64]>) {
+        SalmondDownsampler::set_data_f64(self, data);
+    }
+
+    fn merge_points(&self) -> MergeResult {
+        SalmondDownsampler::merge_points(self)
     }
 }

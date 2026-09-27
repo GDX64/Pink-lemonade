@@ -12,7 +12,9 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::{lower_bound_triplets, upper_bound_triplets, MergeResult, Mixture, View};
+use crate::downsampler::Downsampler;
+
+use crate::common::{MergeResult, Mixture, View, lower_bound_triplets, upper_bound_triplets};
 
 impl Mixture {
     /// Runnalls' merging cost B(i,j): the increase in the KL upper bound caused
@@ -402,5 +404,47 @@ mod tests {
             assert!(cheapest >= previous - 1e-9);
             previous = cheapest;
         }
+    }
+}
+
+impl Downsampler for KlDownsampler {
+    fn set_view_min_x(&mut self, value: f64) {
+        KlDownsampler::set_view_min_x(self, value);
+    }
+
+    fn set_view_max_x(&mut self, value: f64) {
+        KlDownsampler::set_view_max_x(self, value);
+    }
+
+    fn set_view_min_y(&mut self, value: f64) {
+        KlDownsampler::set_view_min_y(self, value);
+    }
+
+    fn set_view_max_y(&mut self, value: f64) {
+        KlDownsampler::set_view_max_y(self, value);
+    }
+
+    fn set_screen_w(&mut self, value: f64) {
+        KlDownsampler::set_screen_w(self, value);
+    }
+
+    fn set_screen_h(&mut self, value: f64) {
+        KlDownsampler::set_screen_h(self, value);
+    }
+
+    fn set_merge_threshold(&mut self, value: f64) {
+        KlDownsampler::set_merge_threshold(self, value);
+    }
+
+    fn set_sigma_size_px(&mut self, value: f64) {
+        KlDownsampler::set_sigma_size_px(self, value);
+    }
+
+    fn set_data_f64(&mut self, data: Box<[f64]>) {
+        KlDownsampler::set_data_f64(self, data);
+    }
+
+    fn merge_points(&self) -> MergeResult {
+        KlDownsampler::merge_points(self)
     }
 }

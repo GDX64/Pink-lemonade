@@ -8,6 +8,7 @@
 //! benchmark can swap one for another without changing its call sites.
 
 mod common;
+pub mod downsampler;
 mod merge;
 mod runnalls;
 mod salmond;

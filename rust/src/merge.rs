@@ -6,7 +6,9 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::common::{lower_bound_triplets, upper_bound_triplets, MergeResult};
+use crate::downsampler::Downsampler as DownsamplerTrait;
+
+use crate::common::{MergeResult, lower_bound_triplets, upper_bound_triplets};
 
 #[wasm_bindgen]
 pub struct Downsampler {
@@ -391,5 +393,47 @@ mod tests {
         );
         let result = d.merge_points();
         assert_eq!(result.count(), 2);
+    }
+}
+
+impl DownsamplerTrait for Downsampler {
+    fn set_view_min_x(&mut self, value: f64) {
+        Downsampler::set_view_min_x(self, value);
+    }
+
+    fn set_view_max_x(&mut self, value: f64) {
+        Downsampler::set_view_max_x(self, value);
+    }
+
+    fn set_view_min_y(&mut self, value: f64) {
+        Downsampler::set_view_min_y(self, value);
+    }
+
+    fn set_view_max_y(&mut self, value: f64) {
+        Downsampler::set_view_max_y(self, value);
+    }
+
+    fn set_screen_w(&mut self, value: f64) {
+        Downsampler::set_screen_w(self, value);
+    }
+
+    fn set_screen_h(&mut self, value: f64) {
+        Downsampler::set_screen_h(self, value);
+    }
+
+    fn set_merge_threshold(&mut self, value: f64) {
+        Downsampler::set_merge_threshold(self, value);
+    }
+
+    fn set_sigma_size_px(&mut self, value: f64) {
+        Downsampler::set_sigma_size_px(self, value);
+    }
+
+    fn set_data_f64(&mut self, data: Box<[f64]>) {
+        Downsampler::set_data_f64(self, data);
+    }
+
+    fn merge_points(&self) -> MergeResult {
+        Downsampler::merge_points(self)
     }
 }
