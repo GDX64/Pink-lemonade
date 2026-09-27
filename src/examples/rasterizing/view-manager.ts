@@ -21,7 +21,7 @@ export function upperBound(pts: Float64Array, x: number): number {
 }
 
 export class ViewManager {
-  private readonly pts: Float64Array;
+  private readonly yRange: (minX: number, maxX: number) => Float64Array;
   private readonly dataMinY: number;
   private readonly dataMaxY: number;
   private readonly fullRangeX: number;
@@ -36,16 +36,11 @@ export class ViewManager {
   private lastPointerX = 0;
   private readonly interpolationRate = 12;
 
-  constructor(pts: Float64Array) {
-    this.pts = pts;
-    const n = pts.length / 3;
-    let minY = Infinity,
-      maxY = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const y = pts[i * 3 + 1]!;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
+  constructor(yRange: (minX: number, maxX: number) => Float64Array) {
+    this.yRange = yRange;
+    const range = yRange(0, 1);
+    const minY = range[0]!;
+    const maxY = range[1]!;
     // x is normalized to [0, 1] and sorted
     this.dataMinY = minY;
     this.dataMaxY = maxY;
@@ -60,18 +55,9 @@ export class ViewManager {
   }
 
   private computeVisibleYRange(): [number, number] {
-    const { pts } = this;
-    const startIdx = lowerBound(pts, this.currentViewMinX);
-    const endIdx = upperBound(pts, this.currentViewMaxX);
-    let minY = Infinity,
-      maxY = -Infinity;
-    for (let i = startIdx; i < endIdx; i++) {
-      const y = pts[i * 3 + 1]!;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-    if (!isFinite(minY)) return [this.dataMinY, this.dataMaxY];
-    return [minY, maxY];
+    const range = this.yRange(this.currentViewMinX, this.currentViewMaxX);
+    if (!isFinite(range[0]!)) return [this.dataMinY, this.dataMaxY];
+    return [range[0]!, range[1]!];
   }
 
   tick(dtSeconds: number): void {

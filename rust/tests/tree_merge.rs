@@ -113,3 +113,36 @@ fn final_pass_merges_groups_across_leaf_boundaries() {
     let gpu = result.gpu_instances();
     assert!((gpu[0] as f64 - (0.1 + 0.11 + 0.1101) / 3.0).abs() < 1e-6);
 }
+
+#[test]
+fn visible_y_range_matches_exact_points_across_tree_blocks() {
+    let data: Vec<f64> = (0..100)
+        .flat_map(|i| [i as f64, ((i * 17) % 31) as f64 - 15.0, 1.0])
+        .collect();
+    let mut d = TreeDownsampler::new();
+    d.set_data_f64(data.clone().into_boxed_slice());
+    for (min_x, max_x) in [(0.0, 99.0), (15.0, 80.0), (31.5, 65.5), (200.0, 300.0)] {
+        let visible: Vec<f64> = data
+            .chunks_exact(3)
+            .filter(|point| point[0] >= min_x && point[0] <= max_x)
+            .map(|point| point[1])
+            .collect();
+        let values: Vec<f64> = if visible.is_empty() {
+            data.chunks_exact(3).map(|point| point[1]).collect()
+        } else {
+            visible
+        };
+        let expected_min = values.iter().copied().fold(f64::INFINITY, f64::min);
+        let expected_max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let range = d.visible_y_range(min_x, max_x);
+        assert_eq!(&*range, &[expected_min, expected_max]);
+    }
+}
+
+#[test]
+fn visible_y_range_includes_zero_weight_points() {
+    let mut d = TreeDownsampler::new();
+    d.set_data_f64(vec![0.0, -10.0, 0.0, 0.5, 2.0, 1.0, 1.0, 20.0, 0.0].into_boxed_slice());
+    assert_eq!(&*d.visible_y_range(0.0, 1.0), &[-10.0, 20.0]);
+    assert_eq!(&*d.visible_y_range(0.0, 0.0), &[-10.0, -10.0]);
+}

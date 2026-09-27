@@ -10,7 +10,7 @@ use crate::downsampler::Downsampler as DownsamplerTrait;
 
 const LEAF_POINTS: usize = 32;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct Node {
     mass: f64,
     x: f64,
@@ -22,6 +22,23 @@ struct Node {
     max_x: f64,
     min_y: f64,
     max_y: f64,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            mass: 0.0,
+            x: 0.0,
+            y: 0.0,
+            m2_xx: 0.0,
+            m2_xy: 0.0,
+            m2_yy: 0.0,
+            min_x: f64::INFINITY,
+            max_x: f64::NEG_INFINITY,
+            min_y: f64::INFINITY,
+            max_y: f64::NEG_INFINITY,
+        }
+    }
 }
 
 impl Node {
@@ -47,29 +64,37 @@ impl Node {
     }
 
     fn combined(a: Self, b: Self) -> Self {
-        if a.mass == 0.0 {
+        if a.min_x > a.max_x {
             return b;
         }
-        if b.mass == 0.0 {
+        if b.min_x > b.max_x {
             return a;
         }
-        let mass = a.mass + b.mass;
-        let fraction = b.mass / mass;
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let between = a.mass * b.mass / mass;
-        Self {
-            mass,
-            x: a.x + fraction * dx,
-            y: a.y + fraction * dy,
-            m2_xx: a.m2_xx + b.m2_xx + between * dx * dx,
-            m2_xy: a.m2_xy + b.m2_xy + between * dx * dy,
-            m2_yy: a.m2_yy + b.m2_yy + between * dy * dy,
-            min_x: a.min_x.min(b.min_x),
-            max_x: a.max_x.max(b.max_x),
-            min_y: a.min_y.min(b.min_y),
-            max_y: a.max_y.max(b.max_y),
-        }
+        let mut merged = if a.mass == 0.0 {
+            b
+        } else if b.mass == 0.0 {
+            a
+        } else {
+            let mass = a.mass + b.mass;
+            let fraction = b.mass / mass;
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let between = a.mass * b.mass / mass;
+            Self {
+                mass,
+                x: a.x + fraction * dx,
+                y: a.y + fraction * dy,
+                m2_xx: a.m2_xx + b.m2_xx + between * dx * dx,
+                m2_xy: a.m2_xy + b.m2_xy + between * dx * dy,
+                m2_yy: a.m2_yy + b.m2_yy + between * dy * dy,
+                ..Self::default()
+            }
+        };
+        merged.min_x = a.min_x.min(b.min_x);
+        merged.max_x = a.max_x.max(b.max_x);
+        merged.min_y = a.min_y.min(b.min_y);
+        merged.max_y = a.max_y.max(b.max_y);
+        merged
     }
 }
 
@@ -182,9 +207,64 @@ impl TreeDownsampler {
             gpu_instances: instances.into_boxed_slice(),
         }
     }
+
+    /// Exact y extrema of points whose x lies in the inclusive view interval.
+    /// An empty interval uses the full-data range, matching ViewManager.
+    #[wasm_bindgen(js_name = visibleYRange)]
+    pub fn visible_y_range(&self, min_x: f64, max_x: f64) -> Box<[f64]> {
+        if self.data_f64.len() < 3 {
+            return Box::new([f64::INFINITY, f64::NEG_INFINITY]);
+        }
+        let start = lower_bound_triplets(&self.data_f64, min_x);
+        let end = upper_bound_triplets(&self.data_f64, max_x);
+        if start >= end {
+            let root = self.nodes[1];
+            return Box::new([root.min_y, root.max_y]);
+        }
+        let mut min_y = f64::INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        self.y_range(1, 0, self.leaf_base, start, end, &mut min_y, &mut max_y);
+        Box::new([min_y, max_y])
+    }
 }
 
 impl TreeDownsampler {
+    #[allow(clippy::too_many_arguments)]
+    fn y_range(
+        &self,
+        index: usize,
+        low: usize,
+        high: usize,
+        start: usize,
+        end: usize,
+        min_y: &mut f64,
+        max_y: &mut f64,
+    ) {
+        let node_start = low * LEAF_POINTS;
+        let node_end = (high * LEAF_POINTS).min(self.data_f64.len() / 3);
+        if end <= node_start || node_end <= start {
+            return;
+        }
+        if start <= node_start && node_end <= end {
+            let node = self.nodes[index];
+            *min_y = min_y.min(node.min_y);
+            *max_y = max_y.max(node.max_y);
+            return;
+        }
+        if high - low == 1 {
+            for point in
+                self.data_f64[start.max(node_start) * 3..end.min(node_end) * 3].chunks_exact(3)
+            {
+                *min_y = min_y.min(point[1]);
+                *max_y = max_y.max(point[1]);
+            }
+            return;
+        }
+        let middle = (low + high) / 2;
+        self.y_range(index * 2, low, middle, start, end, min_y, max_y);
+        self.y_range(index * 2 + 1, middle, high, start, end, min_y, max_y);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn collect(
         &self,

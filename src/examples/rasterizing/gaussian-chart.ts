@@ -280,7 +280,9 @@ export class GaussianChart {
       this.ldrTexture,
     );
 
-    this.viewManager = new ViewManager(this.dataF64);
+    this.viewManager = new ViewManager((minX, maxX) =>
+      this.downsampler.visibleYRange(minX, maxX),
+    );
 
     this.chartCanvas = new ChartCanvas(this.container, this.xMin, this.xScale, {
       getShowHeatmap: () =>
