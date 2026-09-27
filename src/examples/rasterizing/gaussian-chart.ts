@@ -224,7 +224,6 @@ export class GaussianChart {
 
     const { quadBuffer, instanceBuffer, uniformBuffer } = uploadData(
       this.gpu.device,
-      this.n,
     );
     this.quadBuffer = quadBuffer;
     this.instanceBuffer = instanceBuffer;
@@ -517,18 +516,6 @@ export class GaussianChart {
     );
     const encoder = this.gpu.device.createCommandEncoder();
 
-    const accPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.hdrTexture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-      ...this.timestampWrites("accumulation"),
-    });
-
     const viewMinX = this.viewManager.getViewMinX();
     const viewMaxX = this.viewManager.getViewMaxX();
     const viewMinY = this.viewManager.getViewMinY();
@@ -550,11 +537,14 @@ export class GaussianChart {
       this.downsampler.setSigmaSizePx(this.state.sigmaSize * pixelRatio);
 
       const merged = this.downsampler.mergePoints();
-      this.gpu.device.queue.writeBuffer(
-        this.instanceBuffer,
-        0,
-        merged.gpuInstances,
-      );
+      this.ensureInstanceBuffer(merged.gpuInstances.byteLength);
+      if (merged.gpuInstances.byteLength > 0) {
+        this.gpu.device.queue.writeBuffer(
+          this.instanceBuffer,
+          0,
+          merged.gpuInstances,
+        );
+      }
       this.lastMergedCount = merged.count;
       this.controls.renderedPoints = this.lastMergedCount;
       this.renderedPointsController.updateDisplay();
@@ -565,6 +555,17 @@ export class GaussianChart {
       this.lastViewMaxY = viewMaxY;
     }
 
+    const accPass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.hdrTexture.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: "clear",
+          storeOp: "store",
+        },
+      ],
+      ...this.timestampWrites("accumulation"),
+    });
     accPass.setPipeline(this.accumulationPipeline);
     accPass.setBindGroup(0, this.accBindGroup);
     accPass.setVertexBuffer(0, this.quadBuffer);
@@ -621,6 +622,26 @@ export class GaussianChart {
     this.scheduleReadback();
     await this.gpu.device.queue.onSubmittedWorkDone();
     this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
+  }
+
+  private ensureInstanceBuffer(requiredBytes: number): void {
+    if (requiredBytes <= this.instanceBuffer.size) return;
+    const maxBytes = this.gpu.device.limits.maxBufferSize;
+    if (requiredBytes > maxBytes) {
+      throw new Error(
+        `Merged instances need ${requiredBytes} bytes, above this GPU's ${maxBytes}-byte buffer limit`,
+      );
+    }
+    const size = Math.min(
+      maxBytes,
+      Math.max(requiredBytes, this.instanceBuffer.size * 2),
+    );
+    const next = this.gpu.device.createBuffer({
+      size,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this.instanceBuffer.destroy();
+    this.instanceBuffer = next;
   }
 
   async setupRenderLoop() {
@@ -1411,7 +1432,7 @@ const QUAD_CORNERS = new Float32Array([
   -1,  1,   1, -1,   1,  1,
 ]);
 
-function uploadData(device: GPUDevice, pointCount: number) {
+function uploadData(device: GPUDevice) {
   const quadBuffer = device.createBuffer({
     size: QUAD_CORNERS.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -1419,7 +1440,7 @@ function uploadData(device: GPUDevice, pointCount: number) {
   device.queue.writeBuffer(quadBuffer, 0, QUAD_CORNERS);
 
   const instanceBuffer = device.createBuffer({
-    size: pointCount * 7 * 4,
+    size: 7 * 4,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
 
