@@ -162,7 +162,7 @@ impl TreeDownsampler {
             return MergeResult::empty();
         }
         let (x_factor, y_factor) = self.view.factors();
-        let mut instances = Vec::new();
+        let mut groups = Vec::new();
         self.collect(
             1,
             0,
@@ -171,8 +171,12 @@ impl TreeDownsampler {
             end,
             x_factor,
             y_factor,
-            &mut instances,
+            &mut groups,
         );
+        let mut instances = Vec::with_capacity(groups.len() * 7);
+        for node in groups {
+            Self::emit(node, x_factor, y_factor, &mut instances);
+        }
         MergeResult {
             count: (instances.len() / 7) as u32,
             gpu_instances: instances.into_boxed_slice(),
@@ -191,7 +195,7 @@ impl TreeDownsampler {
         end: usize,
         x_factor: f64,
         y_factor: f64,
-        out: &mut Vec<f32>,
+        out: &mut Vec<Node>,
     ) {
         if end <= low * LEAF_POINTS || high * LEAF_POINTS <= start {
             return;
@@ -200,15 +204,12 @@ impl TreeDownsampler {
         if node.mass == 0.0 {
             return;
         }
-        let dx = (node.max_x - node.min_x) * x_factor;
-        let dy = (node.max_y - node.min_y) * y_factor;
-        let threshold = self.merge_threshold.max(1e-12);
         let node_end = (high * LEAF_POINTS).min(self.data_f64.len() / 3);
         if start <= low * LEAF_POINTS
             && node_end <= end
-            && dx * dx + dy * dy < threshold * threshold
+            && self.fits_threshold(node, x_factor, y_factor)
         {
-            Self::emit(node, x_factor, y_factor, out);
+            self.push_group(node, x_factor, y_factor, out);
             return;
         }
         if high - low == 1 {
@@ -241,22 +242,46 @@ impl TreeDownsampler {
         end: usize,
         x_factor: f64,
         y_factor: f64,
-        out: &mut Vec<f32>,
+        out: &mut Vec<Node>,
     ) {
         if start >= end {
             return;
         }
         let node = Node::from_points(&self.data_f64, start, end);
-        let dx = (node.max_x - node.min_x) * x_factor;
-        let dy = (node.max_y - node.min_y) * y_factor;
-        let threshold = self.merge_threshold.max(1e-12);
-        if end - start == 1 || dx * dx + dy * dy < threshold * threshold {
-            Self::emit(node, x_factor, y_factor, out);
+        if end - start == 1 || self.fits_threshold(node, x_factor, y_factor) {
+            self.push_group(node, x_factor, y_factor, out);
         } else {
             let middle = (start + end) / 2;
             self.collect_points(start, middle, x_factor, y_factor, out);
             self.collect_points(middle, end, x_factor, y_factor, out);
         }
+    }
+
+    fn fits_threshold(&self, node: Node, x_factor: f64, y_factor: f64) -> bool {
+        let dx = (node.max_x - node.min_x) * x_factor;
+        let dy = (node.max_y - node.min_y) * y_factor;
+        let threshold = self.merge_threshold.max(1e-12);
+        dx * dx + dy * dy < threshold * threshold
+    }
+
+    fn fits_merged_group(&self, node: Node, x_factor: f64, y_factor: f64) -> bool {
+        let dx = (node.x - node.min_x).max(node.max_x - node.x) * x_factor;
+        let dy = (node.y - node.min_y).max(node.max_y - node.y) * y_factor;
+        let threshold = self.merge_threshold.max(1e-12);
+        dx * dx + dy * dy < threshold * threshold
+    }
+
+    fn push_group(&self, node: Node, x_factor: f64, y_factor: f64, out: &mut Vec<Node>) {
+        // The tree's node boundaries are fixed. Coalesce each candidate with
+        // the preceding group when every member remains near the new center.
+        if let Some(last) = out.last_mut() {
+            let combined = Node::combined(*last, node);
+            if self.fits_merged_group(combined, x_factor, y_factor) {
+                *last = combined;
+                return;
+            }
+        }
+        out.push(node);
     }
 
     fn emit(node: Node, x_factor: f64, y_factor: f64, out: &mut Vec<f32>) {

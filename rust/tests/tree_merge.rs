@@ -53,7 +53,10 @@ fn changing_views_clip_at_both_boundaries_and_reuse_the_tree() {
                 let kernel_mass = kernel[2] as f64 * 2.0 * std::f64::consts::PI * det.sqrt();
                 (mass + kernel_mass, first_x + kernel_mass * kernel[0] as f64)
             });
-        assert!((mass - expected_mass).abs() < 1e-4, "mass {mass}, expected {expected_mass}");
+        assert!(
+            (mass - expected_mass).abs() < 1e-4,
+            "mass {mass}, expected {expected_mass}"
+        );
         assert!((first_x / mass - expected_x).abs() < 1e-6);
     }
 }
@@ -87,4 +90,26 @@ fn clipped_view_across_leaf_blocks_preserves_visible_mass() {
 
     d.set_merge_threshold(0.0);
     assert_eq!(d.merge_points().count(), 66);
+}
+
+#[test]
+fn final_pass_merges_groups_across_leaf_boundaries() {
+    let data: Vec<f64> = [0.1, 0.11, 0.1101, 0.12]
+        .into_iter()
+        .flat_map(|x| (0..32).flat_map(move |_| [x, 0.5, 1.0]))
+        .collect();
+    let mut d = TreeDownsampler::new();
+    d.set_view_min_x(0.0);
+    d.set_view_max_x(1.0);
+    d.set_view_min_y(0.0);
+    d.set_view_max_y(1.0);
+    d.set_screen_w(1920.0);
+    d.set_screen_h(1080.0);
+    d.set_sigma_size_px(16.0);
+    d.set_merge_threshold(1.0);
+    d.set_data_f64(data.into_boxed_slice());
+    let result = d.merge_points();
+    assert_eq!(result.count(), 2);
+    let gpu = result.gpu_instances();
+    assert!((gpu[0] as f64 - (0.1 + 0.11 + 0.1101) / 3.0).abs() < 1e-6);
 }
