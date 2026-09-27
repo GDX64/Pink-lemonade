@@ -20,7 +20,9 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
     downsampler.set_screen_w(SCREEN_W);
     downsampler.set_screen_h(SCREEN_H);
     downsampler.set_sigma_size_px(SIGMA_PX);
+    let setup_start = Instant::now();
     downsampler.set_data_f64(data.clone().into_boxed_slice());
+    let setup_elapsed = setup_start.elapsed();
 
     // Generate ranges outside the timed section. Widths vary from 10% to 90%
     // of the data range, and each start is chosen within the remaining space.
@@ -32,7 +34,10 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
     });
 
     // Warm up and measure the same deterministic collection of random views.
-    let bench = Mybench { warmup_runs: VIEW_POSITIONS, measured_runs: VIEW_POSITIONS };
+    let bench = Mybench {
+        warmup_runs: VIEW_POSITIONS,
+        measured_runs: VIEW_POSITIONS,
+    };
     let mut run = 0;
     let summary = bench.run(|| {
         let (view_min_x, view_max_x) = views[run % VIEW_POSITIONS];
@@ -42,7 +47,8 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
         downsampler.merge_points()
     });
     println!(
-        "{name}, {POINTS} points, 1920x1080, sigma 16px, {} random x views (width 0.1-0.9, seed {SEED:#x}), {} runs: mean {:.3} ms, 95% CI [{:.3}, {:.3}] ms",
+        "{name}, {POINTS} points, 1920x1080, sigma 16px, setup {:.3} ms, {} random x views (width 0.1-0.9, seed {SEED:#x}), {} runs: mean {:.3} ms, 95% CI [{:.3}, {:.3}] ms",
+        setup_elapsed.as_secs_f64() * 1_000.0,
         VIEW_POSITIONS,
         summary.measured_runs,
         summary.mean.as_secs_f64() * 1_000.0,

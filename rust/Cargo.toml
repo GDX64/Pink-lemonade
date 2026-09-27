@@ -13,6 +13,10 @@ crate-type = ["cdylib", "rlib"]
 name = "merge"
 harness = false
 
+[[bench]]
+name = "tree_merge"
+harness = false
+
 [profile.release]
 strip = true
 debug = false
