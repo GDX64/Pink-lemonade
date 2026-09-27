@@ -1,40 +1,24 @@
+mod fixture;
 mod mybench;
+mod quality;
 
+use fixture::{POINTS, Random, SCREEN_H, SCREEN_W, SIGMA_PX, input_data};
 use mybench::Mybench;
 use pink_lemonade_wasm::downsampler::Downsampler;
+use std::time::Instant;
 
-const POINTS: usize = 100_000;
 const VIEW_POSITIONS: usize = 10;
 const SEED: u64 = 0x6a09_e667_f3bc_c909;
 
-/// Small deterministic generator so every strategy sees the same view ranges.
-struct Random(u64);
-
-impl Random {
-    fn unit(&mut self) -> f64 {
-        // SplitMix64, using the high 53 bits to form a number in [0, 1).
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        ((z ^ (z >> 31)) >> 11) as f64 / (1_u64 << 53) as f64
-    }
-}
-
 /// Run the same input and timing procedure for any downsampling strategy.
 pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
-    let mut data = Vec::with_capacity(POINTS * 3);
-    for i in 0..POINTS {
-        let x = i as f64 / POINTS as f64;
-        let y = 0.5 + 0.25 * (i as f64 * 0.003).sin();
-        data.extend_from_slice(&[x, y, 1.0]);
-    }
+    let data = input_data();
 
     downsampler.set_view_min_y(0.0);
     downsampler.set_view_max_y(1.0);
-    downsampler.set_screen_w(1920.0);
-    downsampler.set_screen_h(1080.0);
-    downsampler.set_sigma_size_px(16.0);
+    downsampler.set_screen_w(SCREEN_W);
+    downsampler.set_screen_h(SCREEN_H);
+    downsampler.set_sigma_size_px(SIGMA_PX);
     downsampler.set_data_f64(data.into_boxed_slice());
 
     // Generate ranges outside the timed section. Widths vary from 10% to 90%
@@ -63,5 +47,22 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
         summary.mean.as_secs_f64() * 1_000.0,
         summary.ci95_low.as_secs_f64() * 1_000.0,
         summary.ci95_high.as_secs_f64() * 1_000.0,
+    );
+
+    // Quality is evaluated separately from timing, on the complete view.
+    downsampler.set_view_min_x(0.0);
+    downsampler.set_view_max_x(1.0);
+    let full_view = downsampler.merge_points();
+    let samples = quality::saved_samples();
+    let quality_start = Instant::now();
+    let quality = quality::evaluate(POINTS, &full_view, &samples);
+    let quality_elapsed = quality_start.elapsed();
+    println!(
+        "full view: {POINTS} -> {} kernels, reduction {:.2}%, normalized mean absolute density error {:.3}% ({} occupied pixels, quality evaluation {:.3} ms)",
+        quality.output_count,
+        quality.reduction_percent,
+        quality.normalized_mean_absolute_error_percent,
+        samples.len(),
+        quality_elapsed.as_secs_f64() * 1_000.0,
     );
 }
