@@ -32,9 +32,9 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
 
     downsampler.set_view_min_y(0.0);
     downsampler.set_view_max_y(1.0);
-    downsampler.set_screen_w(1_000.0);
-    downsampler.set_screen_h(1_000.0);
-    downsampler.set_sigma_size_px(1.0);
+    downsampler.set_screen_w(1920.0);
+    downsampler.set_screen_h(1080.0);
+    downsampler.set_sigma_size_px(16.0);
     downsampler.set_data_f64(data.into_boxed_slice());
 
     // Generate ranges outside the timed section. Widths vary from 10% to 90%
@@ -57,7 +57,7 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
         downsampler.merge_points()
     });
     println!(
-        "{name}, {POINTS} points, {} random x views (width 0.1–0.9, seed {SEED:#x}), {} runs: mean {:.3} ms, 95% CI [{:.3}, {:.3}] ms",
+        "{name}, {POINTS} points, 1920x1080, sigma 16px, {} random x views (width 0.1-0.9, seed {SEED:#x}), {} runs: mean {:.3} ms, 95% CI [{:.3}, {:.3}] ms",
         VIEW_POSITIONS,
         summary.measured_runs,
         summary.mean.as_secs_f64() * 1_000.0,

@@ -5,7 +5,7 @@ use pink_lemonade_wasm::downsampler::Downsampler as DownsamplerTrait;
 
 fn factory() -> Box<dyn DownsamplerTrait> {
     let mut d = KlDownsampler::new();
-    d.set_merge_threshold(1_000.0);
+    d.set_merge_threshold(1e12);
     d.set_target_count(1.0);
     Box::new(d)
 }

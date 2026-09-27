@@ -381,8 +381,9 @@ mod tests {
         d.set_view_max_x(1.0);
         d.set_view_min_y(0.0);
         d.set_view_max_y(1.0);
-        d.set_screen_w(100.0);
-        d.set_screen_h(100.0);
+        d.set_screen_w(1920.0);
+        d.set_screen_h(1080.0);
+        d.set_sigma_size_px(16.0);
         d.set_merge_threshold(0.01); // tiny, so in-view points don't merge
         d.set_data_f64(
             vec![
