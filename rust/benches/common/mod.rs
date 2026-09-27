@@ -1,4 +1,5 @@
 mod fixture;
+mod moments;
 mod mybench;
 mod quality;
 
@@ -19,7 +20,7 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
     downsampler.set_screen_w(SCREEN_W);
     downsampler.set_screen_h(SCREEN_H);
     downsampler.set_sigma_size_px(SIGMA_PX);
-    downsampler.set_data_f64(data.into_boxed_slice());
+    downsampler.set_data_f64(data.clone().into_boxed_slice());
 
     // Generate ranges outside the timed section. Widths vary from 10% to 90%
     // of the data range, and each start is chosen within the remaining space.
@@ -53,6 +54,7 @@ pub fn benchmark(name: &str, downsampler: &mut dyn Downsampler) {
     downsampler.set_view_min_x(0.0);
     downsampler.set_view_max_x(1.0);
     let full_view = downsampler.merge_points();
+    moments::assert_preserved(name, &data, &full_view);
     let samples = quality::saved_samples();
     let quality_start = Instant::now();
     let quality = quality::evaluate(POINTS, &full_view, &samples);
