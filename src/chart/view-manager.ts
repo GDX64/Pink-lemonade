@@ -22,8 +22,8 @@ export function upperBound(pts: Float64Array, x: number): number {
 
 export class ViewManager {
   private readonly yRange: (minX: number, maxX: number) => Float64Array;
-  private readonly dataMinY: number;
-  private readonly dataMaxY: number;
+  private dataMinY: number;
+  private dataMaxY: number;
   private readonly fullRangeX: number;
   private readonly minViewRangeX: number;
   private currentViewMinX: number;
@@ -52,6 +52,17 @@ export class ViewManager {
     this.targetViewMaxX = 1;
     this.currentViewMinY = minY;
     this.currentViewMaxY = maxY;
+  }
+
+  /** Re-read the data's y range and show the full x range (after a data swap). */
+  reset(): void {
+    const range = this.yRange(0, 1);
+    this.dataMinY = range[0]!;
+    this.dataMaxY = range[1]!;
+    this.targetViewMinX = this.currentViewMinX = 0;
+    this.targetViewMaxX = this.currentViewMaxX = 1;
+    this.currentViewMinY = this.dataMinY;
+    this.currentViewMaxY = this.dataMaxY;
   }
 
   private computeVisibleYRange(): [number, number] {

@@ -39,3 +39,25 @@ rust/                WASM crate (built into pkg/ by `npm run wasm`)
 test/                vitest tests; shared helpers in test/support/
 paper/               LaTeX sources, bibliography, revision letter; references/ holds cited-paper text
 ```
+
+## Chart API
+
+```ts
+import { createGaussianChart } from "./src/chart/api";
+
+const chart = await createGaussianChart(mountEl, {   // mountEl must have a size
+  data: { x: timestamps, y: prices, weight: volumes }, // or { points: Float64Array [x,y,w,...] }
+  style: { sigma: 16, quantSteps: 6, opacityCut: 0.03 },
+  axes: { x: { show: true }, y: { show: true } },
+  merge: { thresholdSigmas: 1 },                      // 0 = no merging
+  controls: false,                                    // lil-gui debug panel
+});
+
+chart.update({ style: { opacityCut: 0.05 } });
+chart.view.set({ x: [t0, t1] });                      // data units
+chart.selection.set({ x: [t0, t1], y: [p0, p1] });
+const off = chart.on("selectionchange", (sel) => {});  // also "viewchange", "frame"
+const { integral } = (await chart.integrate(chart.selection.get() ?? undefined))!;
+const png = await chart.toImage({ width: 800, height: 400, pixelRatio: 3 });
+chart.destroy();
+```

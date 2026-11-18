@@ -51,8 +51,8 @@ export class ChartCanvas {
   private heatmapSource: HTMLCanvasElement | null = null;
   private mergedPoints: Float32Array = new Float32Array(0);
   private maxVal = 1;
-  private readonly xMin: number;
-  private readonly xScale: number;
+  private xMin: number;
+  private xScale: number;
   private onLevelChange: ((level: number) => void) | null = null;
   private onSelectionChange:
     | ((
@@ -195,6 +195,15 @@ export class ChartCanvas {
 
   getCanvasElement(): HTMLCanvasElement {
     return this.canvas;
+  }
+
+  setXTransform(xMin: number, xScale: number) {
+    this.xMin = xMin;
+    this.xScale = xScale;
+  }
+
+  toBlob(type?: string, quality?: number): Promise<Blob | null> {
+    return new Promise((resolve) => this.canvas.toBlob(resolve, type, quality));
   }
 
   toDataURL(type?: string, quality?: number): string {

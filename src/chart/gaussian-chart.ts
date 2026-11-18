@@ -29,9 +29,31 @@ export type LoadedData = {
 
 export type GaussianChartOptions = {
   data: LoadedData;
+  /** Show the lil-gui "Render Controls" panel. Defaults to true. */
+  controls?: boolean;
 };
 
-type GaussianChartState = {
+/** Selection/integration region in data units (x in the caller's original units). */
+export type DataRegion = {
+  x: [number, number];
+  y: [number, number];
+};
+
+type PixelRegion = { x: number; y: number; width: number; height: number };
+
+/** What `refresh` must redo after `state` was changed. */
+export type RefreshFlags = {
+  /** Palette, quantization, opacity cut or palette level changed. */
+  palette?: boolean;
+  /** Heatmap visibility or render mode changed. */
+  presentation?: boolean;
+  /** Y-axis visibility or pixel ratio changed (affects texture sizes). */
+  layout?: boolean;
+  /** Sigma or merge threshold changed (points must be re-merged). */
+  merge?: boolean;
+};
+
+export type GaussianChartState = {
   showHeatmap: boolean;
   heatmapRenderMode: "composited" | "overlay";
   showTimescale: boolean;
@@ -57,11 +79,17 @@ type GaussianChartState = {
 
 export class GaussianChart {
   readonly container: HTMLElement;
-  private readonly n: number;
-  private readonly dataF64: Float64Array;
-  private readonly xMin: number;
-  private readonly xScale: number;
+  private n: number;
+  private dataF64: Float64Array;
+  private xMin: number;
+  private xScale: number;
+  private readonly showControls: boolean;
   readonly state: GaussianChartState;
+
+  /** Called after each rendered frame. */
+  onFrame: (() => void) | null = null;
+  /** Called when the user (or `setSelection`) changes the selection; data units. */
+  onSelectionChange: ((region: DataRegion | null) => void) | null = null;
 
   private canvas!: HTMLCanvasElement;
   private fullChartSize: { cssW: number; cssH: number } = { cssW: 0, cssH: 0 };
@@ -87,6 +115,9 @@ export class GaussianChart {
   private chartCanvas!: ChartCanvas;
   private profiler: GpuProfiler | null = null;
   private destroyed = false;
+  private started = false;
+  private renderLoopRunning = false;
+  private resizeObserver: ResizeObserver | null = null;
 
   private hdrW = 0;
   private hdrH = 0;
@@ -120,6 +151,7 @@ export class GaussianChart {
     this.dataF64 = data.dataF64;
     this.xMin = data.xMin;
     this.xScale = data.xScale;
+    this.showControls = options.controls ?? true;
     this.state = {
       showHeatmap: true,
       heatmapRenderMode: "overlay",
@@ -167,6 +199,9 @@ export class GaussianChart {
       this.integrateTimeoutId = null;
     }
 
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+
     if (this.gui) {
       this.gui.destroy();
       this.gui = null;
@@ -198,6 +233,8 @@ export class GaussianChart {
   }
 
   async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
     this.downsampler = await wasmTreeMerge();
     this.downsampler.setDataF64(this.dataF64);
 
@@ -319,6 +356,8 @@ export class GaussianChart {
         this.integrateTimeoutId = null;
       }
 
+      this.onSelectionChange?.(region ? this.pixelsToRegion(region) : null);
+
       if (!region) {
         this.chartCanvas.setSelectionIntegral(null);
         return;
@@ -331,11 +370,110 @@ export class GaussianChart {
     });
     this.syncHeatmapPresentation();
 
-    this.setupGui();
+    if (this.showControls) this.setupGui();
     this.lastTime = performance.now();
-    window.addEventListener("resize", () =>
+    this.resizeObserver = new ResizeObserver(() =>
       this.handleResize(this.getContainerCssSize()),
     );
+    this.resizeObserver.observe(this.container);
+  }
+
+  /** Apply side effects for `state` fields changed after `start()`. */
+  refresh(flags: RefreshFlags) {
+    if (this.destroyed || !this.started) return;
+    if (flags.palette) this.writePaletteToBuffer();
+    if (flags.presentation) this.syncHeatmapPresentation();
+    if (flags.layout) this.handleResize(this.getContainerCssSize());
+    if (flags.merge || flags.layout) this.lastViewMinX = NaN;
+    this.gui?.controllersRecursive().forEach((c) => c.updateDisplay());
+  }
+
+  /** Replace the data set. `data.dataF64` must be sorted by x, x in [0, 1]. */
+  setData(data: LoadedData) {
+    this.n = data.n;
+    this.dataF64 = data.dataF64;
+    this.xMin = data.xMin;
+    this.xScale = data.xScale;
+    this.controls.totalPoints = data.n;
+    if (!this.started || this.destroyed) return;
+    this.downsampler.setDataF64(this.dataF64);
+    this.chartCanvas.setXTransform(this.xMin, this.xScale);
+    this.viewManager.reset();
+    this.chartCanvas.setSelection(null);
+    this.lastViewMinX = NaN;
+  }
+
+  /** Current visible range in data units. */
+  getViewRange(): DataRegion {
+    const vm = this.viewManager;
+    return {
+      x: [this.denormX(vm.getViewMinX()), this.denormX(vm.getViewMaxX())],
+      y: [vm.getViewMinY(), vm.getViewMaxY()],
+    };
+  }
+
+  /** Set the visible x range in data units. */
+  setViewRange(range: { x: [number, number] }) {
+    this.setViewRangeX(this.normX(range.x[0]), this.normX(range.x[1]));
+  }
+
+  /** Set (or clear) the selection in data units. */
+  setDataSelection(region: DataRegion | null) {
+    this.setSelection(region ? this.regionToPixels(region) : null);
+  }
+
+  /** Integrate the rendered density over a region given in data units. */
+  integrateRegion(region?: DataRegion) {
+    return this.integrate(region ? this.regionToPixels(region) : undefined);
+  }
+
+  private normX(x: number) {
+    return (x - this.xMin) / this.xScale;
+  }
+
+  private denormX(x: number) {
+    return x * this.xScale + this.xMin;
+  }
+
+  /** Inner plot area in CSS px (selection coordinates). */
+  private plotGeometry() {
+    const axisYWidth = this.state.showYAxis ? AXIS_Y_W : 0;
+    const w = Math.max(1, this.fullChartSize.cssW - axisYWidth);
+    const h = Math.max(1, this.fullChartSize.cssH - AXIS_X_H - CHART_PAD_Y * 2);
+    return { w, h, padY: CHART_PAD_Y };
+  }
+
+  private regionToPixels(region: DataRegion): PixelRegion {
+    const { w, h, padY } = this.plotGeometry();
+    const vm = this.viewManager;
+    const vx0 = vm.getViewMinX();
+    const xSpan = Math.max(1e-12, vm.getViewMaxX() - vx0);
+    const vy0 = vm.getViewMinY();
+    const ySpan = Math.max(1e-12, vm.getViewMaxY() - vy0);
+    const toPx = (x: number) => ((this.normX(x) - vx0) / xSpan) * w;
+    const toPy = (y: number) => padY + (1 - (y - vy0) / ySpan) * h;
+    const px0 = toPx(Math.min(...region.x));
+    const px1 = toPx(Math.max(...region.x));
+    const py0 = toPy(Math.max(...region.y));
+    const py1 = toPy(Math.min(...region.y));
+    return { x: px0, y: py0, width: px1 - px0, height: py1 - py0 };
+  }
+
+  private pixelsToRegion(p: PixelRegion): DataRegion {
+    const { w, h, padY } = this.plotGeometry();
+    const vm = this.viewManager;
+    const vx0 = vm.getViewMinX();
+    const xSpan = vm.getViewMaxX() - vx0;
+    const vy0 = vm.getViewMinY();
+    const ySpan = vm.getViewMaxY() - vy0;
+    const clampY = (py: number) => Math.max(0, Math.min(h, py - padY));
+    const toX = (px: number) =>
+      this.denormX(vx0 + (Math.max(0, Math.min(w, px)) / w) * xSpan);
+    const toY = (py: number) => vy0 + (1 - clampY(py) / h) * ySpan;
+    return {
+      x: [toX(p.x), toX(p.x + p.width)],
+      y: [toY(p.y + p.height), toY(p.y)],
+    };
   }
 
   private setupGui() {
@@ -486,7 +624,7 @@ export class GaussianChart {
     this.fpsAccTime += dt;
     if (this.fpsAccTime >= 0.5) {
       this.controls.fps = `${(this.frameCount / this.fpsAccTime).toFixed(1)} fps`;
-      this.fpsController.updateDisplay();
+      this.fpsController?.updateDisplay();
       this.frameCount = 0;
       this.fpsAccTime = 0;
     }
@@ -547,7 +685,7 @@ export class GaussianChart {
       }
       this.lastMergedCount = merged.count;
       this.controls.renderedPoints = this.lastMergedCount;
-      this.renderedPointsController.updateDisplay();
+      this.renderedPointsController?.updateDisplay();
       this.chartCanvas.setMergedPoints(merged.gpuInstances);
       this.lastViewMinX = viewMinX;
       this.lastViewMaxX = viewMaxX;
@@ -622,6 +760,7 @@ export class GaussianChart {
     this.scheduleReadback();
     await this.gpu.device.queue.onSubmittedWorkDone();
     this.chartCanvas.render(viewMinX, viewMaxX, viewMinY, viewMaxY);
+    this.onFrame?.();
   }
 
   private ensureInstanceBuffer(requiredBytes: number): void {
@@ -645,13 +784,13 @@ export class GaussianChart {
   }
 
   async setupRenderLoop() {
-    while (true) {
-      if (this.destroyed) {
-        break;
-      }
+    if (this.renderLoopRunning) return;
+    this.renderLoopRunning = true;
+    while (!this.destroyed) {
       await new Promise(requestAnimationFrame);
       await this.render();
     }
+    this.renderLoopRunning = false;
   }
 
   private async computeSelectionIntegral(
@@ -674,7 +813,6 @@ export class GaussianChart {
     actualSum: number;
     errorPercent: number;
   } | null> {
-    console.log(region);
     const width = this.hdrW;
     const height = this.hdrH;
     if (width <= 0 || height <= 0) return null;
@@ -777,11 +915,33 @@ export class GaussianChart {
     name: string;
     devicePixelRatio: number;
   }) {
-    if (this.destroyed) return;
+    const blob = await this.captureImage({
+      width: options.width,
+      height: options.height,
+      pixelRatio: options.devicePixelRatio,
+    });
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = options.name.endsWith(".png")
+      ? options.name
+      : `${options.name}.png`;
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  /** Render once at the given size and return a PNG. */
+  async captureImage(options: {
+    width: number;
+    height: number;
+    pixelRatio: number;
+  }): Promise<Blob | null> {
+    if (this.destroyed || !this.started) return null;
 
     const width = Math.max(1, Math.floor(options.width));
     const height = Math.max(1, Math.floor(options.height));
-    const exportDpr = Math.max(0.25, options.devicePixelRatio);
+    const exportDpr = Math.max(0.25, options.pixelRatio);
 
     const prevContainerWidth = this.container.style.width;
     const prevContainerHeight = this.container.style.height;
@@ -802,14 +962,7 @@ export class GaussianChart {
       });
 
       await this.render();
-
-      const link = document.createElement("a");
-      link.download = options.name.endsWith(".png")
-        ? options.name
-        : `${options.name}.png`;
-
-      link.href = this.exportImage("image/png");
-      link.click();
+      return await this.chartCanvas.toBlob("image/png");
     } finally {
       this.state.pixelRatio = prevPixelRatio;
       this.state.heatmapRenderMode = prevRenderMode;
