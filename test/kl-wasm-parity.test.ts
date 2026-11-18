@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
 import { initSync, KlDownsampler } from "../pkg/pink_lemonade_wasm";
-import { createNoiseFloatData } from "../src/chart/chart";
-import { KLDownsampler } from "../src/examples/rasterizing/kl-downsampling";
+import { createNoiseFloatData } from "../src/data/noise";
+import { KLDownsampler } from "../src/downsampling/kl";
 import {
   buildToSX,
   buildToSY,
@@ -12,7 +12,7 @@ import {
   errorStats,
   evaluateKdeAt,
   lerp,
-} from "./kde-metrics";
+} from "./support/kde-metrics";
 
 /** Mass, mean and covariance of a packed kernel buffer, in data space. */
 function moments(instances: Float32Array, count: number) {

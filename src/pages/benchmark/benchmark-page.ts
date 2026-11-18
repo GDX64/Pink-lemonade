@@ -1,7 +1,7 @@
-import { createNoiseFloatData } from "../chart/chart";
-import { wasmMerge } from "../examples/rasterizing/downsampling";
-import { wasmKlMerge } from "../examples/rasterizing/kl-downsampling";
-import { wasmSalmondMerge } from "../examples/rasterizing/salmond-downsampling";
+import { createNoiseFloatData } from "../../data/noise";
+import { wasmMerge } from "../../downsampling/merge";
+import { wasmKlMerge } from "../../downsampling/kl";
+import { wasmSalmondMerge } from "../../downsampling/salmond";
 import {
   createBenchmarkProgressUi,
   waitForRepaint,

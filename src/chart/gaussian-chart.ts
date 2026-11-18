@@ -1,6 +1,6 @@
 import GUI from "lil-gui";
 import { ChartCanvas } from "./chart-canvas";
-import { wasmTreeMerge } from "./tree-downsampling";
+import { wasmTreeMerge } from "../downsampling/tree";
 import { ViewManager } from "./view-manager";
 
 const AXIS_Y_W = 70; // px reserved on the right for the Y axis

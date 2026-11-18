@@ -6,7 +6,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     benchmark: {
       include: ["./test/**/*.bench.ts"],
-      reporters: ["default", "./test/bench-merged-reporter.ts"],
+      reporters: ["default", "./test/support/bench-merged-reporter.ts"],
       outputFile: "./benchmark-results.json",
     },
     browser: {

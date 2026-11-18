@@ -22,3 +22,20 @@ This repository contains the interactive artifact accompanying the paper. The re
 - Some visualizations rely on WebGPU support. If WebGPU is unavailable on the machine/browser, affected views may not render correctly.
 - The source-level `index.html` at the repository root is for development. For review, use `/index.html`.
 
+
+## Project layout
+
+```
+src/
+  main.ts            app entry: page router for the reviewer-facing pages
+  index.ts           library entry
+  chart/             WebGPU/canvas chart rendering (ChartCanvas, GaussianChart, ViewManager)
+  downsampling/      TS wrappers around the WASM reducers (merge, kl, salmond, tree)
+  data/              synthetic noise generators + sample datasets (data.json is local, gitignored)
+  pages/             one module per page; benchmark/ and mse/ hold their page + chart
+  examples/          standalone, unused-by-app experiments
+  types/             ambient module declarations
+rust/                WASM crate (built into pkg/ by `npm run wasm`)
+test/                vitest tests; shared helpers in test/support/
+paper/               LaTeX sources, bibliography, revision letter; references/ holds cited-paper text
+```

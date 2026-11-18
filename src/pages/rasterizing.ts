@@ -1,6 +1,6 @@
-import { createNoiseFloatData } from "../../chart/chart";
-import { distribution } from "../../chart/chart";
-import { GaussianChart, type LoadedData } from "./gaussian-chart";
+import { createNoiseFloatData } from "../data/noise";
+import { distribution } from "../data/noise";
+import { GaussianChart, type LoadedData } from "../chart/gaussian-chart";
 import Plotly from "plotly.js-dist-min";
 
 const BASE_WIDTH = 800;
@@ -196,7 +196,7 @@ async function randomImageFull() {
 }
 
 async function loadJson(): Promise<string> {
-  const jsonData = (await import("./data.json?url")).default;
+  const jsonData = (await import("../data/data.json?url")).default;
   return jsonData;
 }
 

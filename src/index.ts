@@ -1,3 +1,3 @@
-import { rasterizingExample } from "./examples/rasterizing/rasterizing";
+import { rasterizingExample } from "./pages/rasterizing";
 
 export { rasterizingExample as example };

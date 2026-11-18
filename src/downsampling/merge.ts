@@ -1,5 +1,5 @@
-import { lowerBound, upperBound } from "./view-manager";
-import initWasm, { Downsampler } from "../../../pkg/pink_lemonade_wasm";
+import { lowerBound, upperBound } from "../chart/view-manager";
+import initWasm, { Downsampler } from "../../pkg/pink_lemonade_wasm";
 
 export type DownsampleStrategy = "merge" | "lttb" | "rdp";
 
