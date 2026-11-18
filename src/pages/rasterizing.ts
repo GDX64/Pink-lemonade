@@ -1,62 +1,55 @@
 import { createNoiseFloatData } from "../data/noise";
 import { distribution } from "../data/noise";
-import { GaussianChart, type LoadedData } from "../chart/gaussian-chart";
+import {
+  createGaussianChart,
+  type ChartData,
+  type CreateChartOptions,
+  type GaussianChartHandle,
+} from "../chart/api";
 import Plotly from "plotly.js-dist-min";
 
 const BASE_WIDTH = 800;
 const BASE_HEIGHT = 400;
 
+/** Settings shared by every chart in the app and the paper figures. */
+const BASE_SETTINGS = {
+  axes: { x: { show: true }, y: { show: true } },
+  style: { quantSteps: 6 },
+} satisfies Omit<CreateChartOptions, "data">;
+
 export async function rasterizingExample() {
-  await createChart1();
+  await createApplicationChart();
 }
 
 export async function rasterizingApplication(mount?: HTMLElement) {
-  await createChart1(mount);
+  await createApplicationChart(mount);
 }
 
 export async function renderFigureChart(
   kind: "figure-1" | "figure-2" | "figure-3" | "figure-4" | "figure-5",
   mount: HTMLElement,
-) {
+): Promise<GaussianChartHandle | null> {
   if (kind === "figure-5") {
     await renderDistributionFigure(mount);
     return null;
   }
 
-  const dataKind = kind === "figure-4" ? "data" : "random";
-  const data = await loadData(dataKind);
-  const chart = new GaussianChart({ data });
   mount.innerHTML = "";
-  const container = chart.container;
-  mount.appendChild(container);
-  container.style.width = `${BASE_WIDTH}px`;
-  if (kind === "figure-4") {
-    container.style.height = `${BASE_HEIGHT * 1.5}px`;
-    chart.state.opacityCut = 0.042;
-  } else {
-    container.style.height = `${BASE_HEIGHT}px`;
-  }
-  container.style.width = `${BASE_WIDTH}px`;
-  container.style.position = "relative";
-  chart.state.showTimescale = true;
-  chart.state.showYAxis = true;
-  chart.state.quantSteps = 6;
-  chart.state.mergeThresholdSigmas = 1;
-  if (kind === "figure-1") {
-    chart.state.mergeThresholdSigmas = 0;
-  }
-  await chart.start();
-  if (kind === "figure-4") {
-    // chart.setViewRangeX(0.6500622508888406, 1);
-    // chart.setSelection({
-    //   x: 226,
-    //   y: 341.5,
-    //   width: 173,
-    //   height: 200,
-    // });
-  }
-  chart.setupRenderLoop();
-  return chart;
+  const host = sizedHost(
+    BASE_WIDTH,
+    kind === "figure-4" ? BASE_HEIGHT * 1.5 : BASE_HEIGHT,
+  );
+  mount.appendChild(host);
+
+  return createGaussianChart(host, {
+    ...BASE_SETTINGS,
+    data: await loadData(kind === "figure-4" ? "data" : "random"),
+    style: {
+      ...BASE_SETTINGS.style,
+      ...(kind === "figure-4" ? { opacityCut: 0.042 } : {}),
+    },
+    merge: { thresholdSigmas: kind === "figure-1" ? 0 : 1 },
+  });
 }
 
 async function renderDistributionFigure(mount: HTMLElement) {
@@ -128,71 +121,68 @@ async function renderDistributionFigure(mount: HTMLElement) {
 }
 
 export async function generateApproxFigure() {
-  await randomApproxImage();
+  await exportFigure("approx_image", 1);
 }
 
 export async function generateFullFigure() {
-  await randomImageFull();
+  await exportFigure("full_image", 0);
 }
 
-async function createChart1(mount?: HTMLElement) {
-  const data = await loadData("random");
-  const chart = new GaussianChart({
-    data,
-  });
-  const container = chart.container;
-  const target = mount ?? document.body;
-  target.appendChild(container);
-  const useFullscreen = !!mount;
-  const width = useFullscreen
-    ? Math.max(window.innerWidth, target.clientWidth)
-    : BASE_WIDTH;
-  const height = useFullscreen
-    ? Math.max(window.innerHeight, target.clientHeight)
-    : BASE_HEIGHT;
-  container.style.width = `${width}px`;
-  container.style.height = `${height}px`;
-  container.style.position = "relative";
-  chart.state.showTimescale = true;
-  chart.state.showYAxis = true;
-  chart.state.quantSteps = 6;
-  await chart.start();
-  chart.setupRenderLoop();
-}
-
-async function randomApproxImage() {
-  const data = await loadData("random");
-  const chart = new GaussianChart({
-    data,
-  });
-  chart.state.showTimescale = true;
-  chart.state.showYAxis = true;
-  chart.state.quantSteps = 6;
-  await chart.start();
-  chart.downloadImage({
-    width: BASE_WIDTH,
-    height: BASE_HEIGHT,
-    name: "approx_image",
-    devicePixelRatio: 3,
+async function createApplicationChart(mount?: HTMLElement) {
+  // With a mount the chart fills it and follows its size; otherwise it is
+  // appended to the page at the base size.
+  const host = sizedHost(BASE_WIDTH, BASE_HEIGHT);
+  if (mount) {
+    host.style.width = "100%";
+    host.style.height = "100%";
+  }
+  (mount ?? document.body).appendChild(host);
+  return createGaussianChart(host, {
+    ...BASE_SETTINGS,
+    data: await loadData("random"),
+    controls: true,
   });
 }
 
-async function randomImageFull() {
-  const data = await loadData("random");
-  const chart = new GaussianChart({
-    data,
+async function exportFigure(name: string, thresholdSigmas: number) {
+  // Rendered off-screen at a fixed size, then downloaded.
+  const host = sizedHost(BASE_WIDTH, BASE_HEIGHT);
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  document.body.appendChild(host);
+  const chart = await createGaussianChart(host, {
+    ...BASE_SETTINGS,
+    data: await loadData("random"),
+    merge: { thresholdSigmas },
   });
-  chart.state.showTimescale = true;
-  chart.state.showYAxis = true;
-  chart.state.mergeThresholdSigmas = 0;
-  chart.state.quantSteps = 6;
-  await chart.start();
-  chart.downloadImage({
-    width: BASE_WIDTH,
-    height: BASE_HEIGHT,
-    name: "full_image",
-    devicePixelRatio: 3,
-  });
+  try {
+    const blob = await chart.toImage({
+      width: BASE_WIDTH,
+      height: BASE_HEIGHT,
+      pixelRatio: 3,
+    });
+    if (blob) downloadBlob(blob, `${name}.png`);
+  } finally {
+    chart.destroy();
+    host.remove();
+  }
+}
+
+function sizedHost(width: number, height: number) {
+  const host = document.createElement("div");
+  host.style.width = `${width}px`;
+  host.style.height = `${height}px`;
+  host.style.position = "relative";
+  return host;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 async function loadJson(): Promise<string> {
@@ -200,50 +190,34 @@ async function loadJson(): Promise<string> {
   return jsonData;
 }
 
-async function loadData(kind: "random" | "data"): Promise<LoadedData> {
+async function loadData(kind: "random" | "data"): Promise<ChartData> {
   if (kind === "random") {
-    return createNoiseFloatData(10_000_000);
+    // The generator returns x normalized to [0, 1]; restore timestamps in
+    // place so the chart gets data in real units without another copy.
+    const { dataF64, xMin, xScale } = createNoiseFloatData(10_000_000);
+    for (let i = 0; i < dataF64.length; i += 3) {
+      dataF64[i] = dataF64[i]! * xScale + xMin;
+    }
+    return { points: dataF64 };
   }
 
   const { base64: base64Data }: { base64: string } = await (
     await fetch(await loadJson())
   ).json();
-  const other = base64Data.replaceAll("'", "");
-  const decoded = atob(other);
+  const decoded = atob(base64Data.replaceAll("'", ""));
   const buffer = new Uint8Array(decoded.length);
   for (let i = 0; i < decoded.length; i++) {
     buffer[i] = decoded.charCodeAt(i);
   }
+  // Flat records: [time, price, buyQty, sellQty, ...]. The chart sorts by
+  // time and normalizes it; weight is the traded volume.
   const raw = new Float64Array(buffer.buffer);
-
-  // data is flat: [time, price, buyQty, sellQty, ...] — sort by time ascending
   const n = raw.length / 4;
-  const indices = Array.from({ length: n }, (_, i) => i).sort(
-    (a, b) => raw[a * 4]! - raw[b * 4]!,
-  );
-  const data = new Float64Array(n * 4);
+  const points = new Float64Array(n * 3);
   for (let i = 0; i < n; i++) {
-    const src = indices[i]! * 4;
-    data.set(raw.subarray(src, src + 4), i * 4);
+    points[i * 3] = raw[i * 4]!;
+    points[i * 3 + 1] = raw[i * 4 + 1]!;
+    points[i * 3 + 2] = raw[i * 4 + 2]! + raw[i * 4 + 3]!;
   }
-
-  const nFiltered = data.length / 4;
-
-  // normalize x to [0, 1] to avoid float precision loss in GPU/math
-  const xMin = data[0]!;
-  const xMax = data[(nFiltered - 1) * 4]!;
-  const xScale = xMax - xMin || 1; // original span in ms; used to denormalize for display
-
-  // pre-pack into Float64Array once — x is sorted and normalized, weight = buyQty + sellQty
-  const dataF64 = new Float64Array(nFiltered * 3);
-  for (let i = 0; i < nFiltered; i++) {
-    const time = data[i * 4]!;
-    const price = data[i * 4 + 1]!;
-    const buyQty = data[i * 4 + 2]!;
-    const sellQty = data[i * 4 + 3]!;
-    dataF64[i * 3] = (time - xMin) / xScale;
-    dataF64[i * 3 + 1] = price;
-    dataF64[i * 3 + 2] = buyQty + sellQty;
-  }
-  return { n: nFiltered, dataF64, xMin, xScale };
+  return { points };
 }
