@@ -1,5 +1,5 @@
-import initWasm, { KlDownsampler } from "../../../pkg/pink_lemonade_wasm";
-import { lowerBound, upperBound } from "./view-manager";
+import initWasm, { KlDownsampler } from "../../pkg/pink_lemonade_wasm";
+import { lowerBound, upperBound } from "../chart/view-manager";
 
 /**
  * Runnalls' Kullback-Leibler based Gaussian mixture reduction.

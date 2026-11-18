@@ -6,8 +6,8 @@ import {
   KlDownsampler,
   SalmondDownsampler,
 } from "../pkg/pink_lemonade_wasm";
-import { createNoiseFloatData } from "../src/chart/chart";
-import { mergePoints } from "../src/examples/rasterizing/downsampling";
+import { createNoiseFloatData } from "../src/data/noise";
+import { mergePoints } from "../src/downsampling/merge";
 import {
   buildToSX,
   buildToSY,
@@ -17,7 +17,7 @@ import {
   errorStats,
   evaluateKdeAt,
   lerp,
-} from "./kde-metrics";
+} from "./support/kde-metrics";
 
 /**
  * Salmond's clustering reduction (CAF) against the screen-space merge and

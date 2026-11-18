@@ -1,9 +1,9 @@
 import { runApplicationPage } from "./pages/application-page";
-import { renderBenchmarkChart } from "./pages/benchmark-chart";
-import { runBenchmarkPage } from "./pages/benchmark-page";
+import { renderBenchmarkChart } from "./pages/benchmark/benchmark-chart";
+import { runBenchmarkPage } from "./pages/benchmark/benchmark-page";
 import { runFigurePage } from "./pages/figures-page";
-import { renderMseChart } from "./pages/mse-chart";
-import { runMsePage } from "./pages/mse-page";
+import { renderMseChart } from "./pages/mse/mse-chart";
+import { runMsePage } from "./pages/mse/mse-page";
 
 const root = document.createElement("div");
 root.style.minHeight = "100vh";

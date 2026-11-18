@@ -1,4 +1,4 @@
-import initWasm, { SalmondDownsampler } from "../../../pkg/pink_lemonade_wasm";
+import initWasm, { SalmondDownsampler } from "../../pkg/pink_lemonade_wasm";
 
 /**
  * wasm-backed Salmond clustering reduction (CAF), mirroring `wasmMerge` and

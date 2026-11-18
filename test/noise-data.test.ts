@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createNoiseData, createNoiseFloatData } from "../src/chart/chart";
+import { createNoiseData, createNoiseFloatData } from "../src/data/noise";
 
 describe("packed noise data", () => {
   test.each([1, 64, 100])("matches the point generator for %i points", (n) => {

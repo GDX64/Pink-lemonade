@@ -1,7 +1,7 @@
 import { bench, describe } from "vitest";
 import { readFile } from "node:fs/promises";
-import { createNoiseFloatData } from "../src/chart/chart";
-import { wasmMerge } from "../src/examples/rasterizing/downsampling";
+import { createNoiseFloatData } from "../src/data/noise";
+import { wasmMerge } from "../src/downsampling/merge";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 

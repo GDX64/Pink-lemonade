@@ -6,7 +6,7 @@ import {
   runnallsCost,
   runnallsReduce,
   type Mixture,
-} from "../src/examples/rasterizing/kl-downsampling";
+} from "../src/downsampling/kl";
 
 type Comp = {
   x: number;

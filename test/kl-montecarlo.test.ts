@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { createNoiseFloatData } from "../src/chart/chart";
-import { mergePoints } from "../src/examples/rasterizing/downsampling";
-import { KLDownsampler } from "../src/examples/rasterizing/kl-downsampling";
+import { createNoiseFloatData } from "../src/data/noise";
+import { mergePoints } from "../src/downsampling/merge";
+import { KLDownsampler } from "../src/downsampling/kl";
 import {
   buildToSX,
   buildToSY,
@@ -11,7 +11,7 @@ import {
   errorStats,
   evaluateKdeAt,
   lerp,
-} from "./kde-metrics";
+} from "./support/kde-metrics";
 
 /**
  * Head-to-head against Runnalls' KL-optimal reduction at an equal kernel

@@ -1,4 +1,4 @@
-import { gausianNoise } from "../../chart/chart";
+import { gausianNoise } from "../../data/noise";
 
 export function example() {
   const canvas = createCanvas();

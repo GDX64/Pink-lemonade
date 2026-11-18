@@ -1,4 +1,4 @@
-import { rasterizingApplication } from "../examples/rasterizing/rasterizing";
+import { rasterizingApplication } from "./rasterizing";
 
 export async function runApplicationPage(args: {
   output: HTMLElement;
