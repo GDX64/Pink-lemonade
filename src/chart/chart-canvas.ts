@@ -50,6 +50,8 @@ export class ChartCanvas {
   private readonly styleAccessors: ChartCanvasStyleAccessors;
   private heatmapSource: HTMLCanvasElement | null = null;
   private mergedPoints: Float32Array = new Float32Array(0);
+  /** Real samples for the line plot, interleaved [x, y, ...]. */
+  private linePoints: Float32Array = new Float32Array(0);
   private maxVal = 1;
   private xMin: number;
   private xScale: number;
@@ -352,6 +354,10 @@ export class ChartCanvas {
 
   setMergedPoints(points: Float32Array) {
     this.mergedPoints = points;
+  }
+
+  setLinePoints(points: Float32Array) {
+    this.linePoints = points;
   }
 
   setMaxVal(valFromGPU: number) {
@@ -665,14 +671,17 @@ export class ChartCanvas {
       return;
     }
 
+    const line = this.linePoints;
+    const nLine = line.length / 2;
+
     if (this.styleAccessors.getShowLine()) {
       ctx.strokeStyle = `rgba(0,0,0,${this.styleAccessors.getLineOpacity()})`;
       ctx.lineWidth = this.styleAccessors.getLineWidth();
       ctx.beginPath();
-      for (let i = 0; i < n; i++) {
-        const p = i * 7;
-        const sx = toScreenX(pts[p]!);
-        const sy = toScreenY(pts[p + 1]!);
+      for (let i = 0; i < nLine; i++) {
+        const p = i * 2;
+        const sx = toScreenX(line[p]!);
+        const sy = toScreenY(line[p + 1]!);
         if (i === 0) ctx.moveTo(sx, sy);
         else ctx.lineTo(sx, sy);
       }
@@ -683,10 +692,10 @@ export class ChartCanvas {
       const alpha = this.styleAccessors.getLineOpacity();
       const radius = Math.max(1, this.styleAccessors.getLineWidth() * 1.5);
       ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-      for (let i = 0; i < n; i++) {
-        const p = i * 7;
-        const sx = toScreenX(pts[p]!);
-        const sy = toScreenY(pts[p + 1]!);
+      for (let i = 0; i < nLine; i++) {
+        const p = i * 2;
+        const sx = toScreenX(line[p]!);
+        const sy = toScreenY(line[p + 1]!);
         ctx.beginPath();
         ctx.arc(sx, sy, radius, 0, Math.PI * 2);
         ctx.fill();

@@ -687,6 +687,7 @@ export class GaussianChart {
       this.controls.renderedPoints = this.lastMergedCount;
       this.renderedPointsController?.updateDisplay();
       this.chartCanvas.setMergedPoints(merged.gpuInstances);
+      this.chartCanvas.setLinePoints(merged.linePoints);
       this.lastViewMinX = viewMinX;
       this.lastViewMaxX = viewMaxX;
       this.lastViewMinY = viewMinY;

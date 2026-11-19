@@ -146,3 +146,85 @@ fn visible_y_range_includes_zero_weight_points() {
     assert_eq!(&*d.visible_y_range(0.0, 1.0), &[-10.0, 20.0]);
     assert_eq!(&*d.visible_y_range(0.0, 0.0), &[-10.0, -10.0]);
 }
+
+fn line_downsampler(data: &[f64], threshold: f64, min_x: f64, max_x: f64) -> TreeDownsampler {
+    let mut d = TreeDownsampler::new();
+    d.set_view_min_x(min_x);
+    d.set_view_max_x(max_x);
+    d.set_view_min_y(-100.0);
+    d.set_view_max_y(100.0);
+    d.set_screen_w(1920.0);
+    d.set_screen_h(1080.0);
+    d.set_sigma_size_px(16.0);
+    d.set_merge_threshold(threshold);
+    d.set_data_f64(data.to_vec().into_boxed_slice());
+    d
+}
+
+fn noisy_series(n: usize) -> Vec<f64> {
+    let mut seed = 12345u64;
+    (0..n)
+        .flat_map(|i| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let noise = ((seed >> 33) as f64 / (1u64 << 31) as f64) * 20.0 - 10.0;
+            let spike = if i % 997 == 0 { 80.0 } else { 0.0 };
+            [i as f64 / n as f64, noise + spike, 1.0]
+        })
+        .collect()
+}
+
+#[test]
+fn line_points_are_real_samples_sorted_by_x() {
+    let data = noisy_series(20_000);
+    let samples: std::collections::HashSet<(u32, u32)> = data
+        .chunks_exact(3)
+        .map(|p| ((p[0] as f32).to_bits(), (p[1] as f32).to_bits()))
+        .collect();
+    for threshold in [0.0, 1.0, 3.0] {
+        let line = line_downsampler(&data, threshold, 0.2, 0.7).merge_points().line_points();
+        assert!(line.len() >= 4 && line.len() % 2 == 0);
+        for pair in line.chunks_exact(2) {
+            assert!(samples.contains(&(pair[0].to_bits(), pair[1].to_bits())));
+        }
+        for w in line.chunks_exact(2).collect::<Vec<_>>().windows(2) {
+            assert!(w[0][0] <= w[1][0], "line x must be non-decreasing");
+        }
+    }
+}
+
+#[test]
+fn line_points_keep_visible_extrema() {
+    let data = noisy_series(20_000);
+    let (min_x, max_x) = (0.1, 0.9);
+    let visible: Vec<&[f64]> = data
+        .chunks_exact(3)
+        .filter(|p| p[0] >= min_x && p[0] <= max_x)
+        .collect();
+    let min_y = visible.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min) as f32;
+    let max_y = visible.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max) as f32;
+    let result = line_downsampler(&data, 1.0, min_x, max_x).merge_points();
+    let ys: Vec<f32> = result.line_points().chunks_exact(2).map(|p| p[1]).collect();
+    assert!(ys.contains(&min_y));
+    assert!(ys.contains(&max_y));
+    // At most first/min/max/last per merged group, plus the two neighbors.
+    assert!(ys.len() <= result.count() as usize * 4 + 2);
+    assert!(ys.len() < visible.len());
+}
+
+#[test]
+fn single_group_emits_first_min_max_last_plus_neighbors() {
+    // x:   0   1   2   3   4   5   6
+    // y:   9   5   8   1   7   4   9
+    let ys = [9.0, 5.0, 8.0, 1.0, 7.0, 4.0, 9.0];
+    let data: Vec<f64> = ys
+        .iter()
+        .enumerate()
+        .flat_map(|(i, y)| [i as f64, *y, 1.0])
+        .collect();
+    let line = line_downsampler(&data, 1e9, 1.0, 5.0).merge_points().line_points();
+    // neighbor (0,9), first (1,5), min (3,1), max (2,8) ordered by x, last (5,4), neighbor (6,9)
+    assert_eq!(
+        &*line,
+        &[0.0, 9.0, 1.0, 5.0, 2.0, 8.0, 3.0, 1.0, 5.0, 4.0, 6.0, 9.0]
+    );
+}

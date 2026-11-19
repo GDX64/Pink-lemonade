@@ -8,6 +8,9 @@ use wasm_bindgen::prelude::*;
 pub struct MergeResult {
     pub(crate) gpu_instances: Box<[f32]>,
     pub(crate) count: u32,
+    /// Real samples for the line plot, interleaved [x, y, ...] and sorted by x.
+    /// Only filled by strategies that support it (the tree downsampler).
+    pub(crate) line_points: Box<[f32]>,
 }
 
 #[wasm_bindgen]
@@ -15,6 +18,11 @@ impl MergeResult {
     #[wasm_bindgen(getter, js_name = gpuInstances)]
     pub fn gpu_instances(&self) -> Box<[f32]> {
         self.gpu_instances.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = linePoints)]
+    pub fn line_points(&self) -> Box<[f32]> {
+        self.line_points.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -28,6 +36,7 @@ impl MergeResult {
         MergeResult {
             gpu_instances: Vec::<f32>::new().into_boxed_slice(),
             count: 0,
+            line_points: Box::new([]),
         }
     }
 }
@@ -173,6 +182,7 @@ impl View {
         MergeResult {
             gpu_instances: gpu_instances.into_boxed_slice(),
             count,
+            line_points: Box::new([]),
         }
     }
 }

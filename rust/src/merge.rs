@@ -131,6 +131,7 @@ impl Downsampler {
         MergeResult {
             gpu_instances: gpu_instances.into_boxed_slice(),
             count,
+            line_points: Box::new([]),
         }
     }
 }

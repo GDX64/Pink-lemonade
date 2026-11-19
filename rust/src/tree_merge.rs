@@ -22,6 +22,14 @@ struct Node {
     max_x: f64,
     min_y: f64,
     max_y: f64,
+    // Real samples kept for the line plot: the first and last points of the
+    // node's index range and the x positions of its min-y and max-y samples.
+    first_x: f64,
+    first_y: f64,
+    last_x: f64,
+    last_y: f64,
+    min_y_x: f64,
+    max_y_x: f64,
 }
 
 impl Default for Node {
@@ -37,6 +45,12 @@ impl Default for Node {
             max_x: f64::NEG_INFINITY,
             min_y: f64::INFINITY,
             max_y: f64::NEG_INFINITY,
+            first_x: 0.0,
+            first_y: 0.0,
+            last_x: 0.0,
+            last_y: 0.0,
+            min_y_x: 0.0,
+            max_y_x: 0.0,
         }
     }
 }
@@ -56,6 +70,12 @@ impl Node {
                     max_x: x,
                     min_y: y,
                     max_y: y,
+                    first_x: x,
+                    first_y: y,
+                    last_x: x,
+                    last_y: y,
+                    min_y_x: x,
+                    max_y_x: x,
                     ..Self::default()
                 },
             );
@@ -90,12 +110,52 @@ impl Node {
                 ..Self::default()
             }
         };
+        // `a` always precedes `b` in index order.
         merged.min_x = a.min_x.min(b.min_x);
         merged.max_x = a.max_x.max(b.max_x);
-        merged.min_y = a.min_y.min(b.min_y);
-        merged.max_y = a.max_y.max(b.max_y);
+        (merged.min_y, merged.min_y_x) = if b.min_y < a.min_y {
+            (b.min_y, b.min_y_x)
+        } else {
+            (a.min_y, a.min_y_x)
+        };
+        (merged.max_y, merged.max_y_x) = if b.max_y > a.max_y {
+            (b.max_y, b.max_y_x)
+        } else {
+            (a.max_y, a.max_y_x)
+        };
+        merged.first_x = a.first_x;
+        merged.first_y = a.first_y;
+        merged.last_x = b.last_x;
+        merged.last_y = b.last_y;
         merged
     }
+
+    /// Up to four real samples (first, min/max in x order, last) for the line.
+    fn emit_line(&self, out: &mut Vec<f32>) {
+        let (lo, hi) = if self.min_y_x <= self.max_y_x {
+            ((self.min_y_x, self.min_y), (self.max_y_x, self.max_y))
+        } else {
+            ((self.max_y_x, self.max_y), (self.min_y_x, self.min_y))
+        };
+        for (x, y) in [
+            (self.first_x, self.first_y),
+            lo,
+            hi,
+            (self.last_x, self.last_y),
+        ] {
+            push_line_point(out, x, y);
+        }
+    }
+}
+
+fn push_line_point(out: &mut Vec<f32>, x: f64, y: f64) {
+    let (x, y) = (x as f32, y as f32);
+    if let [.., px, py] = out.as_slice() {
+        if *px == x && *py == y {
+            return;
+        }
+    }
+    out.extend_from_slice(&[x, y]);
 }
 
 #[wasm_bindgen]
@@ -199,12 +259,24 @@ impl TreeDownsampler {
             &mut groups,
         );
         let mut instances = Vec::with_capacity(groups.len() * 7);
+        let mut line = Vec::with_capacity(groups.len() * 8 + 4);
+        // Neighbors just outside the view so the line reaches the plot edges.
+        if start > 0 {
+            let p = (start - 1) * 3;
+            push_line_point(&mut line, self.data_f64[p], self.data_f64[p + 1]);
+        }
         for node in groups {
             Self::emit(node, x_factor, y_factor, &mut instances);
+            node.emit_line(&mut line);
+        }
+        if end < self.data_f64.len() / 3 {
+            let p = end * 3;
+            push_line_point(&mut line, self.data_f64[p], self.data_f64[p + 1]);
         }
         MergeResult {
             count: (instances.len() / 7) as u32,
             gpu_instances: instances.into_boxed_slice(),
+            line_points: line.into_boxed_slice(),
         }
     }
 
