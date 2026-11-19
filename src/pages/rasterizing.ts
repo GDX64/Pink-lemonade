@@ -185,11 +185,6 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-async function loadJson(): Promise<string> {
-  const jsonData = (await import("../data/data.json?url")).default;
-  return jsonData;
-}
-
 async function loadData(kind: "random" | "data"): Promise<ChartData> {
   if (kind === "random") {
     // The generator returns x normalized to [0, 1]; restore timestamps in
@@ -201,23 +196,5 @@ async function loadData(kind: "random" | "data"): Promise<ChartData> {
     return { points: dataF64 };
   }
 
-  const { base64: base64Data }: { base64: string } = await (
-    await fetch(await loadJson())
-  ).json();
-  const decoded = atob(base64Data.replaceAll("'", ""));
-  const buffer = new Uint8Array(decoded.length);
-  for (let i = 0; i < decoded.length; i++) {
-    buffer[i] = decoded.charCodeAt(i);
-  }
-  // Flat records: [time, price, buyQty, sellQty, ...]. The chart sorts by
-  // time and normalizes it; weight is the traded volume.
-  const raw = new Float64Array(buffer.buffer);
-  const n = raw.length / 4;
-  const points = new Float64Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    points[i * 3] = raw[i * 4]!;
-    points[i * 3 + 1] = raw[i * 4 + 1]!;
-    points[i * 3 + 2] = raw[i * 4 + 2]! + raw[i * 4 + 3]!;
-  }
-  return { points };
+  throw Error("No data");
 }
