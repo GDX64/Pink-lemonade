@@ -1,0 +1,8 @@
+[package]
+name = "pink-lemonade-progressive"
+version = "0.1.0"
+edition = "2024"
+description = "Interfaces and simulation harness for progressive, screen-resolution-driven visualization of massive datasets over static byte-range storage."
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "sync", "time", "macros", "test-util"] }

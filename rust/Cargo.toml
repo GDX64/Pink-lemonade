@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "progressive"]
+
 [package]
 name = "pink-lemonade-wasm"
 version = "0.1.0"
