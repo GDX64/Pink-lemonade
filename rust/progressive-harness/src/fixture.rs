@@ -1,11 +1,10 @@
 //! Deterministic streaming dataset generators for tests and gigabyte-scale benchmarks.
 //!
 //! Generators yield bounded chunks via [`DatasetStream`] so arbitrarily large datasets
-//! (tens of millions to billions of points) can be fed into a [`crate::DatasetBuilder`]
+//! (tens of millions to billions of points) can be fed into a [`DatasetBuilder`]
 //! in O(chunk_size) RAM.
 
-use crate::strategy::DatasetBuilder;
-use crate::types::{BuildError, Point};
+use pink_lemonade_progressive_core::{BuildError, DatasetBuilder, Point};
 
 /// Deterministic SplitMix64 PRNG matching `rust/benches/common/fixture.rs`.
 #[derive(Debug, Clone)]
@@ -93,7 +92,6 @@ impl DatasetStream {
                 Point::new(x, noise + spike, 1.0)
             }
             DatasetShape::MultiRegime { .. } => {
-                // Warp x slightly with a smooth monotonic function to create dense/sparse bands.
                 let t = index as f64 / n;
                 let x = (t + 0.04 * (t * std::f64::consts::TAU * 5.0).sin() / std::f64::consts::TAU)
                     .clamp(0.0, 1.0);

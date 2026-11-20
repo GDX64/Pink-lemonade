@@ -1,32 +1,19 @@
-//! Smoke tests exercising every part of the `pink-lemonade-progressive` interface and harness
-//! using a tiny in-test stub strategy.
+//! Smoke tests exercising `pink-lemonade-progressive-core` and `pink-lemonade-progressive-harness`
+//! using a tiny in-test stub strategy (no concrete strategy implementation lives in the crates yet).
 
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pink_lemonade_progressive::harness::conformance::{ConformanceConfig, run_conformance_suite};
-use pink_lemonade_progressive::harness::fixture::{DatasetShape, DatasetStream};
-use pink_lemonade_progressive::harness::workload::Workload;
-use pink_lemonade_progressive::harness::{HarnessConfig, run_benchmark};
-use pink_lemonade_progressive::{
-    BuildError, ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, DiskStore, Frame,
-    FrameSink, FrameStatus, MemoryStore, NetworkProfile, ObjectWriter, Point, ProgressiveClient,
-    ProgressiveStrategy, SimulatedTransport, StoreError, ViewQuery,
+use pink_lemonade_progressive_core::{
+    BuildError, ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, Frame, FrameSink,
+    FrameStatus, ObjectWriter, Point, ProgressiveClient, ProgressiveStrategy, StoreError,
+    ViewQuery,
 };
-
-// ---------------------------------------------------------------------------
-// Tiny in-test stub strategy
-//
-// Stores two static objects:
-// - `summary.bin`: count + overall [min_x, max_x, min_y, max_y] + single global
-//   moment summary (used to emit an immediate coarse `Refining` frame).
-// - `points.bin`: raw little-endian `(x, y, weight)` triplets.
-//
-// On each query it emits a coarse `Refining` frame first, then performs a byte-range
-// read of `points.bin` and emits exact unmerged unit kernels (`FrameStatus::Complete`).
-// This is strictly a test double to exercise every harness feature end-to-end.
-// ---------------------------------------------------------------------------
+use pink_lemonade_progressive_harness::{
+    ConformanceConfig, DatasetShape, DatasetStream, DiskStore, HarnessConfig, MemoryStore,
+    NetworkProfile, SimulatedTransport, Workload, run_benchmark, run_conformance_suite,
+};
 
 const SUMMARY_KEY: &str = "summary.bin";
 const POINTS_KEY: &str = "points.bin";
@@ -224,10 +211,6 @@ impl ProgressiveStrategy for StubStrategy {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[tokio::test(start_paused = true)]
 async fn stub_passes_full_conformance_suite() {
     let config = ConformanceConfig {
@@ -251,7 +234,6 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
     let config = HarnessConfig {
         network: NetworkProfile::broadband(),
         client: ClientConfig {
-            // Small budget forces cache bypass so cancellation interrupts real network reads.
             memory_budget_bytes: 1024,
         },
         nmae_pixel_samples: 32,
@@ -279,7 +261,6 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
     assert_eq!(report.object_count, 2);
     assert_eq!(report.workloads.len(), 5);
 
-    // Cold overview should emit 2 frames (coarse immediately at ~0 ms, complete after RTT+transfer).
     let overview = &report.workloads[0];
     assert_eq!(overview.steps[0].frames_emitted, 2);
     assert!(overview.steps[0].completed);
@@ -287,20 +268,16 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
     let ttc = overview.steps[0].ttc.unwrap();
     assert!(ttff < ttc, "expected TTFF ({ttff:?}) < TTC ({ttc:?})");
     assert_eq!(overview.steps[0].nmae_progression.len(), 2);
-    // Converged unmerged kernels should have ~0% NMAE.
     assert!(overview.steps[0].nmae_progression[1] < 0.05);
 
-    // Rapid interrupt workload (20 ms dwell vs 30 ms broadband RTT) must cancel in-flight reads.
     let interrupt = &report.workloads[4];
     assert!(
         interrupt.total_transport.cancelled_requests >= 5,
         "expected cancelled requests in rapid_interrupt_pan, got {}",
         interrupt.total_transport.cancelled_requests
     );
-    // Final settled step still completes cleanly.
     assert!(interrupt.steps.last().unwrap().completed);
 
-    // Ensure report Display formatting works cleanly.
     let formatted = report.to_string();
     assert!(formatted.contains("in_test_stub"));
     assert!(formatted.contains("rapid_interrupt_pan"));
@@ -309,10 +286,8 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
 #[tokio::test(start_paused = true)]
 async fn simulated_transport_enforces_concurrency_and_tracks_cancellation_bytes() {
     let mut store = MemoryStore::new();
-    // 100 KB payload
     store.write_object("blob.bin", &vec![7u8; 100_000]).unwrap();
 
-    // 10 ms RTT, 100 KB/s => 10 ms RTT + 1000 ms body = 1010 ms total, max 2 concurrent.
     let profile = NetworkProfile {
         name: "test-slow",
         rtt: Duration::from_millis(10),
@@ -321,7 +296,6 @@ async fn simulated_transport_enforces_concurrency_and_tracks_cancellation_bytes(
     };
     let transport = Arc::new(SimulatedTransport::new(store, profile));
 
-    // Drop a read halfway through body transfer (at 510 ms => 500 ms of 1000 ms body => ~50 KB wasted).
     let read_fut = transport.read_range("blob.bin", 0, 100_000);
     tokio::select! {
         _ = read_fut => panic!("read should not finish before 510 ms"),
@@ -337,7 +311,6 @@ async fn simulated_transport_enforces_concurrency_and_tracks_cancellation_bytes(
         m.wasted_cancelled_bytes
     );
 
-    // Spawn 4 concurrent 1 KB reads under max_concurrency = 2 and verify peak_in_flight <= 2.
     let mut handles = Vec::new();
     for _ in 0..4 {
         let t = Arc::clone(&transport);

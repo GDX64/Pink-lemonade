@@ -1,10 +1,10 @@
 //! Heap-tracking global allocator for standalone benchmark binaries.
 //!
 //! Install in a benchmark binary to verify that actual OS heap usage matches a client's
-//! self-reported [`crate::ProgressiveClient::memory_bytes`] and stays within budget:
+//! self-reported `ProgressiveClient::memory_bytes` and stays within budget:
 //!
 //! ```ignore
-//! use pink_lemonade_progressive::memory::TrackingAllocator;
+//! use pink_lemonade_progressive_harness::TrackingAllocator;
 //!
 //! #[global_allocator]
 //! static ALLOC: TrackingAllocator = TrackingAllocator::new();
@@ -63,7 +63,6 @@ impl TrackingAllocator {
         self.peak.swap(now, Ordering::Relaxed)
     }
 
-    /// Record an allocation of `bytes` bytes (exposed for unit-testing the accounting logic).
     pub(crate) fn record_alloc(&self, bytes: usize) {
         let live = self.current.fetch_add(bytes, Ordering::Relaxed) + bytes;
         self.peak.fetch_max(live, Ordering::Relaxed);
@@ -71,7 +70,6 @@ impl TrackingAllocator {
         self.allocation_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record a deallocation of `bytes` bytes.
     pub(crate) fn record_dealloc(&self, bytes: usize) {
         self.current.fetch_sub(bytes, Ordering::Relaxed);
     }

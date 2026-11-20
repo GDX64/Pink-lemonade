@@ -1,4 +1,4 @@
-//! Core data, query, frame, and configuration types shared across strategies and the harness.
+//! Core data, query, frame, and configuration types shared across progressive strategies.
 
 use std::fmt;
 

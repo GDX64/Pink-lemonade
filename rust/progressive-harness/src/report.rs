@@ -23,7 +23,7 @@ pub struct StepReport {
     pub nmae_progression: Vec<f64>,
 }
 
-/// Aggregated report for one [`crate::harness::Workload`] executed against a client.
+/// Aggregated report for one [`crate::Workload`] executed against a client.
 #[derive(Debug, Clone)]
 pub struct WorkloadReport {
     pub name: String,
@@ -44,7 +44,7 @@ impl WorkloadReport {
     }
 }
 
-/// Complete report for building and benchmarking one [`crate::ProgressiveStrategy`].
+/// Complete report for building and benchmarking one `ProgressiveStrategy`.
 #[derive(Debug, Clone)]
 pub struct BenchmarkReport {
     pub strategy_name: String,

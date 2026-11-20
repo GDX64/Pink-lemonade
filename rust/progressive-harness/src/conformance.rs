@@ -13,18 +13,21 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::harness::fixture::{DatasetShape, DatasetStream, stream_into_builder};
-use crate::harness::moments::assert_moments_preserved;
-use crate::harness::quality::{
+use pink_lemonade_progressive_core::{
+    ByteRangeStore, ClientConfig, DatasetBuilder, Frame, FrameStatus, ObjectWriter, Point,
+    ProgressiveClient, ProgressiveStrategy, ViewQuery,
+};
+
+use crate::fixture::{DatasetShape, DatasetStream, stream_into_builder};
+use crate::moments::assert_moments_preserved;
+use crate::quality::{
     evaluate_density_nmae, exact_visible_y_range, sample_reference_pixels, verify_line_points,
     verify_y_range,
 };
-use crate::harness::run_step;
-use crate::harness::workload::WorkloadStep;
-use crate::store::{ByteRangeStore, DiskStore, MemoryStore, ObjectWriter};
-use crate::strategy::{DatasetBuilder, ProgressiveClient, ProgressiveStrategy};
+use crate::runner::run_step;
+use crate::store::{DiskStore, MemoryStore};
 use crate::transport::{NetworkProfile, SimulatedTransport};
-use crate::types::{ClientConfig, Frame, FrameStatus, Point, ViewQuery};
+use crate::workload::WorkloadStep;
 
 /// Configurable tolerances and sizes for [`run_conformance_suite`].
 #[derive(Debug, Clone)]
@@ -161,7 +164,6 @@ async fn check_dataset_on_memory_store<P: ProgressiveStrategy>(
         .await
         .map_err(|e| format!("open_client failed: {e}"))?;
 
-    // Check full view, clipped sub-views, and an out-of-range empty view.
     let views = [
         ("full_view", 0.0, 1.0),
         ("left_slice", 0.05, 0.35),
@@ -207,7 +209,6 @@ async fn check_cancellation_safety<P: ProgressiveStrategy>(
     let mut store = MemoryStore::new();
     build_dataset(strategy, shape, config.point_count, config.chunk_size, &mut store)?;
 
-    // Use non-zero latency so a short dwell interrupts in-flight requests cleanly.
     let transport = Arc::new(SimulatedTransport::new(store, NetworkProfile::broadband()));
     let mut client = strategy
         .open_client(
@@ -219,7 +220,6 @@ async fn check_cancellation_safety<P: ProgressiveStrategy>(
         .await
         .map_err(|e| format!("cancellation open_client failed: {e}"))?;
 
-    // Fire an interrupted query with a tiny dwell time.
     let interrupted = WorkloadStep {
         label: "interrupted_view".to_owned(),
         query: ViewQuery::new(
@@ -234,7 +234,6 @@ async fn check_cancellation_safety<P: ProgressiveStrategy>(
     };
     let _ = run_step(&mut client, &interrupted).await?;
 
-    // Subsequent settled query must still converge cleanly with accurate moments & y_range.
     let settled_query = ViewQuery::new(
         0.5,
         0.8,

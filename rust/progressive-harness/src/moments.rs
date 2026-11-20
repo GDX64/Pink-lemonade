@@ -3,7 +3,7 @@
 //! Generalizes `rust/benches/common/moments.rs` so both full views and clipped sub-views
 //! can be checked against ground-truth input points.
 
-use crate::types::{Frame, Point, ViewQuery};
+use pink_lemonade_progressive_core::{Frame, Point, ViewQuery};
 
 /// Mass, first moments, and uncentered second moments of a 2D Gaussian mixture.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]

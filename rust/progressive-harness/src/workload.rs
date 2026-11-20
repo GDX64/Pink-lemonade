@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::types::ViewQuery;
+use pink_lemonade_progressive_core::ViewQuery;
 
 /// A single viewport step in a simulated user session.
 #[derive(Debug, Clone)]

@@ -1,26 +1,19 @@
-//! Simulation, conformance, and benchmarking harness for progressive strategies.
-
-pub mod conformance;
-pub mod fixture;
-pub mod moments;
-pub mod quality;
-pub mod report;
-pub mod workload;
+//! Step, workload, and full benchmark execution runners.
 
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
-use crate::harness::fixture::{DatasetStream, stream_into_builder};
-use crate::harness::quality::{
-    evaluate_density_nmae, exact_visible_y_range, sample_reference_pixels,
+use pink_lemonade_progressive_core::{
+    ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, Frame, FrameSink, FrameStatus,
+    ObjectWriter, Point, ProgressiveClient, ProgressiveStrategy,
 };
-use crate::harness::report::{BenchmarkReport, StepReport, WorkloadReport};
-use crate::harness::workload::{Workload, WorkloadStep};
-use crate::store::{ByteRangeStore, ObjectWriter};
-use crate::strategy::{DatasetBuilder, FrameSink, ProgressiveClient, ProgressiveStrategy};
+
+use crate::fixture::{DatasetStream, stream_into_builder};
+use crate::quality::{evaluate_density_nmae, exact_visible_y_range, sample_reference_pixels};
+use crate::report::{BenchmarkReport, StepReport, WorkloadReport};
 use crate::transport::{NetworkProfile, SimulatedTransport};
-use crate::types::{ClientConfig, ClientError, Frame, FrameStatus, Point};
+use crate::workload::{Workload, WorkloadStep};
 
 /// Configuration for running a strategy through the benchmark harness.
 #[derive(Debug, Clone)]
@@ -100,11 +93,8 @@ pub async fn run_step<C: ProgressiveClient>(
                 }
             }
         }
-        // Dropping `query_fut` here cancels any in-flight `ByteRangeStore` futures,
-        // triggering `SimulatedTransport`'s cancellation drop guard.
     };
 
-    // Drain any frames already queued right as `query_fut` completed.
     while let Ok(frame) = rx.try_recv() {
         frames.push((start.elapsed(), frame));
     }

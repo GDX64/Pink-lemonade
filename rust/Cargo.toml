@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "progressive"]
+members = [".", "progressive-core", "progressive-harness"]
 
 [package]
 name = "pink-lemonade-wasm"

@@ -11,8 +11,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
-use crate::store::{ByteRangeStore, ObjectMeta};
-use crate::types::StoreError;
+use pink_lemonade_progressive_core::{ByteRangeStore, ObjectMeta, StoreError};
 
 /// Network characteristics simulated by [`SimulatedTransport`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -302,7 +301,6 @@ impl<S: ByteRangeStore> ByteRangeStore for SimulatedTransport<S> {
         let mut guard = InFlightGuard::new(Arc::clone(&self.counters), self.profile.rtt);
         let result = self.inner.list_objects().await;
 
-        // Approximate JSON/listing payload size for bandwidth accounting.
         let payload_len = result
             .as_ref()
             .map(|items| items.iter().map(|m| m.key.len() + 16).sum())

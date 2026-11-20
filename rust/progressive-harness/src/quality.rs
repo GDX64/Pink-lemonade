@@ -1,7 +1,8 @@
 //! Density quality (NMAE), `y_range`, and `line_points` verification helpers.
 
-use crate::harness::fixture::SplitMix64;
-use crate::types::{Frame, Point, ViewQuery};
+use pink_lemonade_progressive_core::{Frame, Point, ViewQuery};
+
+use crate::fixture::SplitMix64;
 
 /// A pixel coordinate and its exact reference KDE density from unmerged input points.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,7 +21,7 @@ pub struct QualityMetrics {
     pub normalized_mean_absolute_error_percent: f64,
 }
 
-/// Compute exact visible `[min_y, max_y]` of points in `[query.min_x, query.max_x]`.
+/// Compute exact visible `[min_y, max_y]` of points in `[min_x, max_x]`.
 ///
 /// Returns `None` if no points fall in the interval.
 pub fn exact_visible_y_range(points: &[Point], min_x: f64, max_x: f64) -> Option<[f64; 2]> {
@@ -69,7 +70,6 @@ pub fn sample_reference_pixels(
         let anchor = visible[idx];
         let base_px = (anchor.x - query.min_x) / x_span * query.screen_w;
         let base_py = (anchor.y - bounds_y[0]) / y_span * query.screen_h;
-        // Small jitter within +/- 1.5 sigma so we probe both peak and flank density.
         let px = (base_px + (rng.unit() * 3.0 - 1.5) * query.sigma_px).clamp(0.0, query.screen_w);
         let py = (base_py + (rng.unit() * 3.0 - 1.5) * query.sigma_px).clamp(0.0, query.screen_h);
 

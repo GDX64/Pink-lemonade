@@ -1,0 +1,9 @@
+[package]
+name = "pink-lemonade-progressive-harness"
+version = "0.1.0"
+edition = "2024"
+description = "Simulation, conformance, and benchmarking harness for pink-lemonade-progressive-core strategies."
+
+[dependencies]
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros", "test-util"] }

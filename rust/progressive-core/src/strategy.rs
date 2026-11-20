@@ -82,8 +82,7 @@ pub trait ProgressiveStrategy: Send + Sync {
 
     /// Open a client against a static byte-range store with the given memory budget.
     ///
-    /// Async so strategies may optionally fetch a small manifest/header on startup
-    /// (which is automatically accounted for by [`crate::SimulatedTransport`]).
+    /// Async so strategies may optionally fetch a small manifest/header on startup.
     fn open_client<S: ByteRangeStore + 'static>(
         &self,
         store: Arc<S>,
