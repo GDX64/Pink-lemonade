@@ -1,0 +1,13 @@
+[package]
+name = "pink-lemonade-progressive-tree"
+version = "0.1.0"
+edition = "2024"
+description = "Paged multi-level moment tree for progressive, resolution-driven visualization over static byte-range storage."
+
+[dependencies]
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+pink-lemonade-progressive-naive = { path = "../progressive-naive" }
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

@@ -62,6 +62,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-tree"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-naive",
+ "tokio",
+]
+
+[[package]]
 name = "pink-lemonade-wasm"
 version = "0.1.0"
 dependencies = [

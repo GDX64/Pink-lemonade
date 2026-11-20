@@ -1,5 +1,11 @@
 [workspace]
-members = [".", "progressive-core", "progressive-harness", "progressive-naive"]
+members = [
+    ".",
+    "progressive-core",
+    "progressive-harness",
+    "progressive-naive",
+    "progressive-tree",
+]
 
 [package]
 name = "pink-lemonade-wasm"
