@@ -40,6 +40,7 @@ impl WorkloadReport {
 #[derive(Debug, Clone)]
 pub struct BenchmarkReport {
     pub strategy_name: String,
+    pub scenario_name: Option<String>,
     pub total_points: u64,
     pub build_duration: Duration,
     pub storage_bytes: u64,
@@ -88,14 +89,25 @@ fn format_opt_ms(d: Option<Duration>) -> String {
 
 impl fmt::Display for BenchmarkReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "=== {} ({} points, network={}, mem_budget={}) ===",
-            self.strategy_name,
-            self.total_points,
-            self.network.name,
-            format_bytes(self.memory_budget_bytes as u64),
-        )?;
+        match &self.scenario_name {
+            Some(scenario) => writeln!(
+                f,
+                "=== {} [{}] ({} points, network={}, mem_budget={}) ===",
+                self.strategy_name,
+                scenario,
+                self.total_points,
+                self.network.name,
+                format_bytes(self.memory_budget_bytes as u64),
+            )?,
+            None => writeln!(
+                f,
+                "=== {} ({} points, network={}, mem_budget={}) ===",
+                self.strategy_name,
+                self.total_points,
+                self.network.name,
+                format_bytes(self.memory_budget_bytes as u64),
+            )?,
+        }
         writeln!(
             f,
             "build: {:.2} ms | storage: {} across {} object(s)",

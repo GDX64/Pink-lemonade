@@ -9,6 +9,7 @@
 //! - [`memory`]: [`memory::TrackingAllocator`] for peak heap verification in benchmark binaries.
 //! - [`fixture`], [`moments`], [`quality`], [`workload`], [`conformance`], [`report`], [`runner`].
 
+pub mod benchmarks;
 pub mod conformance;
 pub mod fixture;
 pub mod memory;
@@ -20,6 +21,7 @@ pub mod store;
 pub mod transport;
 pub mod workload;
 
+pub use benchmarks::{BenchmarkScenario, ScenarioSpec, StoreBacking};
 pub use conformance::{ConformanceConfig, run_conformance_suite};
 pub use fixture::{DatasetShape, DatasetStream, SplitMix64, stream_into_builder};
 pub use memory::{MemoryStats, TrackingAllocator};
