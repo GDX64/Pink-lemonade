@@ -8,8 +8,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use pink_lemonade_progressive_core::{
-    ByteRangeStore, ObjectMeta, ObjectWriter, StoreError, validate_key,
+    ByteRangeStore, ObjectMeta, ObjectWriter, StoreError, async_trait, validate_key,
 };
+
+/// Object-safe store that supports both writing artifacts and opening read-only views
+/// for [`crate::run_benchmark`].
+pub trait BenchmarkStore: ByteRangeStore + ObjectWriter {
+    /// Return a shared read-only handle to the stored objects.
+    fn reader(&self) -> Arc<dyn ByteRangeStore>;
+}
 
 /// Fast in-memory multi-object store for unit tests and small/medium quality benchmarks.
 #[derive(Debug, Default, Clone)]
@@ -69,15 +76,13 @@ impl Drop for MemoryObjectSink {
 }
 
 impl ObjectWriter for MemoryStore {
-    type Sink = MemoryObjectSink;
-
-    fn create_object(&mut self, key: &str) -> Result<Self::Sink, StoreError> {
+    fn create_object(&mut self, key: &str) -> Result<Box<dyn Write + Send>, StoreError> {
         let _ = validate_key(key)?;
-        Ok(MemoryObjectSink {
+        Ok(Box::new(MemoryObjectSink {
             key: key.to_owned(),
             buf: Vec::new(),
             objects: Arc::clone(&self.objects),
-        })
+        }))
     }
 
     fn write_object(&mut self, key: &str, bytes: &[u8]) -> Result<(), StoreError> {
@@ -88,6 +93,7 @@ impl ObjectWriter for MemoryStore {
     }
 }
 
+#[async_trait]
 impl ByteRangeStore for MemoryStore {
     async fn read_range(&self, key: &str, offset: u64, len: usize) -> Result<Vec<u8>, StoreError> {
         let _ = validate_key(key)?;
@@ -125,6 +131,12 @@ impl ByteRangeStore for MemoryStore {
                 len: v.len() as u64,
             })
             .collect())
+    }
+}
+
+impl BenchmarkStore for MemoryStore {
+    fn reader(&self) -> Arc<dyn ByteRangeStore> {
+        Arc::new(self.clone())
     }
 }
 
@@ -179,9 +191,7 @@ impl DiskStore {
 }
 
 impl ObjectWriter for DiskStore {
-    type Sink = BufWriter<File>;
-
-    fn create_object(&mut self, key: &str) -> Result<Self::Sink, StoreError> {
+    fn create_object(&mut self, key: &str) -> Result<Box<dyn Write + Send>, StoreError> {
         let path = self.resolve(key)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -191,10 +201,11 @@ impl ObjectWriter for DiskStore {
             .expect("open_files lock poisoned")
             .remove(key);
         let file = File::create(path)?;
-        Ok(BufWriter::new(file))
+        Ok(Box::new(BufWriter::new(file)))
     }
 }
 
+#[async_trait]
 impl ByteRangeStore for DiskStore {
     async fn read_range(&self, key: &str, offset: u64, len: usize) -> Result<Vec<u8>, StoreError> {
         let path = self.resolve(key)?;
@@ -263,6 +274,12 @@ impl ByteRangeStore for DiskStore {
         tokio::task::spawn_blocking(move || collect_disk_objects(&root, Path::new("")))
             .await
             .map_err(|err| StoreError::Io(io::Error::other(err)))?
+    }
+}
+
+impl BenchmarkStore for DiskStore {
+    fn reader(&self) -> Arc<dyn ByteRangeStore> {
+        Arc::new(self.clone())
     }
 }
 

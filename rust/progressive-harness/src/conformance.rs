@@ -5,7 +5,7 @@
 //! - Moment preservation (mass, 1st, 2nd moments) on full and clipped views
 //! - Exact visible `y_range` reporting
 //! - `line_points` invariants (sorted x, visible extrema preservation)
-//! - Converged density NMAE against ground truth
+//! - Density NMAE against ground truth
 //! - Client memory budget compliance (`memory_bytes() <= memory_budget_bytes`)
 //! - Mid-flight query cancellation safety
 //! - Parity across both [`MemoryStore`] and [`DiskStore`]
@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pink_lemonade_progressive_core::{
-    ByteRangeStore, ClientConfig, DatasetBuilder, Frame, FrameStatus, ObjectWriter, Point,
-    ProgressiveClient, ProgressiveStrategy, ViewQuery,
+    ByteRangeStore, ClientConfig, Frame, ObjectWriter, Point, ProgressiveClient,
+    ProgressiveStrategy, ViewQuery,
 };
 
 use crate::fixture::{DatasetShape, DatasetStream, stream_into_builder};
@@ -25,7 +25,7 @@ use crate::quality::{
     verify_y_range,
 };
 use crate::runner::run_step;
-use crate::store::{DiskStore, MemoryStore};
+use crate::store::{BenchmarkStore, DiskStore, MemoryStore};
 use crate::transport::{NetworkProfile, SimulatedTransport};
 use crate::workload::WorkloadStep;
 
@@ -43,11 +43,11 @@ pub struct ConformanceConfig {
     pub moment_rel_tol: f64,
     /// Absolute tolerance for visible `y_range` bounds (default `1e-6`).
     pub y_range_abs_tol: f64,
-    /// Upper bound on converged density NMAE (%) (default `5.0`).
+    /// Upper bound on density NMAE (%) (default `5.0`).
     pub max_nmae_percent: f64,
     /// Number of occupied pixels sampled for density NMAE evaluation.
     pub nmae_pixel_samples: usize,
-    /// Whether to require non-empty `line_points` on non-empty converged views.
+    /// Whether to require non-empty `line_points` on non-empty views.
     pub require_line_points: bool,
 }
 
@@ -73,8 +73,8 @@ impl Default for ConformanceConfig {
 /// Run the full conformance suite against `strategy`.
 ///
 /// Returns `Ok(())` when all invariants pass, or a descriptive failure message.
-pub async fn run_conformance_suite<P: ProgressiveStrategy>(
-    strategy: &P,
+pub async fn run_conformance_suite(
+    strategy: &dyn ProgressiveStrategy,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
     check_empty_dataset(strategy, config).await?;
@@ -84,8 +84,8 @@ pub async fn run_conformance_suite<P: ProgressiveStrategy>(
     Ok(())
 }
 
-async fn check_empty_dataset<P: ProgressiveStrategy>(
-    strategy: &P,
+async fn check_empty_dataset(
+    strategy: &dyn ProgressiveStrategy,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
     let mut store = MemoryStore::new();
@@ -94,7 +94,10 @@ async fn check_empty_dataset<P: ProgressiveStrategy>(
         .finish(&mut store)
         .map_err(|e| format!("empty build failed: {e}"))?;
 
-    let transport = Arc::new(SimulatedTransport::new(store, NetworkProfile::instant()));
+    let transport = Arc::new(SimulatedTransport::new(
+        store.reader(),
+        NetworkProfile::instant(),
+    ));
     let mut client = strategy
         .open_client(
             transport,
@@ -118,42 +121,47 @@ async fn check_empty_dataset<P: ProgressiveStrategy>(
         query,
         max_dwell: None,
     };
-    let outcome = run_step(&mut client, &step).await?;
-    let final_frame = outcome
-        .frames
-        .last()
-        .map(|(_, f)| f)
-        .ok_or_else(|| "empty dataset emitted no frames".to_owned())?;
+    let outcome = run_step(client.as_mut(), &step).await?;
+    let frame = outcome
+        .frame
+        .as_ref()
+        .ok_or_else(|| "empty dataset returned no frame".to_owned())?;
 
-    if final_frame.status != FrameStatus::Complete {
-        return Err("empty dataset final frame was not Complete".to_owned());
-    }
-    if final_frame.kernel_count() != 0 {
+    if frame.kernel_count() != 0 {
         return Err(format!(
             "empty dataset expected 0 kernels, got {}",
-            final_frame.kernel_count()
+            frame.kernel_count()
         ));
     }
-    if final_frame.y_range.is_some() {
+    if frame.y_range.is_some() {
         return Err(format!(
             "empty dataset expected y_range=None, got {:?}",
-            final_frame.y_range
+            frame.y_range
         ));
     }
-    check_memory_budget(&client, config.memory_budget_bytes)?;
+    check_memory_budget(client.as_ref(), config.memory_budget_bytes)?;
     Ok(())
 }
 
-async fn check_dataset_on_memory_store<P: ProgressiveStrategy>(
-    strategy: &P,
+async fn check_dataset_on_memory_store(
+    strategy: &dyn ProgressiveStrategy,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
     let shape = DatasetShape::NoisySpikes { seed: 42 };
     let points = DatasetStream::new(shape, config.point_count, config.chunk_size).collect_all();
     let mut store = MemoryStore::new();
-    build_dataset(strategy, shape, config.point_count, config.chunk_size, &mut store)?;
+    build_dataset(
+        strategy,
+        shape,
+        config.point_count,
+        config.chunk_size,
+        &mut store,
+    )?;
 
-    let transport = Arc::new(SimulatedTransport::new(store, NetworkProfile::instant()));
+    let transport = Arc::new(SimulatedTransport::new(
+        store.reader(),
+        NetworkProfile::instant(),
+    ));
     let mut client = strategy
         .open_client(
             transport,
@@ -186,30 +194,38 @@ async fn check_dataset_on_memory_store<P: ProgressiveStrategy>(
             query,
             max_dwell: None,
         };
-        let outcome = run_step(&mut client, &step).await?;
-        let final_frame = outcome
-            .frames
-            .last()
-            .map(|(_, f)| f)
-            .ok_or_else(|| format!("{label}: emitted zero frames"))?;
+        let outcome = run_step(client.as_mut(), &step).await?;
+        let frame = outcome
+            .frame
+            .as_ref()
+            .ok_or_else(|| format!("{label}: returned no frame"))?;
 
-        verify_converged_frame(label, &points, &query, final_frame, config)?;
-        check_memory_budget(&client, config.memory_budget_bytes)?;
+        verify_frame(label, &points, &query, frame, config)?;
+        check_memory_budget(client.as_ref(), config.memory_budget_bytes)?;
     }
 
     Ok(())
 }
 
-async fn check_cancellation_safety<P: ProgressiveStrategy>(
-    strategy: &P,
+async fn check_cancellation_safety(
+    strategy: &dyn ProgressiveStrategy,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
     let shape = DatasetShape::SineWave;
     let points = DatasetStream::new(shape, config.point_count, config.chunk_size).collect_all();
     let mut store = MemoryStore::new();
-    build_dataset(strategy, shape, config.point_count, config.chunk_size, &mut store)?;
+    build_dataset(
+        strategy,
+        shape,
+        config.point_count,
+        config.chunk_size,
+        &mut store,
+    )?;
 
-    let transport = Arc::new(SimulatedTransport::new(store, NetworkProfile::broadband()));
+    let transport = Arc::new(SimulatedTransport::new(
+        store.reader(),
+        NetworkProfile::broadband(),
+    ));
     let mut client = strategy
         .open_client(
             transport,
@@ -232,7 +248,7 @@ async fn check_cancellation_safety<P: ProgressiveStrategy>(
         ),
         max_dwell: Some(Duration::from_millis(5)),
     };
-    let _ = run_step(&mut client, &interrupted).await?;
+    let _ = run_step(client.as_mut(), &interrupted).await?;
 
     let settled_query = ViewQuery::new(
         0.5,
@@ -247,20 +263,19 @@ async fn check_cancellation_safety<P: ProgressiveStrategy>(
         query: settled_query,
         max_dwell: None,
     };
-    let outcome = run_step(&mut client, &settled).await?;
-    let final_frame = outcome
-        .frames
-        .last()
-        .map(|(_, f)| f)
-        .ok_or_else(|| "post_cancel_settled emitted zero frames".to_owned())?;
+    let outcome = run_step(client.as_mut(), &settled).await?;
+    let frame = outcome
+        .frame
+        .as_ref()
+        .ok_or_else(|| "post_cancel_settled returned no frame".to_owned())?;
 
-    verify_converged_frame("post_cancel_settled", &points, &settled_query, final_frame, config)?;
-    check_memory_budget(&client, config.memory_budget_bytes)?;
+    verify_frame("post_cancel_settled", &points, &settled_query, frame, config)?;
+    check_memory_budget(client.as_ref(), config.memory_budget_bytes)?;
     Ok(())
 }
 
-async fn check_disk_store_parity<P: ProgressiveStrategy>(
-    strategy: &P,
+async fn check_disk_store_parity(
+    strategy: &dyn ProgressiveStrategy,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
     let unique = format!(
@@ -276,7 +291,13 @@ async fn check_disk_store_parity<P: ProgressiveStrategy>(
 
     let shape = DatasetShape::SineWave;
     let points = DatasetStream::new(shape, config.point_count, config.chunk_size).collect_all();
-    let build_res = build_dataset(strategy, shape, config.point_count, config.chunk_size, &mut disk);
+    let build_res = build_dataset(
+        strategy,
+        shape,
+        config.point_count,
+        config.chunk_size,
+        &mut disk,
+    );
     if let Err(err) = build_res {
         let _ = disk.remove_dir_all();
         return Err(err);
@@ -292,7 +313,7 @@ async fn check_disk_store_parity<P: ProgressiveStrategy>(
     }
 
     let transport = Arc::new(SimulatedTransport::new(
-        disk.clone(),
+        disk.reader(),
         NetworkProfile::instant(),
     ));
     let query = ViewQuery::new(
@@ -318,14 +339,13 @@ async fn check_disk_store_parity<P: ProgressiveStrategy>(
             query,
             max_dwell: None,
         };
-        let outcome = run_step(&mut client, &step).await?;
-        let final_frame = outcome
-            .frames
-            .last()
-            .map(|(_, f)| f)
-            .ok_or_else(|| "disk_parity emitted zero frames".to_owned())?;
-        verify_converged_frame("disk_parity", &points, &query, final_frame, config)?;
-        check_memory_budget(&client, config.memory_budget_bytes)?;
+        let outcome = run_step(client.as_mut(), &step).await?;
+        let frame = outcome
+            .frame
+            .as_ref()
+            .ok_or_else(|| "disk_parity returned no frame".to_owned())?;
+        verify_frame("disk_parity", &points, &query, frame, config)?;
+        check_memory_budget(client.as_ref(), config.memory_budget_bytes)?;
         Ok::<(), String>(())
     }
     .await;
@@ -334,33 +354,30 @@ async fn check_disk_store_parity<P: ProgressiveStrategy>(
     check_result
 }
 
-fn build_dataset<P: ProgressiveStrategy, W: ObjectWriter>(
-    strategy: &P,
+fn build_dataset(
+    strategy: &dyn ProgressiveStrategy,
     shape: DatasetShape,
     point_count: u64,
     chunk_size: usize,
-    writer: &mut W,
+    writer: &mut dyn ObjectWriter,
 ) -> Result<(), String> {
     let mut builder = strategy.create_builder();
     let stream = DatasetStream::new(shape, point_count, chunk_size);
-    stream_into_builder(stream, &mut builder).map_err(|e| format!("push_chunk failed: {e}"))?;
+    stream_into_builder(stream, builder.as_mut())
+        .map_err(|e| format!("push_chunk failed: {e}"))?;
     builder
         .finish(writer)
         .map_err(|e| format!("finish failed: {e}"))?;
     Ok(())
 }
 
-fn verify_converged_frame(
+fn verify_frame(
     label: &str,
     points: &[Point],
     query: &ViewQuery,
     frame: &Frame,
     config: &ConformanceConfig,
 ) -> Result<(), String> {
-    if frame.status != FrameStatus::Complete {
-        return Err(format!("{label}: final frame was {:?}, expected Complete", frame.status));
-    }
-
     verify_y_range(points, query, frame, config.y_range_abs_tol)
         .map_err(|e| format!("{label}: {e}"))?;
 
@@ -408,7 +425,7 @@ fn verify_converged_frame(
     Ok(())
 }
 
-fn check_memory_budget<C: ProgressiveClient>(client: &C, budget: usize) -> Result<(), String> {
+fn check_memory_budget(client: &dyn ProgressiveClient, budget: usize) -> Result<(), String> {
     let used = client.memory_bytes();
     if used > budget {
         return Err(format!(

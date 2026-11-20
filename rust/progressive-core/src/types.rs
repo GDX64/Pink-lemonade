@@ -76,27 +76,17 @@ impl ViewQuery {
     }
 }
 
-/// Convergence state of a progressively rendered [`Frame`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameStatus {
-    /// Intermediate coarse or partially fetched frame; more frames will follow unless cancelled.
-    Refining,
-    /// Final converged frame at the requested screen resolution.
-    Complete,
-}
-
-/// A single rendered frame emitted by a [`crate::ProgressiveClient`].
+/// Rendered output returned by [`crate::ProgressiveClient::query`].
 ///
 /// Mirrors the output contract of `TreeDownsampler` + `visibleYRange` in `pink-lemonade-wasm`:
 /// - `gpu_instances`: flat `[x, y, amplitude, p00, p01, p10, p11]` per Gaussian kernel (7 `f32`s).
 /// - `line_points`: flat `[x, y, ...]` real samples sorted by `x` for the line overlay.
-/// - `y_range`: exact (or progressively refined) visible `[min_y, max_y]` in `[min_x, max_x]`.
-#[derive(Debug, Clone, PartialEq)]
+/// - `y_range`: exact visible `[min_y, max_y]` in `[min_x, max_x]`, or `None` if empty.
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Frame {
     pub gpu_instances: Vec<f32>,
     pub line_points: Vec<f32>,
     pub y_range: Option<[f64; 2]>,
-    pub status: FrameStatus,
 }
 
 impl Frame {
@@ -105,21 +95,8 @@ impl Frame {
         self.gpu_instances.len() / 7
     }
 
-    pub fn is_complete(&self) -> bool {
-        self.status == FrameStatus::Complete
-    }
-
-    pub fn empty(status: FrameStatus) -> Self {
-        Self {
-            gpu_instances: Vec::new(),
-            line_points: Vec::new(),
-            y_range: None,
-            status,
-        }
-    }
-
-    pub fn empty_complete() -> Self {
-        Self::empty(FrameStatus::Complete)
+    pub fn empty() -> Self {
+        Self::default()
     }
 }
 
@@ -218,12 +195,11 @@ impl From<StoreError> for BuildError {
     }
 }
 
-/// Errors returned during client initialization or progressive querying.
+/// Errors returned during client initialization or querying.
 #[derive(Debug)]
 pub enum ClientError {
     Store(StoreError),
     CorruptData(String),
-    Cancelled,
 }
 
 impl fmt::Display for ClientError {
@@ -231,7 +207,6 @@ impl fmt::Display for ClientError {
         match self {
             Self::Store(err) => write!(f, "client storage error: {err}"),
             Self::CorruptData(msg) => write!(f, "corrupt artifact data: {msg}"),
-            Self::Cancelled => write!(f, "query cancelled"),
         }
     }
 }

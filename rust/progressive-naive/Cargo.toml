@@ -1,0 +1,12 @@
+[package]
+name = "pink-lemonade-progressive-naive"
+version = "0.1.0"
+edition = "2024"
+description = "Simplest possible baseline strategy implementing pink-lemonade-progressive-core."
+
+[dependencies]
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

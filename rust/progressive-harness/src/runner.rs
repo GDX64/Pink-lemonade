@@ -5,13 +5,13 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use pink_lemonade_progressive_core::{
-    ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, Frame, FrameSink, FrameStatus,
-    ObjectWriter, Point, ProgressiveClient, ProgressiveStrategy,
+    ByteRangeStore, ClientConfig, Frame, Point, ProgressiveClient, ProgressiveStrategy,
 };
 
 use crate::fixture::{DatasetStream, stream_into_builder};
 use crate::quality::{evaluate_density_nmae, exact_visible_y_range, sample_reference_pixels};
 use crate::report::{BenchmarkReport, StepReport, WorkloadReport};
+use crate::store::BenchmarkStore;
 use crate::transport::{NetworkProfile, SimulatedTransport};
 use crate::workload::{Workload, WorkloadStep};
 
@@ -24,7 +24,7 @@ pub struct HarnessConfig {
     pub screen_h: f64,
     pub sigma_px: f64,
     pub merge_threshold: f64,
-    /// Optional number of reference pixels per step for progressive NMAE evaluation
+    /// Number of reference pixels per step for density NMAE evaluation
     /// (only used when ground-truth points are provided).
     pub nmae_pixel_samples: usize,
 }
@@ -43,94 +43,62 @@ impl Default for HarnessConfig {
     }
 }
 
-/// Raw outcome of executing one [`WorkloadStep`] against a [`ProgressiveClient`].
+/// Outcome of executing one [`WorkloadStep`] against a [`ProgressiveClient`].
 #[derive(Debug, Clone)]
 pub struct StepOutcome {
-    /// Timestamped `(elapsed_since_step_start, Frame)` sequence emitted by the client.
-    pub frames: Vec<(Duration, Frame)>,
-    /// True if the query reached completion before any `max_dwell` cancellation.
+    /// Returned frame if the query finished before any `max_dwell` timeout.
+    pub frame: Option<Frame>,
+    /// Simulated elapsed time until completion or timeout.
+    pub elapsed: Duration,
     pub completed: bool,
 }
 
-/// Execute a single [`WorkloadStep`] against `client`, honoring `max_dwell` cancellation
-/// and recording the simulated timestamp of every emitted frame.
-pub async fn run_step<C: ProgressiveClient>(
-    client: &mut C,
+/// Execute a single [`WorkloadStep`] against `client`, honoring `max_dwell` cancellation.
+pub async fn run_step(
+    client: &mut dyn ProgressiveClient,
     step: &WorkloadStep,
 ) -> Result<StepOutcome, String> {
-    let (sink, mut rx) = FrameSink::channel(32);
     let start = Instant::now();
-    let deadline = step.max_dwell.map(|d| start + d);
-    let mut frames = Vec::new();
-    let mut cancelled_by_dwell = false;
-
-    let query_result: Result<(), ClientError> = {
-        let query_fut = client.query(&step.query, sink);
-        tokio::pin!(query_fut);
-
-        loop {
-            tokio::select! {
-                biased;
-                maybe_frame = rx.recv() => {
-                    if let Some(frame) = maybe_frame {
-                        frames.push((start.elapsed(), frame));
-                    } else {
-                        break Ok(());
-                    }
-                }
-                res = &mut query_fut => {
-                    break res;
-                }
-                _ = async {
-                    if let Some(at) = deadline {
-                        tokio::time::sleep_until(at).await;
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                } => {
-                    cancelled_by_dwell = true;
-                    break Ok(());
-                }
-            }
+    match step.max_dwell {
+        None => {
+            let frame = client
+                .query(step.query)
+                .await
+                .map_err(|err| format!("step '{}' failed: {err}", step.label))?;
+            Ok(StepOutcome {
+                frame: Some(frame),
+                elapsed: start.elapsed(),
+                completed: true,
+            })
         }
-    };
-
-    while let Ok(frame) = rx.try_recv() {
-        frames.push((start.elapsed(), frame));
+        Some(dwell) => match tokio::time::timeout(dwell, client.query(step.query)).await {
+            Ok(Ok(frame)) => Ok(StepOutcome {
+                frame: Some(frame),
+                elapsed: start.elapsed(),
+                completed: true,
+            }),
+            Ok(Err(err)) => Err(format!("step '{}' failed: {err}", step.label)),
+            Err(_) => Ok(StepOutcome {
+                frame: None,
+                elapsed: start.elapsed(),
+                completed: false,
+            }),
+        },
     }
-
-    match query_result {
-        Ok(()) | Err(ClientError::Cancelled) => {}
-        Err(err) => return Err(format!("step '{}' failed: {err}", step.label)),
-    }
-
-    let completed = !cancelled_by_dwell
-        && frames
-            .last()
-            .is_some_and(|(_, f)| f.status == FrameStatus::Complete);
-
-    Ok(StepOutcome { frames, completed })
 }
 
 /// Run one [`Workload`] against a freshly opened client wrapped in [`SimulatedTransport`].
-///
-/// When `ground_truth` is `Some(points)`, the harness evaluates density NMAE (%) for every
-/// emitted frame (tracking progressive convergence from coarse to fine).
-pub async fn run_workload<P, S>(
-    strategy: &P,
-    store: S,
+pub async fn run_workload(
+    strategy: &dyn ProgressiveStrategy,
+    store: Arc<dyn ByteRangeStore>,
     workload: &Workload,
     config: &HarnessConfig,
     ground_truth: Option<&[Point]>,
-) -> Result<WorkloadReport, String>
-where
-    P: ProgressiveStrategy,
-    S: ByteRangeStore + 'static,
-{
+) -> Result<WorkloadReport, String> {
     let transport = Arc::new(SimulatedTransport::new(store, config.network));
     let before_open = transport.metrics();
     let mut client = strategy
-        .open_client(Arc::clone(&transport), config.client)
+        .open_client(transport.clone(), config.client)
         .await
         .map_err(|e| format!("open_client failed: {e}"))?;
     let after_open = transport.metrics();
@@ -141,47 +109,39 @@ where
 
     for (idx, step) in workload.steps.iter().enumerate() {
         let before_step = transport.metrics();
-        let outcome = run_step(&mut client, step).await?;
+        let outcome = run_step(client.as_mut(), step).await?;
         let after_step = transport.metrics();
         let step_transport = after_step.delta_since(&before_step);
 
         let mem = client.memory_bytes();
         peak_client_memory_bytes = peak_client_memory_bytes.max(mem);
 
-        let ttff = outcome.frames.first().map(|(t, _)| *t);
-        let ttc = outcome
-            .frames
-            .iter()
-            .find(|(_, f)| f.status == FrameStatus::Complete)
-            .map(|(t, _)| *t);
-        let final_kernel_count = outcome
-            .frames
-            .last()
-            .map(|(_, f)| f.kernel_count())
+        let latency = outcome.completed.then_some(outcome.elapsed);
+        let kernel_count = outcome
+            .frame
+            .as_ref()
+            .map(Frame::kernel_count)
             .unwrap_or(0);
 
-        let nmae_progression = if let Some(points) = ground_truth {
-            compute_nmae_progression(
+        let nmae_percent = match (ground_truth, outcome.frame.as_ref()) {
+            (Some(points), Some(frame)) => compute_nmae(
                 points,
                 step,
-                &outcome.frames,
+                frame,
                 config.nmae_pixel_samples,
                 0xA11CE_u64.wrapping_add(idx as u64),
-            )?
-        } else {
-            Vec::new()
+            )?,
+            _ => None,
         };
 
         step_reports.push(StepReport {
             label: step.label.clone(),
-            frames_emitted: outcome.frames.len(),
             completed: outcome.completed,
-            ttff,
-            ttc,
-            final_kernel_count,
+            latency,
+            kernel_count,
             client_memory_bytes: mem,
             transport: step_transport,
-            nmae_progression,
+            nmae_percent,
         });
     }
 
@@ -201,24 +161,20 @@ where
 ///
 /// For deterministic virtual-time timing, run inside a Tokio runtime with
 /// `#[tokio::test(start_paused = true)]` or call `tokio::time::pause()` beforehand.
-pub async fn run_benchmark<P, S>(
-    strategy: &P,
+pub async fn run_benchmark(
+    strategy: &dyn ProgressiveStrategy,
     stream: DatasetStream,
-    mut store: S,
+    store: &mut dyn BenchmarkStore,
     workloads: &[Workload],
     config: &HarnessConfig,
     ground_truth: Option<&[Point]>,
-) -> Result<BenchmarkReport, String>
-where
-    P: ProgressiveStrategy,
-    S: ByteRangeStore + ObjectWriter + Clone + 'static,
-{
+) -> Result<BenchmarkReport, String> {
     let build_start = std::time::Instant::now();
     let mut builder = strategy.create_builder();
-    let total_points =
-        stream_into_builder(stream, &mut builder).map_err(|e| format!("build push failed: {e}"))?;
+    let total_points = stream_into_builder(stream, builder.as_mut())
+        .map_err(|e| format!("build push failed: {e}"))?;
     builder
-        .finish(&mut store)
+        .finish(store)
         .map_err(|e| format!("build finish failed: {e}"))?;
     let build_duration = build_start.elapsed();
 
@@ -228,11 +184,11 @@ where
         .map_err(|e| format!("list_objects failed: {e}"))?;
     let storage_bytes = objects.iter().map(|o| o.len).sum();
     let object_count = objects.len();
+    let reader = store.reader();
 
     let mut workload_reports = Vec::with_capacity(workloads.len());
     for workload in workloads {
-        let report =
-            run_workload(strategy, store.clone(), workload, config, ground_truth).await?;
+        let report = run_workload(strategy, reader.clone(), workload, config, ground_truth).await?;
         workload_reports.push(report);
     }
 
@@ -248,32 +204,27 @@ where
     })
 }
 
-fn compute_nmae_progression(
+fn compute_nmae(
     points: &[Point],
     step: &WorkloadStep,
-    frames: &[(Duration, Frame)],
+    frame: &Frame,
     sample_count: usize,
     seed: u64,
-) -> Result<Vec<f64>, String> {
-    if frames.is_empty() || sample_count == 0 {
-        return Ok(Vec::new());
+) -> Result<Option<f64>, String> {
+    if sample_count == 0 {
+        return Ok(None);
     }
     let Some(y_range) = exact_visible_y_range(points, step.query.min_x, step.query.max_x) else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     let samples = sample_reference_pixels(points, &step.query, y_range, sample_count, seed);
     if samples.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let visible_count = points
         .iter()
         .filter(|p| p.x >= step.query.min_x && p.x <= step.query.max_x)
         .count();
-
-    let mut progression = Vec::with_capacity(frames.len());
-    for (_, frame) in frames {
-        let q = evaluate_density_nmae(visible_count, frame, &step.query, y_range, &samples)?;
-        progression.push(q.normalized_mean_absolute_error_percent);
-    }
-    Ok(progression)
+    let q = evaluate_density_nmae(visible_count, frame, &step.query, y_range, &samples)?;
+    Ok(Some(q.normalized_mean_absolute_error_percent))
 }

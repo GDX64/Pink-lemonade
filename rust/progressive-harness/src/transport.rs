@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
-use pink_lemonade_progressive_core::{ByteRangeStore, ObjectMeta, StoreError};
+use pink_lemonade_progressive_core::{ByteRangeStore, ObjectMeta, StoreError, async_trait};
 
 /// Network characteristics simulated by [`SimulatedTransport`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,8 +145,6 @@ impl MetricsCounters {
     }
 }
 
-/// Drop guard that records cancelled requests and estimates wasted bytes when a client
-/// drops an in-flight `read_range` / `object_len` / `list_objects` future.
 struct InFlightGuard {
     counters: Arc<MetricsCounters>,
     started_at: Instant,
@@ -208,15 +206,15 @@ impl Drop for InFlightGuard {
 
 /// Wraps any [`ByteRangeStore`] to simulate network latency, bandwidth, concurrency limits,
 /// and exact traffic accounting.
-pub struct SimulatedTransport<S> {
-    inner: S,
+pub struct SimulatedTransport {
+    inner: Arc<dyn ByteRangeStore>,
     profile: NetworkProfile,
     semaphore: Option<Arc<Semaphore>>,
     counters: Arc<MetricsCounters>,
 }
 
-impl<S> SimulatedTransport<S> {
-    pub fn new(inner: S, profile: NetworkProfile) -> Self {
+impl SimulatedTransport {
+    pub fn new(inner: Arc<dyn ByteRangeStore>, profile: NetworkProfile) -> Self {
         let semaphore = profile
             .max_concurrency
             .map(|limit| Arc::new(Semaphore::new(limit.max(1))));
@@ -230,10 +228,6 @@ impl<S> SimulatedTransport<S> {
 
     pub fn profile(&self) -> NetworkProfile {
         self.profile
-    }
-
-    pub fn inner(&self) -> &S {
-        &self.inner
     }
 
     pub fn metrics(&self) -> TransportMetrics {
@@ -253,7 +247,8 @@ impl<S> SimulatedTransport<S> {
     }
 }
 
-impl<S: ByteRangeStore> ByteRangeStore for SimulatedTransport<S> {
+#[async_trait]
+impl ByteRangeStore for SimulatedTransport {
     async fn read_range(&self, key: &str, offset: u64, len: usize) -> Result<Vec<u8>, StoreError> {
         let _permit = self.acquire_slot().await;
         let mut guard = InFlightGuard::new(Arc::clone(&self.counters), self.profile.rtt);

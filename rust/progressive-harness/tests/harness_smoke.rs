@@ -1,21 +1,19 @@
 //! Smoke tests exercising `pink-lemonade-progressive-core` and `pink-lemonade-progressive-harness`
-//! using a tiny in-test stub strategy (no concrete strategy implementation lives in the crates yet).
+//! using a tiny in-test stub strategy.
 
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
 use pink_lemonade_progressive_core::{
-    BuildError, ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, Frame, FrameSink,
-    FrameStatus, ObjectWriter, Point, ProgressiveClient, ProgressiveStrategy, StoreError,
-    ViewQuery,
+    BuildError, ByteRangeStore, ClientConfig, ClientError, DatasetBuilder, Frame, ObjectWriter,
+    Point, ProgressiveClient, ProgressiveStrategy, StoreError, ViewQuery, async_trait,
 };
 use pink_lemonade_progressive_harness::{
-    ConformanceConfig, DatasetShape, DatasetStream, DiskStore, HarnessConfig, MemoryStore,
-    NetworkProfile, SimulatedTransport, Workload, run_benchmark, run_conformance_suite,
+    BenchmarkStore, ConformanceConfig, DatasetShape, DatasetStream, DiskStore, HarnessConfig,
+    MemoryStore, NetworkProfile, SimulatedTransport, Workload, run_benchmark,
+    run_conformance_suite,
 };
 
-const SUMMARY_KEY: &str = "summary.bin";
 const POINTS_KEY: &str = "points.bin";
 const POINT_BYTES: usize = 24;
 
@@ -32,32 +30,7 @@ impl DatasetBuilder for StubBuilder {
         Ok(())
     }
 
-    fn finish<W: ObjectWriter>(self, writer: &mut W) -> Result<(), BuildError> {
-        let mut summary = Vec::with_capacity(40);
-        let count = self.points.len() as u64;
-        let (min_x, max_x, min_y, max_y) = if self.points.is_empty() {
-            (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64)
-        } else {
-            let mut min_y = f64::INFINITY;
-            let mut max_y = f64::NEG_INFINITY;
-            for p in &self.points {
-                min_y = min_y.min(p.y);
-                max_y = max_y.max(p.y);
-            }
-            (
-                self.points.first().unwrap().x,
-                self.points.last().unwrap().x,
-                min_y,
-                max_y,
-            )
-        };
-        summary.extend_from_slice(&count.to_le_bytes());
-        summary.extend_from_slice(&min_x.to_le_bytes());
-        summary.extend_from_slice(&max_x.to_le_bytes());
-        summary.extend_from_slice(&min_y.to_le_bytes());
-        summary.extend_from_slice(&max_y.to_le_bytes());
-        writer.write_object(SUMMARY_KEY, &summary)?;
-
+    fn finish(self: Box<Self>, writer: &mut dyn ObjectWriter) -> Result<(), BuildError> {
         let mut sink = writer.create_object(POINTS_KEY)?;
         for p in &self.points {
             sink.write_all(&p.x.to_le_bytes()).map_err(StoreError::from)?;
@@ -70,44 +43,27 @@ impl DatasetBuilder for StubBuilder {
     }
 }
 
-struct StubClient<S> {
-    store: Arc<S>,
-    count: u64,
-    global_y: [f64; 2],
+struct StubClient {
+    store: Arc<dyn ByteRangeStore>,
+    total_bytes: u64,
     memory_budget_bytes: usize,
     cached_points: Option<Vec<Point>>,
 }
 
-impl<S: ByteRangeStore + 'static> ProgressiveClient for StubClient<S> {
-    async fn query<'a>(
-        &'a mut self,
-        query: &'a ViewQuery,
-        frames: FrameSink,
-    ) -> Result<(), ClientError> {
-        if self.count == 0 {
-            frames.send(Frame::empty_complete()).await?;
-            return Ok(());
+#[async_trait]
+impl ProgressiveClient for StubClient {
+    async fn query(&mut self, query: ViewQuery) -> Result<Frame, ClientError> {
+        if self.total_bytes == 0 {
+            return Ok(Frame::empty());
         }
 
-        // Stage 1: emit an immediate coarse frame before hitting the network for points.
-        let coarse_amp = (1.0 / (2.0 * std::f64::consts::PI)) as f32;
-        let mid_x = (0.5 * (query.min_x + query.max_x)) as f32;
-        let mid_y = (0.5 * (self.global_y[0] + self.global_y[1])) as f32;
-        frames
-            .send(Frame {
-                gpu_instances: vec![mid_x, mid_y, coarse_amp, 1.0, 0.0, 0.0, 1.0],
-                line_points: Vec::new(),
-                y_range: Some(self.global_y),
-                status: FrameStatus::Refining,
-            })
-            .await?;
-
-        // Stage 2: fetch `points.bin` (caching only if it fits inside `memory_budget_bytes`).
         let points: Vec<Point> = if let Some(cached) = &self.cached_points {
             cached.clone()
         } else {
-            let total_bytes = (self.count as usize) * POINT_BYTES;
-            let raw = self.store.read_range(POINTS_KEY, 0, total_bytes).await?;
+            let raw = self
+                .store
+                .read_range(POINTS_KEY, 0, self.total_bytes as usize)
+                .await?;
             let decoded: Vec<Point> = raw
                 .as_chunks::<POINT_BYTES>()
                 .0
@@ -120,8 +76,7 @@ impl<S: ByteRangeStore + 'static> ProgressiveClient for StubClient<S> {
                     )
                 })
                 .collect();
-            let est_bytes = decoded.len() * std::mem::size_of::<Point>();
-            if est_bytes <= self.memory_budget_bytes {
+            if decoded.len() * std::mem::size_of::<Point>() <= self.memory_budget_bytes {
                 self.cached_points = Some(decoded.clone());
             }
             decoded
@@ -157,16 +112,11 @@ impl<S: ByteRangeStore + 'static> ProgressiveClient for StubClient<S> {
             None
         };
 
-        frames
-            .send(Frame {
-                gpu_instances,
-                line_points,
-                y_range,
-                status: FrameStatus::Complete,
-            })
-            .await?;
-
-        Ok(())
+        Ok(Frame {
+            gpu_instances,
+            line_points,
+            y_range,
+        })
     }
 
     fn memory_bytes(&self) -> usize {
@@ -177,37 +127,28 @@ impl<S: ByteRangeStore + 'static> ProgressiveClient for StubClient<S> {
     }
 }
 
+#[async_trait]
 impl ProgressiveStrategy for StubStrategy {
-    type Builder = StubBuilder;
-    type Client<S: ByteRangeStore + 'static> = StubClient<S>;
-
     fn name(&self) -> &str {
         "in_test_stub"
     }
 
-    fn create_builder(&self) -> Self::Builder {
-        StubBuilder::default()
+    fn create_builder(&self) -> Box<dyn DatasetBuilder> {
+        Box::new(StubBuilder::default())
     }
 
-    async fn open_client<S: ByteRangeStore + 'static>(
+    async fn open_client(
         &self,
-        store: Arc<S>,
+        store: Arc<dyn ByteRangeStore>,
         config: ClientConfig,
-    ) -> Result<Self::Client<S>, ClientError> {
-        let header = store.read_range(SUMMARY_KEY, 0, 40).await?;
-        if header.len() < 40 {
-            return Err(ClientError::CorruptData("summary.bin truncated".to_owned()));
-        }
-        let count = u64::from_le_bytes(header[0..8].try_into().unwrap());
-        let min_y = f64::from_le_bytes(header[24..32].try_into().unwrap());
-        let max_y = f64::from_le_bytes(header[32..40].try_into().unwrap());
-        Ok(StubClient {
+    ) -> Result<Box<dyn ProgressiveClient>, ClientError> {
+        let total_bytes = store.object_len(POINTS_KEY).await?;
+        Ok(Box::new(StubClient {
             store,
-            count,
-            global_y: [min_y, max_y],
+            total_bytes,
             memory_budget_bytes: config.memory_budget_bytes,
             cached_points: None,
-        })
+        }))
     }
 }
 
@@ -245,11 +186,12 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
         config.sigma_px,
         config.merge_threshold,
     );
+    let mut store = MemoryStore::new();
 
     let report = run_benchmark(
         &StubStrategy,
         stream,
-        MemoryStore::new(),
+        &mut store,
         &workloads,
         &config,
         Some(&ground_truth),
@@ -258,17 +200,13 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
     .expect("benchmark run failed");
 
     assert_eq!(report.total_points, point_count);
-    assert_eq!(report.object_count, 2);
+    assert_eq!(report.object_count, 1);
     assert_eq!(report.workloads.len(), 5);
 
     let overview = &report.workloads[0];
-    assert_eq!(overview.steps[0].frames_emitted, 2);
     assert!(overview.steps[0].completed);
-    let ttff = overview.steps[0].ttff.unwrap();
-    let ttc = overview.steps[0].ttc.unwrap();
-    assert!(ttff < ttc, "expected TTFF ({ttff:?}) < TTC ({ttc:?})");
-    assert_eq!(overview.steps[0].nmae_progression.len(), 2);
-    assert!(overview.steps[0].nmae_progression[1] < 0.05);
+    assert!(overview.steps[0].latency.unwrap() > Duration::ZERO);
+    assert!(overview.steps[0].nmae_percent.unwrap() < 0.05);
 
     let interrupt = &report.workloads[4];
     assert!(
@@ -294,7 +232,7 @@ async fn simulated_transport_enforces_concurrency_and_tracks_cancellation_bytes(
         bandwidth_bytes_per_sec: Some(100_000.0),
         max_concurrency: Some(2),
     };
-    let transport = Arc::new(SimulatedTransport::new(store, profile));
+    let transport = Arc::new(SimulatedTransport::new(store.reader(), profile));
 
     let read_fut = transport.read_range("blob.bin", 0, 100_000);
     tokio::select! {

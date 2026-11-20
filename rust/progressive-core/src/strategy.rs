@@ -1,37 +1,11 @@
-//! Strategy traits: streaming offline builder, progressive async client, and frame sink.
+//! Object-safe strategy traits: streaming offline builder and async viewport client.
 
-use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+
+use async_trait::async_trait;
 
 use crate::store::{ByteRangeStore, ObjectWriter};
 use crate::types::{BuildError, ClientConfig, ClientError, Frame, Point, ViewQuery};
-
-/// Channel through which a [`ProgressiveClient`] emits progressive frames (coarse -> fine).
-///
-/// When the receiver is dropped (e.g. the user panned/zoomed and cancelled the query),
-/// [`FrameSink::send`] returns `Err(ClientError::Cancelled)`.
-#[derive(Debug, Clone)]
-pub struct FrameSink {
-    tx: mpsc::Sender<Frame>,
-}
-
-impl FrameSink {
-    pub fn channel(buffer: usize) -> (Self, mpsc::Receiver<Frame>) {
-        let (tx, rx) = mpsc::channel(buffer.max(1));
-        (Self { tx }, rx)
-    }
-
-    /// Emit the next progressive frame to the caller.
-    pub async fn send(&self, frame: Frame) -> Result<(), ClientError> {
-        self.tx.send(frame).await.map_err(|_| ClientError::Cancelled)
-    }
-
-    /// Returns `true` if the caller has dropped the frame receiver (cancelling the query).
-    pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
-    }
-}
 
 /// Offline streaming encoder that transforms an x-sorted dataset into static byte-range objects.
 ///
@@ -42,50 +16,39 @@ pub trait DatasetBuilder {
     fn push_chunk(&mut self, points: &[Point]) -> Result<(), BuildError>;
 
     /// Finalize any pending structures and write all static objects into `writer`.
-    fn finish<W: ObjectWriter>(self, writer: &mut W) -> Result<(), BuildError>;
+    fn finish(self: Box<Self>, writer: &mut dyn ObjectWriter) -> Result<(), BuildError>;
 }
 
 /// Online interactive client that fetches only the byte ranges needed for the current
-/// viewport and screen resolution, streaming coarse-to-fine frames as data arrives.
+/// viewport and screen resolution.
+#[async_trait]
 pub trait ProgressiveClient: Send {
-    /// Execute a progressive viewport query, streaming frames into `frames`.
+    /// Fetch any missing byte ranges needed for `query` and return the rendered [`Frame`].
     ///
-    /// Guidelines for implementations:
-    /// - Emit an immediate coarse frame (if cached/available) with `FrameStatus::Refining`.
-    /// - Fetch missing byte ranges progressively (concurrently where helpful) and emit
-    ///   refined frames as data arrives.
-    /// - Emit a final frame with `FrameStatus::Complete` once the viewport has converged
-    ///   to the requested screen resolution and `merge_threshold`.
-    /// - Be cancellation-safe: the caller may drop the future mid-flight when the user
-    ///   pans or zooms again, and the client must remain valid for subsequent queries.
-    fn query<'a>(
-        &'a mut self,
-        query: &'a ViewQuery,
-        frames: FrameSink,
-    ) -> impl Future<Output = Result<(), ClientError>> + Send + 'a;
+    /// Implementations should be cancellation-safe: the caller may drop the future mid-flight
+    /// when the user pans or zooms again, and the client must remain valid for later queries.
+    async fn query(&mut self, query: ViewQuery) -> Result<Frame, ClientError>;
 
     /// Approximate heap bytes currently retained by the client (caches, index metadata, buffers).
     fn memory_bytes(&self) -> usize;
 }
 
 /// Pairs an offline [`DatasetBuilder`] and an online [`ProgressiveClient`] under one strategy name
-/// so any strategy can be plugged into the conformance suite and benchmark harness.
+/// so any strategy can be plugged into the conformance suite and benchmark harness via `dyn`.
+#[async_trait]
 pub trait ProgressiveStrategy: Send + Sync {
-    type Builder: DatasetBuilder;
-    type Client<S: ByteRangeStore + 'static>: ProgressiveClient;
-
     /// Human-readable strategy identifier used in test output and benchmark reports.
     fn name(&self) -> &str;
 
     /// Construct a fresh streaming builder for a new dataset.
-    fn create_builder(&self) -> Self::Builder;
+    fn create_builder(&self) -> Box<dyn DatasetBuilder>;
 
     /// Open a client against a static byte-range store with the given memory budget.
     ///
     /// Async so strategies may optionally fetch a small manifest/header on startup.
-    fn open_client<S: ByteRangeStore + 'static>(
+    async fn open_client(
         &self,
-        store: Arc<S>,
+        store: Arc<dyn ByteRangeStore>,
         config: ClientConfig,
-    ) -> impl Future<Output = Result<Self::Client<S>, ClientError>> + Send;
+    ) -> Result<Box<dyn ProgressiveClient>, ClientError>;
 }

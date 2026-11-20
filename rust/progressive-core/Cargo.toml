@@ -5,4 +5,4 @@ edition = "2024"
 description = "Core traits and data types for progressive, screen-resolution-driven visualization over static byte-range storage."
 
 [dependencies]
-tokio = { version = "1", default-features = false, features = ["sync"] }
+async-trait = "0.1"

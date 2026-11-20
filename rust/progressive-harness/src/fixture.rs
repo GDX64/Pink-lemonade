@@ -129,9 +129,9 @@ impl Iterator for DatasetStream {
 }
 
 /// Stream a [`DatasetStream`] into any [`DatasetBuilder`] in bounded chunks.
-pub fn stream_into_builder<B: DatasetBuilder>(
+pub fn stream_into_builder(
     stream: DatasetStream,
-    builder: &mut B,
+    builder: &mut dyn DatasetBuilder,
 ) -> Result<u64, BuildError> {
     let mut count = 0u64;
     for chunk in stream {

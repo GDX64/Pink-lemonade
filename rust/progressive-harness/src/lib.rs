@@ -25,6 +25,6 @@ pub use fixture::{DatasetShape, DatasetStream, SplitMix64, stream_into_builder};
 pub use memory::{MemoryStats, TrackingAllocator};
 pub use report::{BenchmarkReport, StepReport, WorkloadReport};
 pub use runner::{HarnessConfig, StepOutcome, run_benchmark, run_step, run_workload};
-pub use store::{DiskStore, MemoryObjectSink, MemoryStore};
+pub use store::{BenchmarkStore, DiskStore, MemoryObjectSink, MemoryStore};
 pub use transport::{NetworkProfile, SimulatedTransport, TransportMetrics};
 pub use workload::{Workload, WorkloadStep};

@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "async-trait"
+version = "0.1.92"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -30,7 +41,7 @@ checksum = "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752"
 name = "pink-lemonade-progressive-core"
 version = "0.1.0"
 dependencies = [
- "tokio",
+ "async-trait",
 ]
 
 [[package]]
@@ -38,6 +49,15 @@ name = "pink-lemonade-progressive-harness"
 version = "0.1.0"
 dependencies = [
  "pink-lemonade-progressive-core",
+ "tokio",
+]
+
+[[package]]
+name = "pink-lemonade-progressive-naive"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
  "tokio",
 ]
 

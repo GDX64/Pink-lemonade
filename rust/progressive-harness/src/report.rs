@@ -9,18 +9,14 @@ use crate::transport::{NetworkProfile, TransportMetrics};
 #[derive(Debug, Clone)]
 pub struct StepReport {
     pub label: String,
-    pub frames_emitted: usize,
     pub completed: bool,
-    /// Simulated time until the first emitted frame (coarse or complete).
-    pub ttff: Option<Duration>,
-    /// Simulated time until a `FrameStatus::Complete` frame arrived.
-    pub ttc: Option<Duration>,
-    pub final_kernel_count: usize,
+    /// Simulated time until `query()` resolved (if it finished before any `max_dwell` timeout).
+    pub latency: Option<Duration>,
+    pub kernel_count: usize,
     pub client_memory_bytes: usize,
     pub transport: TransportMetrics,
-    /// Optional density NMAE (%) for each emitted frame (coarse -> fine) when evaluated
-    /// against ground-truth points.
-    pub nmae_progression: Vec<f64>,
+    /// Optional density NMAE (%) when evaluated against ground-truth points.
+    pub nmae_percent: Option<f64>,
 }
 
 /// Aggregated report for one [`crate::Workload`] executed against a client.
@@ -35,12 +31,8 @@ pub struct WorkloadReport {
 }
 
 impl WorkloadReport {
-    pub fn mean_ttff(&self) -> Option<Duration> {
-        mean_duration(self.steps.iter().filter_map(|s| s.ttff))
-    }
-
-    pub fn mean_ttc(&self) -> Option<Duration> {
-        mean_duration(self.steps.iter().filter_map(|s| s.ttc))
+    pub fn mean_latency(&self) -> Option<Duration> {
+        mean_duration(self.steps.iter().filter_map(|s| s.latency))
     }
 }
 
@@ -114,15 +106,14 @@ impl fmt::Display for BenchmarkReport {
         for w in &self.workloads {
             writeln!(
                 f,
-                "  workload {:<20} | wire={} (completed={}, wasted={}) | reqs={} (cancelled={}) | mean TTFF={} | mean TTC={} | peak_mem={}",
+                "  workload {:<20} | wire={} (completed={}, wasted={}) | reqs={} (cancelled={}) | mean_latency={} | peak_mem={}",
                 w.name,
                 format_bytes(w.total_transport.total_wire_bytes()),
                 format_bytes(w.total_transport.bytes_downloaded),
                 format_bytes(w.total_transport.wasted_cancelled_bytes),
                 w.total_transport.completed_requests,
                 w.total_transport.cancelled_requests,
-                format_opt_ms(w.mean_ttff()),
-                format_opt_ms(w.mean_ttc()),
+                format_opt_ms(w.mean_latency()),
                 format_bytes(w.peak_client_memory_bytes as u64),
             )?;
         }
