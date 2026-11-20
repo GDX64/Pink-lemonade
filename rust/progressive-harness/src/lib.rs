@@ -25,7 +25,7 @@ pub use benchmarks::{BenchmarkScenario, ScenarioSpec, StoreBacking};
 pub use conformance::{ConformanceConfig, run_conformance_suite};
 pub use fixture::{DatasetShape, DatasetStream, SplitMix64, stream_into_builder};
 pub use memory::{MemoryStats, TrackingAllocator};
-pub use report::{BenchmarkReport, StepReport, WorkloadReport};
+pub use report::{BenchmarkReport, StepReport, WorkloadReport, reports_to_json, write_reports_json};
 pub use runner::{HarnessConfig, StepOutcome, run_benchmark, run_step, run_workload};
 pub use store::{BenchmarkStore, DiskStore, MemoryObjectSink, MemoryStore};
 pub use transport::{NetworkProfile, SimulatedTransport, TransportMetrics};

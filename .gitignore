@@ -7,3 +7,6 @@ dist-ts
 data.json
 target
 pkg
+.venv/
+.ipynb_checkpoints/
+results

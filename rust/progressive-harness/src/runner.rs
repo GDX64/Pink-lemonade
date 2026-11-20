@@ -136,6 +136,8 @@ pub async fn run_workload(
 
         step_reports.push(StepReport {
             label: step.label.clone(),
+            view_min_x: step.query.min_x,
+            view_max_x: step.query.max_x,
             completed: outcome.completed,
             latency,
             kernel_count,

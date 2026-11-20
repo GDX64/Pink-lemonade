@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -x "$DIR/.venv/Scripts/python.exe" ]; then
+    exec "$DIR/.venv/Scripts/python.exe" "$DIR/dev.py" "$@"
+elif [ -x "$DIR/.venv/bin/python" ]; then
+    exec "$DIR/.venv/bin/python" "$DIR/dev.py" "$@"
+elif command -v py >/dev/null 2>&1; then
+    exec py "$DIR/dev.py" "$@"
+else
+    exec python3 "$DIR/dev.py" "$@"
+fi
