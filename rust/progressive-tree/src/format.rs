@@ -2,20 +2,20 @@
 //!
 //! Layout emitted into `ObjectWriter`:
 //! - `manifest.bin`: header + per-level node counts + inlined top (root) level nodes.
-//! - `level_0.bin`, `level_1.bin`, ...: fixed-width 128-byte [`Node`] arrays for every
+//! - `level_0.bin`, `level_1.bin`, ...: fixed-width 64-byte [`PackedNode`] arrays for every
 //!   level below the inlined root level.
 //! - `points.bin`: flat packed 24-byte `(x, y, weight)` records, grouped into leaves of
 //!   `leaf_points` points.
 
 use pink_lemonade_progressive_core::ClientError;
 
-use crate::node::{NODE_BYTES, Node, decode_nodes};
+use crate::node::{NODE_BYTES, Node, PackedNode, decode_packed_nodes};
 
 pub const MANIFEST_KEY: &str = "manifest.bin";
 pub const POINTS_KEY: &str = "points.bin";
 
-const MAGIC: &[u8; 8] = b"PLPTREE1";
-const VERSION: u32 = 1;
+const MAGIC: &[u8; 8] = b"PLPTREE2";
+const VERSION: u32 = 2;
 
 pub fn level_key(level: usize) -> String {
     format!("level_{level}.bin")
@@ -67,7 +67,7 @@ impl Manifest {
         for &count in &self.level_counts {
             out.extend_from_slice(&count.to_le_bytes());
         }
-        for node in &self.root_nodes {
+        for &node in &self.root_nodes {
             out.extend_from_slice(&node.to_bytes());
         }
         out
@@ -109,8 +109,11 @@ impl Manifest {
             level_counts.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
         }
 
-        let root_nodes =
-            decode_nodes(&bytes[counts_end..]).map_err(ClientError::CorruptData)?;
+        let root_nodes: Vec<Node> = decode_packed_nodes(&bytes[counts_end..])
+            .map_err(ClientError::CorruptData)?
+            .into_iter()
+            .map(PackedNode::unpack)
+            .collect();
         let expected_root = level_counts.last().copied().unwrap_or(0) as usize;
         if root_nodes.len() != expected_root {
             return Err(ClientError::CorruptData(format!(

@@ -17,6 +17,7 @@ Guide for coding agents working in `pink-lemonade`.
   - `rust/progressive-naive/` (`pink-lemonade-progressive-naive`) — Simplest full-download baseline strategy.
   - `rust/progressive-tree/` (`pink-lemonade-progressive-tree`) — Paged multi-level moment tree strategy (`PagedTreeStrategy`) and the benchmark exporter (`examples/export_reports.rs`).
 - `benchmarks/` — Exported reports (`benchmarks/results/latest.json`) and Jupyter notebook (`benchmarks/analysis.ipynb`).
+- `journal/` — Chronological experiment notes and benchmark ablations.
 - `requirements.txt` & `.venv/` — Root Python dependencies and virtual environment (`.venv/` gitignored).
 - `dev.py` (+ `dev.ps1`, `dev.cmd`, `dev`) — Cross-shell developer CLI (`./dev ...`).
 

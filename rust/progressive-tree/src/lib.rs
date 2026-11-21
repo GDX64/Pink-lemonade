@@ -25,9 +25,9 @@ use pink_lemonade_progressive_core::{
 pub use builder::PagedTreeBuilder;
 pub use client::PagedTreeClient;
 
-/// Default raw points per leaf block (64 points = 1.5 KiB per leaf).
-pub const DEFAULT_LEAF_POINTS: u32 = 64;
-/// Default branching factor per internal tree page (32 nodes = 4 KiB per page).
+/// Default raw points per leaf block (32 points = 768 B per leaf).
+pub const DEFAULT_LEAF_POINTS: u32 = 32;
+/// Default branching factor per internal tree page (32 nodes = 2 KiB per page).
 pub const DEFAULT_FANOUT: u32 = 32;
 
 /// Resolution-driven paged moment tree strategy.

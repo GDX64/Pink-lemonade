@@ -1,15 +1,15 @@
 //! Progressive, memory-bounded client for the paged multi-level moment tree.
 //!
 //! Each query executes in two resolution-aware phases:
-//! 1. **Exact `visible_y_range`**: walks only the left/right boundary paths from the
-//!    inlined root level down to leaf blocks (interior nodes contribute `min_y`/`max_y`
-//!    without descending).
+//! 1. **Pruned exact `visible_y_range`**: folds interior nodes' `[min_y, max_y]` first and
+//!    descends straddling boundary nodes *only* when their vertical bounds extend beyond the
+//!    already-known interior range.
 //! 2. **Level-by-level frontier traversal**: descends only into nodes overlapping
 //!    `[min_x, max_x]` that fail `fits_threshold` (or straddle viewport boundaries),
-//!    coalescing missing pages into concurrent byte-range requests and caching them in
-//!    a strictly bounded LRU cache.
+//!    coalescing missing pages across small gaps into concurrent byte-range requests and
+//!    caching compact 64-byte pages in a strictly bounded LRU cache.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use pink_lemonade_progressive_core::{
@@ -20,13 +20,17 @@ use pink_lemonade_progressive_core::{
 use crate::cache::LruPageCache;
 use crate::fetch::{coalesce_runs, try_join_all};
 use crate::format::{MANIFEST_KEY, Manifest, POINTS_KEY, level_key};
-use crate::node::{NODE_BYTES, Node, POINT_BYTES, decode_nodes, decode_points};
+use crate::node::{NODE_BYTES, Node, POINT_BYTES, PackedNode, decode_packed_nodes, decode_points};
 
-/// Cap coalesced tree-page reads at 16 pages (~64 KiB at fanout=32) so large spans
-/// parallelize cleanly across concurrent HTTP streams and cancel promptly.
-const MAX_COALESCE_TREE_PAGES: usize = 16;
-/// Cap coalesced raw-leaf reads at 32 leaves (~48 KiB at leaf_points=64).
-const MAX_COALESCE_LEAVES: usize = 32;
+/// At fanout=32 and 64 B/node, 1 tree page = 2 KiB.
+/// Bridge small gaps up to 8 pages (16 KiB) to avoid extra RTTs; cap runs at 128 pages (256 KiB).
+const MAX_GAP_TREE_PAGES: u64 = 8;
+const MAX_COALESCE_TREE_PAGES: usize = 128;
+
+/// At leaf_points=32 and 24 B/point, 1 leaf = 768 B.
+/// Bridge small gaps up to 8 leaves (6 KiB) to collapse scattered raw-leaf splits without over-fetching.
+const MAX_GAP_LEAVES: u64 = 8;
+const MAX_COALESCE_LEAVES: usize = 256;
 
 pub struct PagedTreeClient {
     store: Arc<dyn ByteRangeStore>,
@@ -55,13 +59,12 @@ impl PagedTreeClient {
         })
     }
 
-    /// Fetch missing pages at `level` via coalesced concurrent range reads, returning
-    /// all requested pages (from cache or fresh fetch).
+    /// Fetch missing pages at `level` via gap-bridging coalesced concurrent range reads.
     async fn fetch_tree_pages(
         &mut self,
         level: usize,
         page_indices: &[u64],
-    ) -> Result<HashMap<u64, Arc<[Node]>>, ClientError> {
+    ) -> Result<HashMap<u64, Arc<[PackedNode]>>, ClientError> {
         let mut resolved = HashMap::with_capacity(page_indices.len());
         let mut missing = Vec::new();
 
@@ -80,7 +83,7 @@ impl PagedTreeClient {
             return Ok(resolved);
         }
 
-        let runs = coalesce_runs(missing, MAX_COALESCE_TREE_PAGES);
+        let runs = coalesce_runs(missing, MAX_GAP_TREE_PAGES, MAX_COALESCE_TREE_PAGES);
         let fanout = self.manifest.fanout as u64;
         let total_nodes = self.manifest.level_counts[level];
         let key = level_key(level);
@@ -105,7 +108,7 @@ impl PagedTreeClient {
         let fanout_usize = self.manifest.fanout as usize;
 
         for (start_page, page_count, bytes) in fetched {
-            let nodes = decode_nodes(&bytes).map_err(ClientError::CorruptData)?;
+            let nodes = decode_packed_nodes(&bytes).map_err(ClientError::CorruptData)?;
             for i in 0..page_count {
                 let page = start_page + i as u64;
                 let lo = i * fanout_usize;
@@ -113,7 +116,7 @@ impl PagedTreeClient {
                 if lo >= hi {
                     break;
                 }
-                let slice: Arc<[Node]> = Arc::from(&nodes[lo..hi]);
+                let slice: Arc<[PackedNode]> = Arc::from(&nodes[lo..hi]);
                 self.cache.insert_tree_page(level, page, Arc::clone(&slice));
                 resolved.insert(page, slice);
             }
@@ -122,7 +125,7 @@ impl PagedTreeClient {
         Ok(resolved)
     }
 
-    /// Fetch missing leaf point blocks from `points.bin` via coalesced concurrent range reads.
+    /// Fetch missing leaf point blocks from `points.bin` via gap-bridging coalesced range reads.
     async fn fetch_leaves(
         &mut self,
         leaf_indices: &[u64],
@@ -145,7 +148,8 @@ impl PagedTreeClient {
             return Ok(resolved);
         }
 
-        let runs = coalesce_runs(missing, MAX_COALESCE_LEAVES);
+        let requested: HashSet<u64> = missing.iter().copied().collect();
+        let runs = coalesce_runs(missing, MAX_GAP_LEAVES, MAX_COALESCE_LEAVES);
         let leaf_size = self.manifest.leaf_points as u64;
         let total_points = self.manifest.total_points;
 
@@ -171,6 +175,9 @@ impl PagedTreeClient {
             let points = decode_points(&bytes).map_err(ClientError::CorruptData)?;
             for i in 0..leaf_count {
                 let leaf = start_leaf + i as u64;
+                if !requested.contains(&leaf) {
+                    continue;
+                }
                 let lo = i * leaf_size_usize;
                 let hi = ((i + 1) * leaf_size_usize).min(points.len());
                 if lo >= hi {
@@ -185,9 +192,15 @@ impl PagedTreeClient {
         Ok(resolved)
     }
 
-    /// Exact visible `[min_y, max_y]` in `[min_x, max_x]`, descending only the left and
-    /// right straddling boundary paths.
-    async fn visible_y_range(&mut self, min_x: f64, max_x: f64) -> Result<Option<[f64; 2]>, ClientError> {
+    /// Exact visible `[min_y, max_y]` in `[min_x, max_x]`.
+    ///
+    /// Folds fully-contained interior nodes first and skips descending any straddling boundary
+    /// node whose `[min_y, max_y]` already sits inside the known interior range.
+    async fn visible_y_range(
+        &mut self,
+        min_x: f64,
+        max_x: f64,
+    ) -> Result<Option<[f64; 2]>, ClientError> {
         let Some(root_level) = self.manifest.root_level() else {
             return Ok(None);
         };
@@ -198,8 +211,9 @@ impl PagedTreeClient {
         let mut min_y = f64::INFINITY;
         let mut max_y = f64::NEG_INFINITY;
 
-        // Nodes at `current_level` that straddle `min_x` or `max_x` and need descending.
-        let mut straddling: Vec<u64> = Vec::new();
+        // First fold all interior root nodes so `min_y`/`max_y` are as tight as possible
+        // before deciding whether straddling boundary nodes even need descending.
+        let mut candidates: Vec<(u64, f64, f64)> = Vec::new();
         for (idx, &node) in self.manifest.root_nodes.iter().enumerate() {
             if node.max_x < min_x || node.min_x > max_x {
                 continue;
@@ -208,9 +222,15 @@ impl PagedTreeClient {
                 min_y = min_y.min(node.min_y);
                 max_y = max_y.max(node.max_y);
             } else {
-                straddling.push(idx as u64);
+                candidates.push((idx as u64, node.min_y, node.max_y));
             }
         }
+
+        let mut straddling: Vec<u64> = candidates
+            .into_iter()
+            .filter(|&(_, c_min, c_max)| c_min < min_y || c_max > max_y)
+            .map(|(idx, _, _)| idx)
+            .collect();
 
         let fanout = self.manifest.fanout as u64;
         for child_level in (0..root_level).rev() {
@@ -218,14 +238,15 @@ impl PagedTreeClient {
                 break;
             }
             let pages = self.fetch_tree_pages(child_level, &straddling).await?;
-            let mut next_straddling = Vec::new();
+            let mut next_candidates: Vec<(u64, f64, f64)> = Vec::new();
 
             for parent_idx in straddling {
                 let Some(children) = pages.get(&parent_idx) else {
                     continue;
                 };
                 let base_child = parent_idx * fanout;
-                for (offset, &node) in children.iter().enumerate() {
+                for (offset, packed) in children.iter().enumerate() {
+                    let node = packed.unpack();
                     if node.max_x < min_x || node.min_x > max_x {
                         continue;
                     }
@@ -233,11 +254,16 @@ impl PagedTreeClient {
                         min_y = min_y.min(node.min_y);
                         max_y = max_y.max(node.max_y);
                     } else {
-                        next_straddling.push(base_child + offset as u64);
+                        next_candidates.push((base_child + offset as u64, node.min_y, node.max_y));
                     }
                 }
             }
-            straddling = next_straddling;
+
+            straddling = next_candidates
+                .into_iter()
+                .filter(|&(_, c_min, c_max)| c_min < min_y || c_max > max_y)
+                .map(|(idx, _, _)| idx)
+                .collect();
         }
 
         if !straddling.is_empty() {
@@ -286,7 +312,6 @@ impl ProgressiveClient for PagedTreeClient {
         let threshold = query.merge_threshold;
         let fanout = self.manifest.fanout as u64;
 
-        // Seed frontier from inlined root nodes in left-to-right x-order.
         let mut frontier: Vec<FrontierItem> = Vec::with_capacity(self.manifest.root_nodes.len());
         for (idx, &node) in self.manifest.root_nodes.iter().enumerate() {
             if node.max_x < query.min_x || node.min_x > query.max_x {
@@ -306,7 +331,6 @@ impl ProgressiveClient for PagedTreeClient {
             }
         }
 
-        // Expand top-down one level per coalesced parallel round-trip.
         for child_level in (0..root_level).rev() {
             let needed_pages: Vec<u64> = frontier
                 .iter()
@@ -333,7 +357,8 @@ impl ProgressiveClient for PagedTreeClient {
                             continue;
                         };
                         let base_child = node_idx * fanout;
-                        for (offset, &child) in children.iter().enumerate() {
+                        for (offset, packed) in children.iter().enumerate() {
+                            let child = packed.unpack();
                             if child.max_x < query.min_x || child.min_x > query.max_x {
                                 continue;
                             }
@@ -357,7 +382,6 @@ impl ProgressiveClient for PagedTreeClient {
             frontier = next_frontier;
         }
 
-        // Fetch any raw leaf point blocks that straddled a boundary or needed finer splitting.
         let needed_leaves: Vec<u64> = frontier
             .iter()
             .filter_map(|item| match item {
@@ -371,7 +395,6 @@ impl ProgressiveClient for PagedTreeClient {
             self.fetch_leaves(&needed_leaves).await?
         };
 
-        // Coalesce adjacent groups across node/leaf boundaries in left-to-right order.
         let mut groups: Vec<Node> = Vec::with_capacity(frontier.len());
         for item in frontier {
             match item {

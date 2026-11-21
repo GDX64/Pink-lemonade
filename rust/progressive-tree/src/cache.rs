@@ -1,15 +1,15 @@
-//! Strictly bounded LRU cache for tree node pages and raw leaf point blocks.
+//! Strictly bounded LRU cache for compact 64-byte tree node pages and raw leaf point blocks.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use pink_lemonade_progressive_core::Point;
 
-use crate::node::Node;
+use crate::node::PackedNode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CacheKey {
-    /// A page of up to `fanout` nodes from `level_{level}.bin`.
+    /// A page of up to `fanout` compact 64-byte nodes from `level_{level}.bin`.
     TreePage { level: u16, page: u64 },
     /// A leaf block of up to `leaf_points` raw points from `points.bin`.
     LeafPoints(u64),
@@ -17,14 +17,14 @@ pub enum CacheKey {
 
 #[derive(Clone)]
 pub enum CacheValue {
-    TreePage(Arc<[Node]>),
+    TreePage(Arc<[PackedNode]>),
     LeafPoints(Arc<[Point]>),
 }
 
 impl CacheValue {
     fn heap_bytes(&self) -> usize {
         match self {
-            Self::TreePage(nodes) => nodes.len() * std::mem::size_of::<Node>(),
+            Self::TreePage(nodes) => nodes.len() * std::mem::size_of::<PackedNode>(),
             Self::LeafPoints(pts) => pts.len() * std::mem::size_of::<Point>(),
         }
     }
@@ -42,7 +42,6 @@ pub struct LruPageCache {
     used_bytes: usize,
     clock: u64,
     entries: HashMap<CacheKey, Entry>,
-    /// Ordered by `(last_access_tick, key)` so eviction pops the minimum entry in O(log n).
     order: BTreeSet<(u64, CacheKey)>,
 }
 
@@ -61,7 +60,7 @@ impl LruPageCache {
         self.used_bytes
     }
 
-    pub fn get_tree_page(&mut self, level: usize, page: u64) -> Option<Arc<[Node]>> {
+    pub fn get_tree_page(&mut self, level: usize, page: u64) -> Option<Arc<[PackedNode]>> {
         let key = CacheKey::TreePage {
             level: level as u16,
             page,
@@ -80,7 +79,7 @@ impl LruPageCache {
         }
     }
 
-    pub fn insert_tree_page(&mut self, level: usize, page: u64, nodes: Arc<[Node]>) {
+    pub fn insert_tree_page(&mut self, level: usize, page: u64, nodes: Arc<[PackedNode]>) {
         let key = CacheKey::TreePage {
             level: level as u16,
             page,

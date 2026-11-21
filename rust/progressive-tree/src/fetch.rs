@@ -1,4 +1,4 @@
-//! Runtime-agnostic concurrent future join and contiguous byte-range coalescing.
+//! Runtime-agnostic concurrent future join and gap-bridging byte-range coalescing.
 //!
 //! Avoids pulling in any async runtime or `futures` dependency so `progressive-tree`
 //! compiles cleanly on both native Tokio and `wasm32-unknown-unknown`.
@@ -7,9 +7,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-/// Coalesce sorted/unsorted page or leaf indices into contiguous `(start, count)` runs,
-/// each capped at `max_run` items so large spans still parallelize across concurrent streams.
-pub fn coalesce_runs(mut indices: Vec<u64>, max_run: usize) -> Vec<(u64, usize)> {
+/// Coalesce page or leaf indices into `(start, count)` runs, bridging small gaps of up to
+/// `max_gap` unrequested items when doing so avoids an extra network RTT, while capping
+/// each merged run at `max_run` items for parallelism and prompt cancellation.
+pub fn coalesce_runs(mut indices: Vec<u64>, max_gap: u64, max_run: usize) -> Vec<(u64, usize)> {
     if indices.is_empty() {
         return Vec::new();
     }
@@ -19,18 +20,20 @@ pub fn coalesce_runs(mut indices: Vec<u64>, max_run: usize) -> Vec<(u64, usize)>
 
     let mut runs = Vec::new();
     let mut start = indices[0];
-    let mut count = 1usize;
+    let mut end = start + 1; // exclusive
 
     for &idx in &indices[1..] {
-        if idx == start + count as u64 && count < max_run {
-            count += 1;
+        let gap = idx - end;
+        let merged_len = (idx - start + 1) as usize;
+        if gap <= max_gap && merged_len <= max_run {
+            end = idx + 1;
         } else {
-            runs.push((start, count));
+            runs.push((start, (end - start) as usize));
             start = idx;
-            count = 1;
+            end = idx + 1;
         }
     }
-    runs.push((start, count));
+    runs.push((start, (end - start) as usize));
     runs
 }
 
