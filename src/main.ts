@@ -4,6 +4,7 @@ import { runBenchmarkPage } from "./pages/benchmark/benchmark-page";
 import { runFigurePage } from "./pages/figures-page";
 import { renderMseChart } from "./pages/mse/mse-chart";
 import { runMsePage } from "./pages/mse/mse-page";
+import { runRipmapPage } from "./pages/ripmap/ripmap-page";
 
 const root = document.createElement("div");
 root.style.minHeight = "100vh";
@@ -19,7 +20,7 @@ title.style.margin = "0 0 12px 0";
 
 const subtitle = document.createElement("p");
 subtitle.textContent =
-  "Run paper artifacts in-browser: application, merge benchmark, MSE estimation, and figure rendering.";
+  "Run paper artifacts in-browser: application, merge benchmark, MSE estimation, ripmap explorer, and figure rendering.";
 subtitle.style.margin = "0 0 20px 0";
 
 const menu = document.createElement("ul");
@@ -85,6 +86,13 @@ const actions: Array<{
       output.appendChild(chartMount);
       await renderMseChart(results, chartMount);
       setInfo("MSE estimation completed.");
+    },
+  },
+  {
+    page: "ripmap",
+    label: "Ripmap explorer",
+    run: async () => {
+      await runRipmapPage({ output });
     },
   },
   {
