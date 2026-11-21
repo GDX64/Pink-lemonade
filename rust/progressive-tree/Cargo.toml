@@ -5,9 +5,12 @@ edition = "2024"
 description = "Paged multi-level moment tree for progressive, resolution-driven visualization over static byte-range storage."
 
 [dependencies]
+pink-lemonade-progressive-common = { path = "../progressive-common" }
 pink-lemonade-progressive-core = { path = "../progressive-core" }
 
 [dev-dependencies]
 pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+pink-lemonade-progressive-kdtree = { path = "../progressive-kdtree" }
 pink-lemonade-progressive-naive = { path = "../progressive-naive" }
+pink-lemonade-progressive-ripmap = { path = "../progressive-ripmap" }
 tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

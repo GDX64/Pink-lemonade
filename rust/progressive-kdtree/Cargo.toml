@@ -1,0 +1,14 @@
+[package]
+name = "pink-lemonade-progressive-kdtree"
+version = "0.1.0"
+edition = "2024"
+description = "Paged moment k-d tree: 2D space-partitioned moment hierarchy for progressive visualization over static byte-range storage."
+
+[dependencies]
+pink-lemonade-progressive-common = { path = "../progressive-common" }
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+pink-lemonade-progressive-tree = { path = "../progressive-tree" }
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

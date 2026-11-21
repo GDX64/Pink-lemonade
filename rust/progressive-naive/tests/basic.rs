@@ -22,5 +22,5 @@ async fn light_benchmark() {
     println!("\n{report}");
 
     assert_eq!(report.total_points, 10_000);
-    assert_eq!(report.workloads.len(), 5);
+    assert_eq!(report.workloads.len(), 6);
 }

@@ -14,6 +14,8 @@ pub struct StepReport {
     pub label: String,
     pub view_min_x: f64,
     pub view_max_x: f64,
+    /// Explicit Y viewport bounds when the step zoomed vertically (`None` = auto-y).
+    pub view_y_bounds: Option<[f64; 2]>,
     pub completed: bool,
     /// Simulated time until `query()` resolved (if it finished before any `max_dwell` timeout).
     pub latency: Option<Duration>,
@@ -181,6 +183,16 @@ fn write_step_json(out: &mut String, s: &StepReport, indent: usize) {
     let _ = writeln!(out, "\"view_max_x\": {},", s.view_max_x);
     push_indent(out, pad);
     let _ = writeln!(out, "\"view_width\": {},", s.view_max_x - s.view_min_x);
+    push_indent(out, pad);
+    out.push_str("\"view_min_y\": ");
+    write_opt_f64(out, s.view_y_bounds.map(|b| b[0]));
+    out.push_str(",
+");
+    push_indent(out, pad);
+    out.push_str("\"view_max_y\": ");
+    write_opt_f64(out, s.view_y_bounds.map(|b| b[1]));
+    out.push_str(",
+");
     push_indent(out, pad);
     let _ = writeln!(out, "\"completed\": {},", s.completed);
     push_indent(out, pad);

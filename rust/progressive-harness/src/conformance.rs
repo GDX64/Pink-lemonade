@@ -116,11 +116,7 @@ async fn check_empty_dataset(
         config.sigma_px,
         config.merge_threshold,
     );
-    let step = WorkloadStep {
-        label: "empty_dataset".to_owned(),
-        query,
-        max_dwell: None,
-    };
+    let step = WorkloadStep::new("empty_dataset", query);
     let outcome = run_step(client.as_mut(), &step).await?;
     let frame = outcome
         .frame
@@ -172,16 +168,21 @@ async fn check_dataset_on_memory_store(
         .await
         .map_err(|e| format!("open_client failed: {e}"))?;
 
+    // `NoisySpikes` y spans [-10, 90]; the explicit-y views zoom into the dense noise band and
+    // onto an empty band between noise and spikes (everything off-screen, moments still exact).
     let views = [
-        ("full_view", 0.0, 1.0),
-        ("left_slice", 0.05, 0.35),
-        ("middle_slice", 0.30, 0.62),
-        ("zoomed_slice", 0.72, 0.80),
-        ("empty_out_of_range", 2.0, 3.0),
+        ("full_view", 0.0, 1.0, None),
+        ("left_slice", 0.05, 0.35, None),
+        ("middle_slice", 0.30, 0.62, None),
+        ("zoomed_slice", 0.72, 0.80, None),
+        ("y_zoom_noise_band", 0.30, 0.62, Some([-2.0, 3.0])),
+        ("y_zoom_full_x", 0.0, 1.0, Some([-0.5, 0.5])),
+        ("y_zoom_empty_band", 0.05, 0.35, Some([40.0, 45.0])),
+        ("empty_out_of_range", 2.0, 3.0, None),
     ];
 
-    for (label, min_x, max_x) in views {
-        let query = ViewQuery::new(
+    for (label, min_x, max_x, y_bounds) in views {
+        let mut query = ViewQuery::new(
             min_x,
             max_x,
             config.screen_w,
@@ -189,11 +190,10 @@ async fn check_dataset_on_memory_store(
             config.sigma_px,
             config.merge_threshold,
         );
-        let step = WorkloadStep {
-            label: label.to_owned(),
-            query,
-            max_dwell: None,
-        };
+        if let Some([lo, hi]) = y_bounds {
+            query = query.with_y_bounds(lo, hi);
+        }
+        let step = WorkloadStep::new(label, query);
         let outcome = run_step(client.as_mut(), &step).await?;
         let frame = outcome
             .frame
@@ -237,16 +237,18 @@ async fn check_cancellation_safety(
         .map_err(|e| format!("cancellation open_client failed: {e}"))?;
 
     let interrupted = WorkloadStep {
-        label: "interrupted_view".to_owned(),
-        query: ViewQuery::new(
-            0.1,
-            0.4,
-            config.screen_w,
-            config.screen_h,
-            config.sigma_px,
-            config.merge_threshold,
-        ),
         max_dwell: Some(Duration::from_millis(5)),
+        ..WorkloadStep::new(
+            "interrupted_view",
+            ViewQuery::new(
+                0.1,
+                0.4,
+                config.screen_w,
+                config.screen_h,
+                config.sigma_px,
+                config.merge_threshold,
+            ),
+        )
     };
     let _ = run_step(client.as_mut(), &interrupted).await?;
 
@@ -258,11 +260,7 @@ async fn check_cancellation_safety(
         config.sigma_px,
         config.merge_threshold,
     );
-    let settled = WorkloadStep {
-        label: "post_cancel_settled".to_owned(),
-        query: settled_query,
-        max_dwell: None,
-    };
+    let settled = WorkloadStep::new("post_cancel_settled", settled_query);
     let outcome = run_step(client.as_mut(), &settled).await?;
     let frame = outcome
         .frame
@@ -334,11 +332,7 @@ async fn check_disk_store_parity(
             )
             .await
             .map_err(|e| format!("DiskStore open_client failed: {e}"))?;
-        let step = WorkloadStep {
-            label: "disk_parity".to_owned(),
-            query,
-            max_dwell: None,
-        };
+        let step = WorkloadStep::new("disk_parity", query);
         let outcome = run_step(client.as_mut(), &step).await?;
         let frame = outcome
             .frame

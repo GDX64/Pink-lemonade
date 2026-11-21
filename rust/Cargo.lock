@@ -38,6 +38,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752"
 
 [[package]]
+name = "pink-lemonade-progressive-common"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-core",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-core"
 version = "0.1.0"
 dependencies = [
@@ -53,6 +60,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-kdtree"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-common",
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-tree",
+ "tokio",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-naive"
 version = "0.1.0"
 dependencies = [
@@ -62,12 +80,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-ripmap"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-common",
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-kdtree",
+ "pink-lemonade-progressive-tree",
+ "tokio",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-tree"
 version = "0.1.0"
 dependencies = [
+ "pink-lemonade-progressive-common",
  "pink-lemonade-progressive-core",
  "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-kdtree",
  "pink-lemonade-progressive-naive",
+ "pink-lemonade-progressive-ripmap",
  "tokio",
 ]
 

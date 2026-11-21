@@ -1,11 +1,14 @@
-//! Binary manifest & object naming conventions for the paged moment tree.
+//! Binary manifest & object naming conventions for the paged moment hierarchy.
+//!
+//! Each strategy stamps its own 8-byte magic (e.g. `PLPTREE2`, `PLPKDTR1`) so artifacts from
+//! different point orderings can never be opened by the wrong client.
 //!
 //! Layout emitted into `ObjectWriter`:
 //! - `manifest.bin`: header + per-level node counts + inlined top (root) level nodes.
 //! - `level_0.bin`, `level_1.bin`, ...: fixed-width 64-byte [`PackedNode`] arrays for every
 //!   level below the inlined root level.
-//! - `points.bin`: flat packed 24-byte `(x, y, weight)` records, grouped into leaves of
-//!   `leaf_points` points.
+//! - `points.bin`: flat packed 24-byte `(x, y, weight)` records (in hierarchy order), grouped
+//!   into leaves of `leaf_points` points.
 
 use pink_lemonade_progressive_core::ClientError;
 
@@ -14,7 +17,6 @@ use crate::node::{NODE_BYTES, Node, PackedNode, decode_packed_nodes};
 pub const MANIFEST_KEY: &str = "manifest.bin";
 pub const POINTS_KEY: &str = "points.bin";
 
-const MAGIC: &[u8; 8] = b"PLPTREE2";
 const VERSION: u32 = 2;
 
 pub fn level_key(level: usize) -> String {
@@ -24,6 +26,7 @@ pub fn level_key(level: usize) -> String {
 /// Static index metadata loaded once on `open_client`.
 #[derive(Debug, Clone)]
 pub struct Manifest {
+    pub magic: [u8; 8],
     pub total_points: u64,
     pub leaf_points: u32,
     pub fanout: u32,
@@ -34,8 +37,9 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn empty(leaf_points: u32, fanout: u32) -> Self {
+    pub fn empty(magic: [u8; 8], leaf_points: u32, fanout: u32) -> Self {
         Self {
+            magic,
             total_points: 0,
             leaf_points,
             fanout,
@@ -58,7 +62,7 @@ impl Manifest {
         let mut out = Vec::with_capacity(
             32 + self.level_counts.len() * 8 + self.root_nodes.len() * NODE_BYTES,
         );
-        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&self.magic);
         out.extend_from_slice(&VERSION.to_le_bytes());
         out.extend_from_slice(&self.leaf_points.to_le_bytes());
         out.extend_from_slice(&self.fanout.to_le_bytes());
@@ -73,12 +77,15 @@ impl Manifest {
         out
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, ClientError> {
+    pub fn decode(bytes: &[u8], magic: [u8; 8]) -> Result<Self, ClientError> {
         if bytes.len() < 32 {
             return Err(ClientError::CorruptData("manifest.bin too short".to_owned()));
         }
-        if &bytes[0..8] != MAGIC {
-            return Err(ClientError::CorruptData("invalid manifest magic".to_owned()));
+        if bytes[0..8] != magic {
+            return Err(ClientError::CorruptData(format!(
+                "invalid manifest magic (expected {:?})",
+                String::from_utf8_lossy(&magic)
+            )));
         }
         let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         if version != VERSION {
@@ -123,6 +130,7 @@ impl Manifest {
         }
 
         Ok(Self {
+            magic,
             total_points,
             leaf_points,
             fanout,

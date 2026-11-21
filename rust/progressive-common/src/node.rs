@@ -3,7 +3,7 @@
 //! On-wire and in-cache representation uses [`PackedNode`] (exactly 64 bytes — 2× smaller
 //! than 16 × `f64`):
 //! - Exact `f64` bounding box `[min_x, max_x, min_y, max_y]` (with `first_x == min_x`,
-//!   `last_x == max_x` on x-sorted data, and exact `y_range` bounds).
+//!   `last_x == max_x` by construction of [`Node::combined`], and exact `y_range` bounds).
 //! - `f32` mass, bounding-box-relative mean `(tx, ty)`, and normalized centered covariance
 //!   `(var_x / dx², cov_xy / (dx·dy), var_y / dy²)`.
 //! - `u16` box-relative positions for `first_y`, `last_y`, `min_y_x`, `max_y_x`.
@@ -252,7 +252,11 @@ impl Node {
         node
     }
 
-    /// Associative moment- and extrema-preserving merge of two adjacent nodes (`a` precedes `b`).
+    /// Associative moment- and extrema-preserving merge of two nodes.
+    ///
+    /// `first`/`last` samples are chosen by x (ties keep `a`'s first and `b`'s last), so the
+    /// merge is valid both for x-adjacent nodes (`a` precedes `b`) and for arbitrary 2D cells
+    /// whose x-ranges overlap. In every case `first_x == min_x` and `last_x == max_x`.
     pub fn combined(a: Self, b: Self) -> Self {
         if a.min_x > a.max_x {
             return b;
@@ -292,11 +296,26 @@ impl Node {
         } else {
             (a.max_y, a.max_y_x)
         };
-        merged.first_x = a.first_x;
-        merged.first_y = a.first_y;
-        merged.last_x = b.last_x;
-        merged.last_y = b.last_y;
+        (merged.first_x, merged.first_y) = if b.first_x < a.first_x {
+            (b.first_x, b.first_y)
+        } else {
+            (a.first_x, a.first_y)
+        };
+        (merged.last_x, merged.last_y) = if a.last_x > b.last_x {
+            (a.last_x, a.last_y)
+        } else {
+            (b.last_x, b.last_y)
+        };
         merged
+    }
+
+    /// Weighted variance of `y` (`m2_yy / mass`), or `0` for massless nodes.
+    pub fn var_y(&self) -> f64 {
+        if self.mass > 0.0 {
+            (self.m2_yy / self.mass).max(0.0)
+        } else {
+            0.0
+        }
     }
 
     pub fn is_empty(&self) -> bool {

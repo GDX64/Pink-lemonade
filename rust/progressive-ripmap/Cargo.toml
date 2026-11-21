@@ -1,0 +1,15 @@
+[package]
+name = "pink-lemonade-progressive-ripmap"
+version = "0.1.0"
+edition = "2024"
+description = "Moment ripmap: decoupled x/y-resolution dense moment planes for progressive visualization over static byte-range storage."
+
+[dependencies]
+pink-lemonade-progressive-common = { path = "../progressive-common" }
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+pink-lemonade-progressive-tree = { path = "../progressive-tree" }
+pink-lemonade-progressive-kdtree = { path = "../progressive-kdtree" }
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

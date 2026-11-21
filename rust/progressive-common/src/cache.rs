@@ -1,10 +1,12 @@
-//! Strictly bounded LRU cache for compact 64-byte tree node pages and raw leaf point blocks.
+//! Strictly bounded LRU cache for compact 64-byte tree node pages, raw leaf point blocks,
+//! and dense moment-cell blocks.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use pink_lemonade_progressive_core::Point;
 
+use crate::cell::MomentCell;
 use crate::node::PackedNode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -13,12 +15,15 @@ pub enum CacheKey {
     TreePage { level: u16, page: u64 },
     /// A leaf block of up to `leaf_points` raw points from `points.bin`.
     LeafPoints(u64),
+    /// All `2^k` y-bin cells of x-block `block` in moment plane `(level, k)`.
+    PlaneBlock { level: u16, k: u8, block: u64 },
 }
 
 #[derive(Clone)]
 pub enum CacheValue {
     TreePage(Arc<[PackedNode]>),
     LeafPoints(Arc<[Point]>),
+    Cells(Arc<[MomentCell]>),
 }
 
 impl CacheValue {
@@ -26,6 +31,7 @@ impl CacheValue {
         match self {
             Self::TreePage(nodes) => nodes.len() * std::mem::size_of::<PackedNode>(),
             Self::LeafPoints(pts) => pts.len() * std::mem::size_of::<Point>(),
+            Self::Cells(cells) => cells.len() * std::mem::size_of::<MomentCell>(),
         }
     }
 }
@@ -67,7 +73,7 @@ impl LruPageCache {
         };
         match self.touch(&key)? {
             CacheValue::TreePage(nodes) => Some(nodes),
-            CacheValue::LeafPoints(_) => None,
+            _ => None,
         }
     }
 
@@ -75,8 +81,29 @@ impl LruPageCache {
         let key = CacheKey::LeafPoints(leaf);
         match self.touch(&key)? {
             CacheValue::LeafPoints(pts) => Some(pts),
-            CacheValue::TreePage(_) => None,
+            _ => None,
         }
+    }
+
+    pub fn get_plane_block(&mut self, level: usize, k: u8, block: u64) -> Option<Arc<[MomentCell]>> {
+        let key = CacheKey::PlaneBlock {
+            level: level as u16,
+            k,
+            block,
+        };
+        match self.touch(&key)? {
+            CacheValue::Cells(cells) => Some(cells),
+            _ => None,
+        }
+    }
+
+    pub fn insert_plane_block(&mut self, level: usize, k: u8, block: u64, cells: Arc<[MomentCell]>) {
+        let key = CacheKey::PlaneBlock {
+            level: level as u16,
+            k,
+            block,
+        };
+        self.insert(key, CacheValue::Cells(cells));
     }
 
     pub fn insert_tree_page(&mut self, level: usize, page: u64, nodes: Arc<[PackedNode]>) {

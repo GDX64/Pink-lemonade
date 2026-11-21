@@ -185,6 +185,7 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
         config.screen_h,
         config.sigma_px,
         config.merge_threshold,
+        0.5,
     );
     let mut store = MemoryStore::new();
 
@@ -201,7 +202,17 @@ async fn benchmark_harness_runs_all_workloads_in_virtual_time() {
 
     assert_eq!(report.total_points, point_count);
     assert_eq!(report.object_count, 1);
-    assert_eq!(report.workloads.len(), 5);
+    assert_eq!(report.workloads.len(), 6);
+
+    // y_zoom: auto-y anchor, then relative box-zooms resolved into explicit, nested y-bounds.
+    let y_zoom = &report.workloads[5];
+    assert_eq!(y_zoom.name, "y_zoom");
+    assert!(y_zoom.steps[0].view_y_bounds.is_none());
+    let [lo2, hi2] = y_zoom.steps[1].view_y_bounds.expect("2x zoom has y bounds");
+    let [lo8, hi8] = y_zoom.steps[2].view_y_bounds.expect("8x zoom has y bounds");
+    assert!(lo2 < lo8 && hi8 < hi2, "8x band must nest inside 2x band");
+    assert!(((hi2 - lo2) / (hi8 - lo8) - 4.0).abs() < 1e-9);
+    assert!(y_zoom.steps.iter().all(|s| s.completed && s.nmae_percent.is_some()));
 
     let overview = &report.workloads[0];
     assert!(overview.steps[0].completed);

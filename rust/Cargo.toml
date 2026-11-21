@@ -1,10 +1,13 @@
 [workspace]
 members = [
     ".",
+    "progressive-common",
     "progressive-core",
     "progressive-harness",
     "progressive-naive",
     "progressive-tree",
+    "progressive-kdtree",
+    "progressive-ripmap",
 ]
 
 [package]

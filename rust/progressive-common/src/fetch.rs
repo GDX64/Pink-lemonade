@@ -1,7 +1,7 @@
 //! Runtime-agnostic concurrent future join and gap-bridging byte-range coalescing.
 //!
-//! Avoids pulling in any async runtime or `futures` dependency so `progressive-tree`
-//! compiles cleanly on both native Tokio and `wasm32-unknown-unknown`.
+//! Avoids pulling in any async runtime or `futures` dependency so strategies built on
+//! `progressive-common` compile cleanly on both native Tokio and `wasm32-unknown-unknown`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -92,6 +92,62 @@ where
                 }
             }
             Poll::Ready(Ok(out))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+/// Poll two fallible futures concurrently, returning both outputs or the first error
+/// (dropping the other future immediately).
+pub fn join2<A, B, TA, TB, E>(a: A, b: B) -> Join2<A, B, TA, TB>
+where
+    A: Future<Output = Result<TA, E>>,
+    B: Future<Output = Result<TB, E>>,
+{
+    Join2 {
+        a: Slot::Pending(Box::pin(a)),
+        b: Slot::Pending(Box::pin(b)),
+    }
+}
+
+pub struct Join2<A, B, TA, TB> {
+    a: Slot<A, TA>,
+    b: Slot<B, TB>,
+}
+
+impl<A, B, TA, TB, E> Future for Join2<A, B, TA, TB>
+where
+    A: Future<Output = Result<TA, E>>,
+    B: Future<Output = Result<TB, E>>,
+{
+    type Output = Result<(TA, TB), E>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Both slots hold `Pin<Box<_>>` futures, so moving `Join2` never moves them.
+        let this = unsafe { self.get_unchecked_mut() };
+        if let Slot::Pending(fut) = &mut this.a {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(val)) => this.a = Slot::Done(val),
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+        }
+        if let Slot::Pending(fut) = &mut this.b {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(val)) => this.b = Slot::Done(val),
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+        }
+        if matches!(this.a, Slot::Done(_)) && matches!(this.b, Slot::Done(_)) {
+            let (Slot::Done(a), Slot::Done(b)) = (
+                std::mem::replace(&mut this.a, Slot::Taken),
+                std::mem::replace(&mut this.b, Slot::Taken),
+            ) else {
+                unreachable!()
+            };
+            Poll::Ready(Ok((a, b)))
         } else {
             Poll::Pending
         }

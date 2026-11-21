@@ -52,8 +52,14 @@ pub enum BenchmarkScenario {
     Light,
     /// 1M points (~24 MiB raw), `MemoryStore`, broadband, 4 MiB client budget (smaller than raw data).
     Medium,
+    /// 1M points of uncorrelated `NoisySpikes` white noise, broadband, 4 MiB client budget.
+    /// Exposes 1D x-partitioning's failure mode at a size cheap enough for `--fast` runs.
+    MediumWhiteNoise,
     /// 10M points (~240 MiB raw, integrated Gaussian `RandomWalk`), `MemoryStore`, broadband, 16 MiB client budget.
     Heavy,
+    /// 10M points (~240 MiB raw) of uncorrelated `NoisySpikes` white noise, `MemoryStore`,
+    /// broadband, 16 MiB client budget (2D space-partitioning stress test).
+    HeavyWhiteNoise,
     /// 50M points (~1.2 GiB raw, integrated Gaussian `RandomWalk`), `MemoryStore`, broadband, 32 MiB client budget.
     Gigabyte,
     /// 1M points (integrated Gaussian `RandomWalk`), `MemoryStore`, 5 Mbps / 100 ms mobile link, 2 MiB client budget.
@@ -62,130 +68,92 @@ pub enum BenchmarkScenario {
     Custom(Box<ScenarioSpec>),
 }
 
+/// Vertical zoom center (fraction of auto-y range) for `NoisySpikes`: the `+80` spikes stretch
+/// the range to `[-10, 90]`, so the dense noise band sits around `0.1`.
+const NOISY_SPIKES_Y_CENTER: f64 = 0.1;
+const DEFAULT_Y_CENTER: f64 = 0.5;
+
+fn preset(
+    name: &str,
+    shape: DatasetShape,
+    point_count: u64,
+    chunk_size: usize,
+    network: NetworkProfile,
+    memory_budget_bytes: usize,
+) -> ScenarioSpec {
+    let harness = HarnessConfig {
+        network,
+        client: ClientConfig {
+            memory_budget_bytes,
+        },
+        ..HarnessConfig::default()
+    };
+    let y_center = match shape {
+        DatasetShape::NoisySpikes { .. } => NOISY_SPIKES_Y_CENTER,
+        _ => DEFAULT_Y_CENTER,
+    };
+    ScenarioSpec {
+        name: name.to_owned(),
+        shape,
+        point_count,
+        chunk_size,
+        backing: StoreBacking::Memory,
+        workloads: Workload::standard_suite(
+            harness.screen_w,
+            harness.screen_h,
+            harness.sigma_px,
+            harness.merge_threshold,
+            y_center,
+        ),
+        harness,
+        evaluate_nmae: false,
+    }
+}
+
+const MIB: usize = 1024 * 1024;
+
 impl BenchmarkScenario {
     /// Expand this preset into a concrete [`ScenarioSpec`] (can be modified and wrapped in `Custom`).
     pub fn spec(&self) -> ScenarioSpec {
+        let walk = DatasetShape::RandomWalk { seed: 578_211 };
+        let noise = DatasetShape::NoisySpikes { seed: 4_242 };
+        let broadband = NetworkProfile::broadband();
         match self {
-            Self::Light => {
-                let harness = HarnessConfig {
-                    network: NetworkProfile::broadband(),
-                    client: ClientConfig {
-                        memory_budget_bytes: 1024 * 1024, // 1 MiB
-                    },
-                    ..HarnessConfig::default()
-                };
-                ScenarioSpec {
-                    name: "light".to_owned(),
-                    shape: DatasetShape::SineWave,
-                    point_count: 10_000,
-                    chunk_size: 1_000,
-                    backing: StoreBacking::Memory,
-                    workloads: Workload::standard_suite(
-                        harness.screen_w,
-                        harness.screen_h,
-                        harness.sigma_px,
-                        harness.merge_threshold,
-                    ),
-                    harness,
-                    evaluate_nmae: false,
-                }
-            }
-            Self::Medium => {
-                let harness = HarnessConfig {
-                    network: NetworkProfile::broadband(),
-                    client: ClientConfig {
-                        memory_budget_bytes: 4 * 1024 * 1024, // 4 MiB (< 24 MiB raw)
-                    },
-                    ..HarnessConfig::default()
-                };
-                ScenarioSpec {
-                    name: "medium".to_owned(),
-                    shape: DatasetShape::SineWave,
-                    point_count: 1_000_000,
-                    chunk_size: 65_536,
-                    backing: StoreBacking::Memory,
-                    workloads: Workload::standard_suite(
-                        harness.screen_w,
-                        harness.screen_h,
-                        harness.sigma_px,
-                        harness.merge_threshold,
-                    ),
-                    harness,
-                    evaluate_nmae: false,
-                }
-            }
-            Self::Heavy => {
-                let harness = HarnessConfig {
-                    network: NetworkProfile::broadband(),
-                    client: ClientConfig {
-                        memory_budget_bytes: 16 * 1024 * 1024, // 16 MiB (< 240 MiB raw)
-                    },
-                    ..HarnessConfig::default()
-                };
-                ScenarioSpec {
-                    name: "heavy".to_owned(),
-                    shape: DatasetShape::RandomWalk { seed: 578_211 },
-                    point_count: 10_000_000,
-                    chunk_size: 131_072,
-                    backing: StoreBacking::Memory,
-                    workloads: Workload::standard_suite(
-                        harness.screen_w,
-                        harness.screen_h,
-                        harness.sigma_px,
-                        harness.merge_threshold,
-                    ),
-                    harness,
-                    evaluate_nmae: false,
-                }
-            }
-            Self::Gigabyte => {
-                let harness = HarnessConfig {
-                    network: NetworkProfile::broadband(),
-                    client: ClientConfig {
-                        memory_budget_bytes: 32 * 1024 * 1024, // 32 MiB (< 1.2 GiB raw)
-                    },
-                    ..HarnessConfig::default()
-                };
-                ScenarioSpec {
-                    name: "gigabyte".to_owned(),
-                    shape: DatasetShape::RandomWalk { seed: 578_211 },
-                    point_count: 50_000_000,
-                    chunk_size: 262_144,
-                    backing: StoreBacking::Memory,
-                    workloads: Workload::standard_suite(
-                        harness.screen_w,
-                        harness.screen_h,
-                        harness.sigma_px,
-                        harness.merge_threshold,
-                    ),
-                    harness,
-                    evaluate_nmae: false,
-                }
-            }
-            Self::ConstrainedMobile => {
-                let harness = HarnessConfig {
-                    network: NetworkProfile::mobile_5mbps(),
-                    client: ClientConfig {
-                        memory_budget_bytes: 2 * 1024 * 1024, // 2 MiB
-                    },
-                    ..HarnessConfig::default()
-                };
-                ScenarioSpec {
-                    name: "constrained_mobile".to_owned(),
-                    shape: DatasetShape::RandomWalk { seed: 578_211 },
-                    point_count: 1_000_000,
-                    chunk_size: 65_536,
-                    backing: StoreBacking::Memory,
-                    workloads: Workload::standard_suite(
-                        harness.screen_w,
-                        harness.screen_h,
-                        harness.sigma_px,
-                        harness.merge_threshold,
-                    ),
-                    harness,
-                    evaluate_nmae: false,
-                }
-            }
+            Self::Light => preset("light", DatasetShape::SineWave, 10_000, 1_000, broadband, MIB),
+            Self::Medium => preset(
+                "medium",
+                DatasetShape::SineWave,
+                1_000_000,
+                65_536,
+                broadband,
+                4 * MIB,
+            ),
+            Self::MediumWhiteNoise => preset(
+                "medium_white_noise",
+                noise,
+                1_000_000,
+                65_536,
+                broadband,
+                4 * MIB,
+            ),
+            Self::Heavy => preset("heavy", walk, 10_000_000, 131_072, broadband, 16 * MIB),
+            Self::HeavyWhiteNoise => preset(
+                "heavy_white_noise",
+                noise,
+                10_000_000,
+                131_072,
+                broadband,
+                16 * MIB,
+            ),
+            Self::Gigabyte => preset("gigabyte", walk, 50_000_000, 262_144, broadband, 32 * MIB),
+            Self::ConstrainedMobile => preset(
+                "constrained_mobile",
+                walk,
+                1_000_000,
+                65_536,
+                NetworkProfile::mobile_5mbps(),
+                2 * MIB,
+            ),
             Self::Custom(spec) => (**spec).clone(),
         }
     }

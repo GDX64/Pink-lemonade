@@ -1,0 +1,8 @@
+[package]
+name = "pink-lemonade-progressive-common"
+version = "0.1.0"
+edition = "2024"
+description = "Shared moment nodes, paged hierarchy format/reader, LRU cache, and runtime-agnostic fetch helpers for pink-lemonade progressive strategies."
+
+[dependencies]
+pink-lemonade-progressive-core = { path = "../progressive-core" }

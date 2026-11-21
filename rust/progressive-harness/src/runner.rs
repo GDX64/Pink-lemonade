@@ -106,10 +106,23 @@ pub async fn run_workload(
 
     let mut peak_client_memory_bytes = client.memory_bytes();
     let mut step_reports = Vec::with_capacity(workload.steps.len());
+    // `y_range` of the most recent completed auto-y frame (anchor for relative y-zooms).
+    let mut anchor_y_range: Option<[f64; 2]> = None;
 
     for (idx, step) in workload.steps.iter().enumerate() {
+        let resolved = WorkloadStep {
+            query: step.resolved_query(anchor_y_range)?,
+            relative_y_bounds: None,
+            ..step.clone()
+        };
+        let step = &resolved;
         let before_step = transport.metrics();
         let outcome = run_step(client.as_mut(), step).await?;
+        if step.query.y_bounds.is_none()
+            && let Some(frame) = outcome.frame.as_ref()
+        {
+            anchor_y_range = frame.y_range.or(anchor_y_range);
+        }
         let after_step = transport.metrics();
         let step_transport = after_step.delta_since(&before_step);
 
@@ -138,6 +151,7 @@ pub async fn run_workload(
             label: step.label.clone(),
             view_min_x: step.query.min_x,
             view_max_x: step.query.max_x,
+            view_y_bounds: step.query.y_bounds,
             completed: outcome.completed,
             latency,
             kernel_count,
