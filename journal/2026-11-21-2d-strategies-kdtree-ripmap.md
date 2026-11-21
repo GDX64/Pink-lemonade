@@ -92,9 +92,16 @@ On plane-served workloads the ripmap's per-bin covariances give **~7–80× lowe
 3. **Deep vertical zoom on white noise remains unsolved for all three** (`y_zoom` ≈ the 12.4 MiB raw window). The ripmap is *worse* in request count (979): `+80` spikes stretch each block's `[min_y, max_y]`, so equal-width dense bins spend their depth on the empty noise–spike gap, `k_needed > kmax` on spike-containing blocks, and those fall back to fragmented raw leaves (the 2× step alone costs 8 MiB). On random walk, `y_zoom` works well for the ripmap (`762 KiB`) and k-d tree (`2.83 MiB`, aided by off-screen culling).
 4. **Storage is the ripmap's price:** 1.70× raw (planes ≈ 0.58×, fanout-4 x-levels ≈ 0.11×), tunable via `min_points_per_bin` and by skipping planes at levels/depths the query policy rarely selects.
 
+## Methodology Notes
+
+- **Static object count:** at 10M points the ripmap writes **44 objects**: 36 `plane_{ℓ}_{k}.bin` files (levels 0–5 hold `kmax` = 1, 3, 5, 7, 9, 11 depths), `points.bin`, `level_0..4.bin`, `manifest.bin`, and `ripmap.bin`. The tree and k-d tree write 5 objects each. A query touches only the few planes it selects, but on static hosting this is 44 URLs per dataset.
+- **Quality checks must run at scale:** at 100K–1M points the ripmap's windowed views are mostly served from raw leaves, so their NMAE matches the x-tree's exactly and says nothing about the planes. Plane quality only shows up at 10M (`PLP_NMAE_POINTS=10000000`, ~75 s with `--profile fast`).
+- **Regression checks compare wire, requests, and kernel counts, not latency**: those are exactly deterministic under virtual time, while latency jitters ≤ 0.1%.
+
 ## Next Hypotheses
 
 1. **Sparse ripmap planes** (store only non-empty bins as `(bin u16, MomentCell)` with a per-block offset table): removes the outlier-stretch waste and lets `kmax` go deeper where data concentrates, which should fix the white-noise `y_zoom` fallback. Key question: whether the offset table can ride along with the level pages already fetched (no extra RTT).
 2. **Robust bin ranges + outlier cells:** bin within per-block quantile bounds and keep extreme points in a separate exact outlier list (line extrema / `y_range` already come from the exact x-nodes).
 3. **Plane pruning sweep:** measure which `(ℓ, k)` planes the policy actually selects across workloads and drop the rest; sweep `min_points_per_bin ∈ {8, 16, 32}` and x-fanout `{4, 8}` to trade storage vs wire.
-4. **Retire or rework the k-d tree:** a view-adaptive variant would need x/y-decoupled cells — which is what the ripmap already is. Keep it only as a fixed-shape baseline.
+4. **Single-file container:** pack the ripmap's 44 objects into one file with a byte-offset table, so each dataset is one URL.
+5. **Retire or rework the k-d tree:** a view-adaptive variant would need x/y-decoupled cells — which is what the ripmap already is. Keep it only as a fixed-shape baseline.
