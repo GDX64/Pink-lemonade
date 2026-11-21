@@ -3,7 +3,7 @@
 //!
 //! Usage:
 //!   cargo run --profile fast -p pink-lemonade-progressive-tree --example export_reports --manifest-path rust/Cargo.toml -- --fast
-//!   cargo run --profile fast -p pink-lemonade-progressive-tree --example export_reports --manifest-path rust/Cargo.toml -- --out benchmarks/results/latest.json
+//!   cargo run --profile fast -p pink-lemonade-progressive-tree --example export_reports --manifest-path rust/Cargo.toml
 
 use pink_lemonade_progressive_core::ProgressiveStrategy;
 use pink_lemonade_progressive_harness::benchmarks::{self, BenchmarkScenario};
@@ -36,20 +36,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let tree = PagedTreeStrategy::default();
-    let strategies: [&dyn ProgressiveStrategy; 2] = [&NaiveStrategy, &tree];
-    let scenarios: Vec<BenchmarkScenario> = if fast {
-        vec![BenchmarkScenario::Light, BenchmarkScenario::Medium]
+    let all_strategies: [&dyn ProgressiveStrategy; 2] = [&NaiveStrategy, &tree];
+    let progressive_only: [&dyn ProgressiveStrategy; 1] = [&tree];
+
+    let runs: Vec<(BenchmarkScenario, &[&dyn ProgressiveStrategy])> = if fast {
+        vec![
+            (BenchmarkScenario::Light, &all_strategies),
+            (BenchmarkScenario::Medium, &all_strategies),
+        ]
     } else {
         vec![
-            BenchmarkScenario::Light,
-            BenchmarkScenario::Medium,
-            BenchmarkScenario::ConstrainedMobile,
+            (BenchmarkScenario::Light, &all_strategies),
+            (BenchmarkScenario::Medium, &all_strategies),
+            (BenchmarkScenario::ConstrainedMobile, &all_strategies),
+            (BenchmarkScenario::Heavy, &progressive_only),
         ]
     };
 
     let mut all_reports = Vec::new();
-    for scenario in scenarios {
-        let reports = benchmarks::compare(&strategies, scenario)
+    for (scenario, strategies) in runs {
+        let reports = benchmarks::compare(strategies, scenario)
             .await
             .map_err(|e| format!("benchmark failed: {e}"))?;
         for report in &reports {

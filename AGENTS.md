@@ -26,7 +26,7 @@ Guide for coding agents working in `pink-lemonade`.
 ```powershell
 ./dev benchmark --fast            # ~1s warm: [profile.fast], Light (10K) + Medium (1M) -> benchmarks/results/latest.json
 ./dev benchmark --fast --render   # Same, plus headless re-execution of benchmarks/analysis.ipynb
-./dev benchmark                   # Full scenarios (Light, Medium, ConstrainedMobile) + re-render notebook
+./dev benchmark                   # Full scenarios (Light, Medium, ConstrainedMobile, Heavy [non-naive]) + re-render notebook
 ./dev notebook                    # Launch JupyterLab on benchmarks/analysis.ipynb using .venv
 ./dev test                        # Run all Rust workspace tests
 ./dev clippy                      # Run clippy (-D warnings) on all progressive crates

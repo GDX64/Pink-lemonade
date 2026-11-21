@@ -197,6 +197,7 @@ pub async fn run_benchmark(
     Ok(BenchmarkReport {
         strategy_name: strategy.name().to_owned(),
         scenario_name: None,
+        dataset_shape: None,
         total_points,
         build_duration,
         storage_bytes,

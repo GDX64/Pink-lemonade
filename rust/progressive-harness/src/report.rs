@@ -46,6 +46,7 @@ impl WorkloadReport {
 pub struct BenchmarkReport {
     pub strategy_name: String,
     pub scenario_name: Option<String>,
+    pub dataset_shape: Option<String>,
     pub total_points: u64,
     pub build_duration: Duration,
     pub storage_bytes: u64,
@@ -258,6 +259,13 @@ fn write_report_json(out: &mut String, r: &BenchmarkReport, indent: usize) {
     out.push_str("\"scenario_name\": ");
     match &r.scenario_name {
         Some(name) => write_json_str(out, name),
+        None => out.push_str("null"),
+    }
+    out.push_str(",\n");
+    push_indent(out, pad);
+    out.push_str("\"dataset_shape\": ");
+    match &r.dataset_shape {
+        Some(shape) => write_json_str(out, shape),
         None => out.push_str("null"),
     }
     out.push_str(",\n");

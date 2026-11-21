@@ -52,11 +52,11 @@ pub enum BenchmarkScenario {
     Light,
     /// 1M points (~24 MiB raw), `MemoryStore`, broadband, 4 MiB client budget (smaller than raw data).
     Medium,
-    /// 10M points (~240 MiB raw, `MultiRegime`), `DiskStore`, broadband, 16 MiB client budget.
+    /// 10M points (~240 MiB raw, integrated Gaussian `RandomWalk`), `MemoryStore`, broadband, 16 MiB client budget.
     Heavy,
-    /// 50M points (~1.2 GiB raw, `MultiRegime`), `DiskStore`, broadband, 32 MiB client budget.
+    /// 50M points (~1.2 GiB raw, integrated Gaussian `RandomWalk`), `MemoryStore`, broadband, 32 MiB client budget.
     Gigabyte,
-    /// 1M points (`NoisySpikes`), `MemoryStore`, 5 Mbps / 100 ms mobile link, 2 MiB client budget.
+    /// 1M points (integrated Gaussian `RandomWalk`), `MemoryStore`, 5 Mbps / 100 ms mobile link, 2 MiB client budget.
     ConstrainedMobile,
     /// User-defined scenario specification.
     Custom(Box<ScenarioSpec>),
@@ -124,10 +124,10 @@ impl BenchmarkScenario {
                 };
                 ScenarioSpec {
                     name: "heavy".to_owned(),
-                    shape: DatasetShape::MultiRegime { seed: 0x51a7_cafe },
+                    shape: DatasetShape::RandomWalk { seed: 578_211 },
                     point_count: 10_000_000,
                     chunk_size: 131_072,
-                    backing: StoreBacking::Disk,
+                    backing: StoreBacking::Memory,
                     workloads: Workload::standard_suite(
                         harness.screen_w,
                         harness.screen_h,
@@ -148,10 +148,10 @@ impl BenchmarkScenario {
                 };
                 ScenarioSpec {
                     name: "gigabyte".to_owned(),
-                    shape: DatasetShape::MultiRegime { seed: 0x616a_b77e },
+                    shape: DatasetShape::RandomWalk { seed: 578_211 },
                     point_count: 50_000_000,
                     chunk_size: 262_144,
-                    backing: StoreBacking::Disk,
+                    backing: StoreBacking::Memory,
                     workloads: Workload::standard_suite(
                         harness.screen_w,
                         harness.screen_h,
@@ -172,7 +172,7 @@ impl BenchmarkScenario {
                 };
                 ScenarioSpec {
                     name: "constrained_mobile".to_owned(),
-                    shape: DatasetShape::NoisySpikes { seed: 0x4242 },
+                    shape: DatasetShape::RandomWalk { seed: 578_211 },
                     point_count: 1_000_000,
                     chunk_size: 65_536,
                     backing: StoreBacking::Memory,
@@ -248,6 +248,7 @@ pub async fn run_on(
     };
 
     report.scenario_name = Some(spec.name);
+    report.dataset_shape = Some(spec.shape.name().to_owned());
     Ok(report)
 }
 

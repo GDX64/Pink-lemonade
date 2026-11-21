@@ -23,6 +23,13 @@ impl SplitMix64 {
     pub fn unit(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1_u64 << 53) as f64
     }
+
+    /// Standard normal `N(0, 1)` sample via Box-Muller transform (matching `src/data/noise.ts`).
+    pub fn normal(&mut self) -> f64 {
+        let u1 = self.unit().max(1e-15);
+        let u2 = self.unit();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+    }
 }
 
 /// Built-in deterministic dataset shapes.
@@ -31,11 +38,25 @@ pub enum DatasetShape {
     /// Same curve as `rust/benches/common/fixture.rs`:
     /// `x = i / n`, `y = 0.5 + 0.25 * sin(i * 300 / n)`, `weight = 1.0`.
     SineWave,
+    /// Integrated Gaussian noise (Brownian random walk) with bimodal weight distribution,
+    /// matching `createNoiseFloatData` in `src/data/noise.ts`.
+    RandomWalk { seed: u64 },
     /// Uniform noise in `[-10, 10]` plus tall periodic spikes (`+80` every 997th point),
     /// matching `rust/tests/tree_merge.rs` for testing `y_range` and `line_points` extrema.
     NoisySpikes { seed: u64 },
     /// Non-uniform x spacing with dense bursts, drifting baseline, and varying weights.
     MultiRegime { seed: u64 },
+}
+
+impl DatasetShape {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SineWave => "sine_wave",
+            Self::RandomWalk { .. } => "random_walk",
+            Self::NoisySpikes { .. } => "noisy_spikes",
+            Self::MultiRegime { .. } => "multi_regime",
+        }
+    }
 }
 
 /// Streaming generator yielding x-sorted chunks of [`Point`]s in O(chunk_size) memory.
@@ -46,20 +67,25 @@ pub struct DatasetStream {
     chunk_size: usize,
     cursor: u64,
     rng: SplitMix64,
+    walk_acc: f64,
 }
 
 impl DatasetStream {
     pub fn new(shape: DatasetShape, total_points: u64, chunk_size: usize) -> Self {
         let seed = match shape {
             DatasetShape::SineWave => 0,
-            DatasetShape::NoisySpikes { seed } | DatasetShape::MultiRegime { seed } => seed,
+            DatasetShape::RandomWalk { seed }
+            | DatasetShape::NoisySpikes { seed }
+            | DatasetShape::MultiRegime { seed } => seed,
         };
+        let walk_acc = total_points as f64 / 1000.0;
         Self {
             shape,
             total_points,
             chunk_size: chunk_size.max(1),
             cursor: 0,
             rng: SplitMix64(seed),
+            walk_acc,
         }
     }
 
@@ -84,6 +110,14 @@ impl DatasetStream {
                 let x = index as f64 / n;
                 let y = 0.5 + 0.25 * (index as f64 * 300.0 / n).sin();
                 Point::new(x, y, 1.0)
+            }
+            DatasetShape::RandomWalk { .. } => {
+                let x = index as f64 / n;
+                self.walk_acc += self.rng.normal();
+                let density = gaussian_sample(0.9, 0.05, x) + gaussian_sample(0.3, 0.1, x) * 0.8;
+                let s = density + self.rng.normal() * 0.5;
+                let weight = (s.powi(5) * 100.0).abs();
+                Point::new(x, self.walk_acc, if weight > 0.0 { weight } else { 1.0 })
             }
             DatasetShape::NoisySpikes { .. } => {
                 let x = index as f64 / n;
@@ -139,4 +173,9 @@ pub fn stream_into_builder(
         builder.push_chunk(&chunk)?;
     }
     Ok(count)
+}
+
+fn gaussian_sample(mean: f64, std_dev: f64, x: f64) -> f64 {
+    let z = (x - mean) / std_dev;
+    (-0.5 * z * z).exp()
 }
