@@ -8,6 +8,8 @@ import {
   type QueryResult,
   type RipmapModel,
   type RipmapParams,
+  type Strategy,
+  TREE_PARAMS,
   type TraceEntry,
   type ViewQuery,
   blockPointsAt,
@@ -19,21 +21,23 @@ import {
 } from "./ripmap-model";
 
 /**
- * Interactive explainer for the `progressive-ripmap` strategy: build a dataset in-browser,
- * then pan/zoom a viewport and watch which hierarchy nodes resolve, which x-blocks are served
- * through y-bin planes, which leaves fall back to raw points, and which byte ranges are fetched.
+ * Interactive explainer for the hierarchy-based progressive strategies (`progressive-ripmap`
+ * and the `progressive-tree` x-tree): build a dataset in-browser, then pan/zoom a viewport and
+ * watch which hierarchy nodes resolve, which x-blocks are served through y-bin planes (ripmap
+ * only), which leaves fall back to raw points, how the frame greedily merges everything into
+ * kernels, and which byte ranges are fetched.
  */
 
 const STYLE = `
 .rm { --bg:#f6f7fb; --panel:#ffffff; --ink:#1b2433; --muted:#5d6b80; --line:#dde3ec; --grid:#eef1f6;
   --plane:#7c4dff; --resolved:#0f9d8a; --leaf:#f07c1f; --expand:#b7c2d1; --boundary:#8a96a8;
-  --open:#64748b; --yrange:#2f7de1; --data:#1b2433; --kde:#d6336c; --accent:#d6336c;
+  --open:#64748b; --yrange:#2f7de1; --data:#1b2433; --kde:#d6336c; --accent:#d6336c; --group:#c2255c;
   font-family: ui-sans-serif, "Segoe UI", Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg);
   min-height:100vh; padding:20px 24px 48px; box-sizing:border-box; }
 @media (prefers-color-scheme: dark) {
   .rm { --bg:#10141b; --panel:#171c25; --ink:#e6ebf2; --muted:#93a0b4; --line:#2a3240; --grid:#1f2631;
     --plane:#a58bff; --resolved:#2cc7b0; --leaf:#ff9b4a; --expand:#4a5566; --boundary:#7d8899;
-    --open:#94a3b8; --yrange:#5ea2ff; --data:#e6ebf2; --kde:#ff6b9a; --accent:#ff6b9a; }
+    --open:#94a3b8; --yrange:#5ea2ff; --data:#e6ebf2; --kde:#ff6b9a; --accent:#ff6b9a; --group:#ff8fb3; }
 }
 .rm * { box-sizing:border-box; }
 .rm h1 { font-size:22px; margin:0 0 4px; letter-spacing:-0.01em; }
@@ -100,6 +104,7 @@ interface State {
   yBounds: [number, number] | null;
   showRaw: boolean;
   showCells: boolean;
+  showGroups: boolean;
   showKde: boolean;
   warmCache: boolean;
 }
@@ -109,8 +114,11 @@ type Hover =
   | { kind: "trace"; entry: TraceEntry }
   | null;
 
-export async function runRipmapPage(args: { output: HTMLElement }) {
+export async function runRipmapPage(args: { output: HTMLElement; strategy?: Strategy }) {
   const { output } = args;
+  const strategy: Strategy = args.strategy ?? "ripmap";
+  const isTree = strategy === "tree";
+  const text = TEXT[strategy];
   output.innerHTML = "";
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -119,32 +127,18 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   const root = el("div", "rm");
   output.appendChild(root);
   root.innerHTML = `
-    <h1>Moment ripmap explorer</h1>
-    <p class="lead">An in-browser model of <code>rust/progressive-ripmap</code>. The dataset is built into an
-      x-ordered moment hierarchy plus dense per-block y-bin <em>planes</em>; every pan or zoom re-runs the
-      client's query policy and shows which nodes resolve to one kernel, which σ-wide x-blocks are answered by a
-      plane, which boundary leaves fall back to raw points, and the byte ranges that would go over the wire.</p>
+    <h1>${text.title}</h1>
+    <p class="lead">${text.lead}</p>
     <div class="controls panel" data-ref="controls"></div>
     <div class="stats" data-ref="stats"></div>
     <div class="main">
       <div class="panel">
         <h2>Screen — what the client renders</h2>
         <div class="canvas-wrap"><canvas data-ref="screen"></canvas></div>
-        <div class="legend">
-          <span><i class="sw" style="background:var(--plane)"></i>plane bin (one kernel per non-empty bin)</span>
-          <span><i class="sw" style="background:var(--resolved)"></i>resolved node (one kernel)</span>
-          <span><i class="sw" style="background:var(--leaf)"></i>raw boundary leaf points</span>
-          <span><i class="sw" style="background:var(--kde)"></i>rendered KDE preview</span>
-        </div>
+        <div class="legend">${text.screenLegend}</div>
         <h2 style="margin-top:14px">Hierarchy traversal — shared x-axis</h2>
         <div class="canvas-wrap"><canvas data-ref="tree"></canvas></div>
-        <div class="legend">
-          <span><i class="sw" style="background:var(--expand)"></i>expanded (too wide, or k &gt; kmax)</span>
-          <span><i class="sw" style="background:var(--boundary)"></i>straddles viewport edge → must descend</span>
-          <span><i class="sw" style="background:var(--resolved)"></i>resolved</span>
-          <span><i class="sw" style="background:var(--plane)"></i>plane(k)</span>
-          <span><i class="sw" style="background:var(--leaf)"></i>raw leaf</span>
-        </div>
+        <div class="legend">${text.treeLegend}</div>
         <div class="hint">Wheel: zoom x · Shift+wheel: zoom y (switches to explicit <code>y_bounds</code>) · Drag: pan · Double-click: overview · Hover anything for the decision math.</div>
       </div>
       <div class="panel inspector" data-ref="inspector"></div>
@@ -163,13 +157,14 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   const inspector = ref<HTMLDivElement>("inspector");
   const objectsEl = ref<HTMLDivElement>("objects");
   const roundsEl = ref<HTMLDivElement>("rounds");
-  ref<HTMLDivElement>("steps").innerHTML = STEPS_HTML;
+  ref<HTMLDivElement>("steps").innerHTML = text.steps;
 
   const state: State = {
     shape: "random_walk",
     n: 300_000,
-    // A small root cap makes the level-by-level descent visible; the Rust default is 1024.
-    params: { ...DEFAULT_PARAMS, rootCap: 16 },
+    // A small ripmap root cap makes the level-by-level descent visible; the Rust default is 1024.
+    // The x-tree uses `PagedTreeStrategy::default()` (fanout 32, root cap = fanout).
+    params: isTree ? { ...TREE_PARAMS } : { ...DEFAULT_PARAMS, rootCap: 16 },
     sigmaPx: 14,
     threshold: 1,
     minX: 0,
@@ -177,11 +172,12 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
     yBounds: null,
     showRaw: true,
     showCells: true,
+    showGroups: true,
     showKde: false,
     warmCache: false,
   };
 
-  let model: RipmapModel = buildRipmap(generateDataset(state.shape, state.n), state.params);
+  let model: RipmapModel = buildRipmap(generateDataset(state.shape, state.n), state.params, strategy);
   let cache: ClientCache = emptyCache();
   let result: QueryResult | null = null;
   let hover: Hover = null;
@@ -239,7 +235,7 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   };
 
   const rebuild = () => {
-    model = buildRipmap(generateDataset(state.shape, state.n), state.params);
+    model = buildRipmap(generateDataset(state.shape, state.n), state.params, strategy);
     cache = emptyCache();
     update();
   };
@@ -252,18 +248,26 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
     state.n = Number(v);
     rebuild();
   });
-  select("Fanout", [["2", "2"], ["4", "4 (default)"], ["8", "8"]], String(state.params.fanout), (v) => {
-    state.params.fanout = Number(v);
-    rebuild();
-  });
-  select("Root cap", [["16", "16"], ["128", "128"], ["1024", "1024 (Rust default)"]], String(state.params.rootCap), (v) => {
-    state.params.rootCap = Number(v);
-    rebuild();
-  });
-  select("min_points_per_bin", [["4", "4"], ["16", "16 (default)"], ["64", "64"]], String(state.params.minPointsPerBin), (v) => {
-    state.params.minPointsPerBin = Number(v);
-    rebuild();
-  });
+  if (isTree) {
+    select("Fanout (= root cap)", [["4", "4"], ["8", "8"], ["16", "16"], ["32", "32 (default)"]], String(state.params.fanout), (v) => {
+      state.params.fanout = Number(v);
+      state.params.rootCap = Number(v);
+      rebuild();
+    });
+  } else {
+    select("Fanout", [["2", "2"], ["4", "4 (default)"], ["8", "8"]], String(state.params.fanout), (v) => {
+      state.params.fanout = Number(v);
+      rebuild();
+    });
+    select("Root cap", [["16", "16"], ["128", "128"], ["1024", "1024 (Rust default)"]], String(state.params.rootCap), (v) => {
+      state.params.rootCap = Number(v);
+      rebuild();
+    });
+    select("min_points_per_bin", [["4", "4"], ["16", "16 (default)"], ["64", "64"]], String(state.params.minPointsPerBin), (v) => {
+      state.params.minPointsPerBin = Number(v);
+      rebuild();
+    });
+  }
   slider("σ px", 4, 40, 1, state.sigmaPx, (v) => {
     state.sigmaPx = v;
     update();
@@ -278,6 +282,10 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   });
   check("frontier cells", state.showCells, (v) => {
     state.showCells = v;
+    draw();
+  });
+  check("merged kernels", state.showGroups, (v) => {
+    state.showGroups = v;
     draw();
   });
   check("KDE preview", state.showKde, (v) => {
@@ -389,6 +397,7 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
     if (state.showKde) drawKde(ctx, r, c);
     if (state.showRaw) drawRaw(ctx, c, W, H);
     if (state.showCells) drawFrontier(ctx, r, c);
+    if (state.showGroups) drawGroups(ctx, r, c);
 
     // hover highlight
     if (hover) {
@@ -509,6 +518,26 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
     }
   }
 
+  function drawGroups(ctx: CanvasRenderingContext2D, r: QueryResult, c: Palette) {
+    // Kernels built from more than one piece: outline the merged bounding box and mark the mean.
+    ctx.strokeStyle = c.group;
+    ctx.fillStyle = c.group;
+    for (const g of r.groups) {
+      if (g.parts < 2) continue;
+      const n = g.node;
+      const x0 = sx(n.minX);
+      const x1 = Math.max(sx(n.maxX), x0 + 1);
+      const y0 = sy(n.maxY);
+      const y1 = Math.max(sy(n.minY), y0 + 1);
+      ctx.globalAlpha = 0.85;
+      ctx.strokeRect(x0 - 1.5, y0 - 1.5, x1 - x0 + 3, y1 - y0 + 3);
+      ctx.beginPath();
+      ctx.arc(sx(n.x), sy(n.y), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawKde(ctx: CanvasRenderingContext2D, r: QueryResult, c: Palette) {
     // Every emitted kernel: covariance (σ units) = I + Σ·diag(fx, fy)², drawn as a Gaussian sprite.
     const kernels: Array<[number, number, number, number, number, number]> = [];
@@ -520,19 +549,14 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
       const d = (1 + cyy * r.yFactor ** 2) * s2;
       kernels.push([mass, sx(x), sy(y), a, b, d]);
     };
+    // Exactly the frame's kernels: plane cells plus the greedily merged groups.
     for (const item of r.items) {
-      if (item.kind === "plane") {
-        for (const cell of item.cells) push(cell.mass, cell.x, cell.y, cell.cxx, cell.cxy, cell.cyy);
-      } else if (item.kind === "resolved") {
-        const n = item.node;
-        push(n.mass, n.x, n.y, n.cxx, n.cxy, n.cyy);
-      } else {
-        const { xs, ys, ws } = model.data;
-        for (let i = item.node.start; i < item.node.end; i++) {
-          const x = xs[i]!;
-          if (x >= state.minX && x <= state.maxX) push(ws[i]!, x, ys[i]!, 0, 0, 0);
-        }
-      }
+      if (item.kind !== "plane") continue;
+      for (const cell of item.cells) push(cell.mass, cell.x, cell.y, cell.cxx, cell.cxy, cell.cyy);
+    }
+    for (const g of r.groups) {
+      const n = g.node;
+      push(n.mass, n.x, n.y, n.cxx, n.cxy, n.cyy);
     }
     if (kernels.length === 0) return;
     const peaks = kernels.map(([m, , , a, b, d]) => m / Math.sqrt(Math.max(a * d - b * b, 1e-9)));
@@ -572,7 +596,11 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
       ctx.textAlign = "left";
       ctx.fillText(`ℓ${level}${level === rows - 1 ? " root" : ""}`, 4, y + LEVEL_ROW / 2 - 6);
       ctx.fillStyle = c.muted;
-      ctx.fillText(`${fmtCount(blockPointsAt(model.params, level))}p · k≤${model.kmax[level]}`, 4, y + LEVEL_ROW / 2 + 6);
+      ctx.fillText(
+        `${fmtCount(blockPointsAt(model.params, level))}p${isTree ? "" : ` · k≤${model.kmax[level]}`}`,
+        4,
+        y + LEVEL_ROW / 2 + 6,
+      );
       ctx.save();
       ctx.beginPath();
       ctx.rect(GUTTER, y, W - GUTTER, LEVEL_ROW);
@@ -631,7 +659,13 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
     const rawWindow = visible * 24;
     const tiles: Array<[string, string, string]> = [
       ["Visible points", fmtCount(visible), `raw window ${fmtBytes(rawWindow)}`],
-      ["Kernels emitted", `≤ ${fmtCount(r.kernelCount)}`, `${counts.plane} plane blocks · ${counts.resolved} nodes · ${counts.leaf} leaves`],
+      [
+        "Kernels emitted",
+        fmtCount(r.kernelCount),
+        isTree
+          ? `${counts.resolved} nodes + ${counts.leaf} leaves → ${fmtCount(r.groups.length)} after greedy merge`
+          : `${counts.plane} plane blocks · ${counts.resolved} nodes · ${counts.leaf} leaves`,
+      ],
       ["Bytes on the wire", fmtBytes(r.wireBytes), rawWindow > 0 ? `${((r.wireBytes / rawWindow) * 100).toFixed(1)}% of raw window` : ""],
       ["Range requests", String(r.requests.length), state.warmCache ? `${r.cacheHits} cache hits` : "cold cache"],
       ["Round trips", String(r.rounds), "sequential RTTs"],
@@ -685,10 +719,10 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
       byRound.set(req.round, list);
     }
     const phaseText: Record<string, string> = {
-      open: "open: manifest + ripmap header (join2)",
+      open: isTree ? "open: manifest (root level inlined)" : "open: manifest + ripmap header (join2)",
       "y-range": "exact visible y-range: descend straddling edge nodes",
       frontier: "frontier: fetch child pages of expanded nodes",
-      "planes+leaves": "plane blocks + raw boundary leaves (join2)",
+      "planes+leaves": isTree ? "raw leaves (boundary + still too big at ℓ0)" : "plane blocks + raw boundary leaves (join2)",
     };
     const rows = [...byRound.entries()].sort((a, b) => a[0] - b[0]);
     roundsEl.innerHTML =
@@ -706,6 +740,31 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   }
 
   function renderInspector() {
+    if (!hover && isTree) {
+      const levelRows = model.levelCounts
+        .map(
+          (count, level) =>
+            `<div>ℓ${level}: ${fmtCount(count)} nodes × ${fmtCount(blockPointsAt(model.params, level))} pts${level === model.levelCounts.length - 1 ? " (in manifest)" : ` · pages of ${model.params.fanout} × 64 B`}</div>`,
+        )
+        .reverse()
+        .join("");
+      inspector.innerHTML = `<h2>Inspector</h2>
+        <div>Hover a node, a raw leaf, or a hierarchy cell to see why the client chose it and which kernel it merged into.</div>
+        <div class="eq">straddles viewport edge → expand
+w² + span² &lt; t²        → resolve
+otherwise              → expand
+  (at ℓ0: raw leaf from points.bin)
+
+then, left to right (push_group):
+  merge into previous kernel while
+  dx² + dy² &lt; t²  (half-extents
+  around the merged mean)
+  raw leaf points: halve the run
+  until it fits, then push_group</div>
+        <div class="k" style="margin-top:8px">Levels</div>
+        ${levelRows}`;
+      return;
+    }
     if (!hover) {
       const kmaxRows = model.levelCounts
         .map(
@@ -783,15 +842,39 @@ otherwise              → expand
     } else {
       bytes = `<div class="k">Root node — inlined in <code>manifest.bin</code></div>`;
     }
+    const groupHtml = hover.kind === "item" && hover.item.kind !== "plane" ? describeGroup(hover.item) : "";
     inspector.innerHTML = `<h2>Inspector</h2>
       <div>${tag}</div>
       <div style="margin-top:6px">Level ℓ${node.level}, block ${fmtCount(node.index)} · points [${fmtCount(node.start)}, ${fmtCount(node.end)})</div>
       <div class="k">x ∈ [${fmtNum(node.minX)}, ${fmtNum(node.maxX)}] · y ∈ [${fmtNum(node.minY)}, ${fmtNum(node.maxY)}]</div>
-      ${math}${bytes}${cellsHtml}`;
+      ${math}${bytes}${groupHtml}${cellsHtml}`;
     const cellsCanvas = inspector.querySelector<HTMLCanvasElement>('[data-ref="cells"]');
     if (cellsCanvas && hover.kind === "item" && hover.item.kind === "plane") {
       drawCells(cellsCanvas, hover.item.cells, hover.cell);
     }
+  }
+
+  function describeGroup(item: FrontierItem) {
+    if (!result) return "";
+    const idx = result.items.indexOf(item);
+    const groups = result.groups.filter((g) => g.items.includes(idx));
+    if (groups.length === 0) return "";
+    const t = state.threshold;
+    if (groups.length > 1) {
+      const pts = groups.reduce((s, g) => s + g.rawPoints, 0);
+      return `<div class="k" style="margin-top:8px">Greedy merge</div>
+        <div>Raw points of this leaf were halved until each run fit, then merged into
+        <b>${groups.length}</b> kernels (${fmtCount(pts)} points in total, shared with neighbours).</div>`;
+    }
+    const g = groups[0]!;
+    const n = g.node;
+    const dx = Math.max(n.x - n.minX, n.maxX - n.x) * result.xFactor;
+    const dy = Math.max(n.y - n.minY, n.maxY - n.y) * result.yFactor;
+    const parts = g.parts === 1 ? "on its own (nothing next to it fit)" : `with ${g.parts - 1} neighbouring piece${g.parts > 2 ? "s" : ""}`;
+    return `<div class="k" style="margin-top:8px">Greedy merge (kernel #${result.groups.indexOf(g) + 1} of ${result.groups.length})</div>
+      <div>Emitted ${parts}${g.rawPoints ? ` · ${fmtCount(g.rawPoints)} raw points` : ""}.</div>
+      <div class="eq">dx = ${dx.toFixed(3)}σ, dy = ${dy.toFixed(3)}σ  (half-extents)
+dx² + dy² = ${(dx * dx + dy * dy).toFixed(2)} &lt; t² = ${(t * t).toFixed(2)}</div>`;
   }
 
   function drawCells(canvas: HTMLCanvasElement, cells: PlaneCell[], active: PlaneCell | null) {
@@ -929,7 +1012,7 @@ otherwise              → expand
 // ------------------------------------------------------------------------------------------------
 // helpers
 
-const STEPS_HTML = `
+const RIPMAP_STEPS = `
   <div class="panel"><h3>1 · x-ordered moment hierarchy</h3>
     Points are kept in x order and grouped into 32-point leaves, then summarised level by level with a small
     <b>fanout of 4</b> so x-block widths come in fine ×4 steps. Each 64-byte node stores mass, mean, covariance and its
@@ -951,6 +1034,66 @@ const STEPS_HTML = `
     On vertically incoherent data such as white noise this replaces downloading nearly every raw point with a
     handful of plane ranges.</div>`;
 
+const TREE_STEPS = `
+  <div class="panel"><h3>1 · x-ordered moment hierarchy</h3>
+    The same paged hierarchy the ripmap uses, with a <b>fanout of 32</b>: 32-point leaves, then every 32 neighbouring
+    nodes become one 64-byte parent, so one page of children is 2 KiB. Levels roll up until at most 32 root nodes
+    remain, inlined in <code>manifest.bin</code>. A handful of static objects; storage ≈ 1.09× raw (level 0 adds 64 B per 768 B leaf).</div>
+  <div class="panel"><h3>2 · query: descend until it fits</h3>
+    After the exact visible y-range, the client walks the tree level by level. Nodes straddling the viewport edge
+    always descend. A fully-inside node becomes one kernel only when its whole on-screen box fits,
+    w² + h² &lt; t². Otherwise it expands, and at level 0 that means downloading its 32 raw points. Only x is ever
+    split, so a tall node can only get thinner, never shorter.</div>
+  <div class="panel"><h3>3 · assemble: greedy merging</h3>
+    Left to right, each resolved node is merged into the previous kernel while the combined kernel's half-extents
+    around its mean still fit (dx² + dy² &lt; t²). Raw leaf points are halved recursively until each run fits, then
+    pushed through the same greedy merge. Moments stay exact; only the grouping changes.</div>
+  <div class="panel"><h3>4 · fetch and where it struggles</h3>
+    One round trip per level for 2 KiB pages (bridging gaps ≤ 16 KiB), then the raw leaves. Smooth signals resolve
+    high up. Vertically incoherent data (white noise) never fits, because thinner x-slices are just as tall, so the
+    overview descends to every leaf and downloads ~100% of <code>points.bin</code>. Compare with the ripmap page.</div>`;
+
+const TEXT: Record<Strategy, { title: string; lead: string; screenLegend: string; treeLegend: string; steps: string }> = {
+  ripmap: {
+    title: "Moment ripmap explorer",
+    lead: `An in-browser model of <code>rust/progressive-ripmap</code>. The dataset is built into an
+      x-ordered moment hierarchy plus dense per-block y-bin <em>planes</em>; every pan or zoom re-runs the
+      client's query policy and shows which nodes resolve to one kernel, which σ-wide x-blocks are answered by a
+      plane, which boundary leaves fall back to raw points, and the byte ranges that would go over the wire.`,
+    screenLegend: `
+      <span><i class="sw" style="background:var(--plane)"></i>plane bin (one kernel per non-empty bin)</span>
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved node</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw boundary leaf points</span>
+      <span><i class="sw" style="background:var(--group)"></i>merged kernel (2+ pieces)</span>
+      <span><i class="sw" style="background:var(--kde)"></i>rendered KDE preview</span>`,
+    treeLegend: `
+      <span><i class="sw" style="background:var(--expand)"></i>expanded (too wide, or k &gt; kmax)</span>
+      <span><i class="sw" style="background:var(--boundary)"></i>straddles viewport edge → must descend</span>
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved</span>
+      <span><i class="sw" style="background:var(--plane)"></i>plane(k)</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw leaf</span>`,
+    steps: RIPMAP_STEPS,
+  },
+  tree: {
+    title: "Paged x-tree explorer",
+    lead: `An in-browser model of <code>rust/progressive-tree</code> (<code>paged_moment_tree</code>). The dataset is
+      built into an x-ordered, fanout-32 moment hierarchy; every pan or zoom re-runs the client's query and shows
+      which nodes are small enough on screen to become one kernel, which leaves fall back to raw points, how the
+      frame then greedily merges neighbours into the final kernels, and the byte ranges that would go over the wire.`,
+    screenLegend: `
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved node (fits as one kernel)</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw leaf points</span>
+      <span><i class="sw" style="background:var(--group)"></i>merged kernel (2+ pieces)</span>
+      <span><i class="sw" style="background:var(--kde)"></i>rendered KDE preview</span>`,
+    treeLegend: `
+      <span><i class="sw" style="background:var(--expand)"></i>expanded (doesn't fit)</span>
+      <span><i class="sw" style="background:var(--boundary)"></i>straddles viewport edge → must descend</span>
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw leaf</span>`,
+    steps: TREE_STEPS,
+  },
+};
+
 interface Palette {
   panel: string;
   ink: string;
@@ -963,6 +1106,7 @@ interface Palette {
   boundary: string;
   kde: string;
   accent: string;
+  group: string;
   dataRgb: [number, number, number];
 }
 
@@ -981,6 +1125,7 @@ function colors(root: HTMLElement): Palette {
     boundary: v("--boundary"),
     kde: v("--kde"),
     accent: v("--accent"),
+    group: v("--group"),
     dataRgb: hexToRgb(v("--data")),
   };
 }

@@ -7,6 +7,7 @@ import {
   levelCounts,
   maxDepth,
   runQuery,
+  TREE_PARAMS,
   type ViewQuery,
 } from "../src/pages/ripmap/ripmap-model";
 
@@ -63,6 +64,38 @@ describe("ripmap explorer model", () => {
       }
     });
   }
+
+  for (const strategy of ["ripmap", "tree"] as const) {
+    it(`greedy kernel groups (${strategy}) preserve the visible mass exactly`, () => {
+      const data = generateDataset("random_walk", 120_000);
+      const model = buildRipmap(data, strategy === "tree" ? TREE_PARAMS : DEFAULT_PARAMS, strategy);
+      for (const [minX, maxX] of [[0, 1], [0.3, 0.31]] as const) {
+        const r = runQuery(model, view(minX, maxX));
+        let mass = 0;
+        for (let i = 0; i < data.xs.length; i++) {
+          const x = data.xs[i]!;
+          if (x >= minX && x <= maxX) mass += data.ws[i]!;
+        }
+        let got = r.groups.reduce((s, g) => s + g.node.mass, 0);
+        for (const item of r.items) {
+          if (item.kind === "plane") got += item.cells.reduce((s, c) => s + c.mass, 0);
+        }
+        expect(got / mass).toBeCloseTo(1, 9);
+        const pieces = r.items.filter((i) => i.kind === "resolved").length;
+        expect(r.groups.length).toBeLessThanOrEqual(pieces + r.groups.reduce((s, g) => s + g.rawPoints, 0));
+      }
+    });
+  }
+
+  it("x-tree mirrors PagedTreeStrategy layout and never uses planes", () => {
+    const model = buildRipmap(generateDataset("noisy_spikes", 300_000), TREE_PARAMS, "tree");
+    expect(model.levelCounts).toEqual([9375, 293, 10]);
+    expect(model.objects.map((o) => o.key)).toEqual(["manifest.bin", "level_0.bin", "level_1.bin", "points.bin"]);
+    const r = runQuery(model, view(0, 1));
+    expect(r.items.some((i) => i.kind === "plane")).toBe(false);
+    // White noise never fits as tall columns: the overview falls through to (nearly) every leaf.
+    expect(r.wireBytes).toBeGreaterThan(model.rawBytes * 0.9);
+  });
 
   it("serves the white-noise overview mostly from planes", () => {
     const model = buildRipmap(generateDataset("noisy_spikes", 300_000), DEFAULT_PARAMS);

@@ -1,13 +1,16 @@
 /**
- * In-browser model of the `progressive-ripmap` strategy (`rust/progressive-ripmap`).
+ * In-browser model of the hierarchy-based progressive strategies: the moment ripmap
+ * (`rust/progressive-ripmap`) and the paged x-tree (`rust/progressive-tree`).
  *
  * Mirrors, at visualization fidelity:
  * - the shared paged moment hierarchy (`level_counts`, `write_hierarchy`, root level inlined
  *   in `manifest.bin`, 64-byte nodes, 24-byte points),
  * - the ripmap's dense per-block y-bin planes (`max_depth`, `bin_geometry`, `plane_{ℓ}_{k}.bin`),
  * - the online query: pruned exact `visible_y_range`, the level-by-level frontier with the
- *   ripmap `decide` policy (`fits_threshold` / `offscreen_y` / `needed_depth`), and the
- *   byte-range requests the client would issue (`coalesce_runs` gap bridging).
+ *   ripmap `decide` policy (`fits_threshold` / `offscreen_y` / `needed_depth`) or the x-tree's
+ *   `standard_decision`, and the byte-range requests the client would issue (`coalesce_runs`),
+ * - frame assembly (`assemble_frame`): greedy merging of resolved nodes and recursively halved
+ *   raw leaf points into the emitted kernels (`push_group` / `collect_points`).
  *
  * The Rust code stays the source of truth; constants below are copied from it.
  */
@@ -27,6 +30,9 @@ const MAX_COALESCE_LEAVES = 256;
 
 export type DatasetShape = "random_walk" | "noisy_spikes";
 
+/** `moment_ripmap` (x-hierarchy + y-bin planes) or `paged_moment_tree` (x-hierarchy only). */
+export type Strategy = "ripmap" | "tree";
+
 export interface RipmapParams {
   leafPoints: number;
   fanout: number;
@@ -38,6 +44,14 @@ export const DEFAULT_PARAMS: RipmapParams = {
   leafPoints: 32,
   fanout: 4,
   rootCap: 1024,
+  minPointsPerBin: 16,
+};
+
+/** `PagedTreeStrategy::default()`: fanout 32 (2 KiB pages) and `root_cap = fanout`. */
+export const TREE_PARAMS: RipmapParams = {
+  leafPoints: 32,
+  fanout: 32,
+  rootCap: 32,
   minPointsPerBin: 16,
 };
 
@@ -90,6 +104,7 @@ export interface StoredObject {
 }
 
 export interface RipmapModel {
+  strategy: Strategy;
   data: Dataset;
   params: RipmapParams;
   levelCounts: number[];
@@ -115,7 +130,7 @@ export interface ViewQuery {
 export type Decision =
   | { kind: "resolve"; reason: "fits" | "offscreen" }
   | { kind: "plane"; k: number }
-  | { kind: "expand"; reason: "boundary" | "too-wide" | "k-exceeds-kmax" };
+  | { kind: "expand"; reason: "boundary" | "too-big" | "too-wide" | "k-exceeds-kmax" };
 
 export interface DecisionDetail {
   /** On-screen width / span in σ units. */
@@ -138,6 +153,21 @@ export type FrontierItem =
   | { kind: "plane"; node: MomentNode; k: number; cells: PlaneCell[] }
   | { kind: "leaf"; node: MomentNode };
 
+/**
+ * One emitted Gaussian kernel built by greedy merging (`push_group`): consecutive resolved
+ * nodes and halved raw-point runs keep merging into the previous kernel while the combined
+ * moments still fit (`fits_merged_group`). Plane cells are emitted directly, never grouped.
+ */
+export interface KernelGroup {
+  node: MomentNode;
+  /** Frontier items (resolved nodes / leaves) that contributed to this kernel. */
+  items: number[];
+  /** Pieces merged: resolved nodes plus raw-point runs. */
+  parts: number;
+  /** Raw points merged in from leaves (0 if built only from resolved nodes). */
+  rawPoints: number;
+}
+
 export interface RangeRequest {
   key: string;
   offset: number;
@@ -155,6 +185,7 @@ export interface QueryResult {
   /** `trace[ℓ]`: every node classified at level `ℓ` during the frontier traversal. */
   trace: TraceEntry[][];
   items: FrontierItem[];
+  groups: KernelGroup[];
   requests: RangeRequest[];
   rounds: number;
   wireBytes: number;
@@ -322,7 +353,9 @@ export function planeKey(level: number, k: number) {
   return `plane_${level}_${k}.bin`;
 }
 
-export function buildRipmap(data: Dataset, params: RipmapParams): RipmapModel {
+export function buildRipmap(data: Dataset, inParams: RipmapParams, strategy: Strategy = "ripmap"): RipmapModel {
+  // The x-tree always rolls up until at most `fanout` root nodes remain.
+  const params = strategy === "tree" ? { ...inParams, rootCap: inParams.fanout } : inParams;
   const n = data.xs.length;
   const counts = levelCounts(n, params.leafPoints, params.fanout, params.rootCap);
   const levels: MomentNode[][] = [];
@@ -342,12 +375,14 @@ export function buildRipmap(data: Dataset, params: RipmapParams): RipmapModel {
     levels.push(nodes);
   }
 
-  const kmax = counts.map((_, level) => maxDepth(blockPointsAt(params, level), params.minPointsPerBin));
+  const kmax = counts.map((_, level) =>
+    strategy === "tree" ? 0 : maxDepth(blockPointsAt(params, level), params.minPointsPerBin),
+  );
   const rootLevel = counts.length - 1;
   const objects: StoredObject[] = [
     { key: "manifest.bin", bytes: 64 + (counts[rootLevel] ?? 0) * NODE_BYTES, kind: "manifest" },
-    { key: "ripmap.bin", bytes: 20 + counts.length, kind: "header" },
   ];
+  if (strategy === "ripmap") objects.push({ key: "ripmap.bin", bytes: 20 + counts.length, kind: "header" });
   for (let level = 0; level < rootLevel; level++) {
     objects.push({ key: `level_${level}.bin`, bytes: counts[level]! * NODE_BYTES, kind: "level", level });
   }
@@ -364,10 +399,10 @@ export function buildRipmap(data: Dataset, params: RipmapParams): RipmapModel {
   }
   objects.push({ key: "points.bin", bytes: n * POINT_BYTES, kind: "points" });
   const totalBytes = objects.reduce((s, o) => s + o.bytes, 0);
-  return { data, params, levelCounts: counts, levels, kmax, objects, totalBytes, rawBytes: n * POINT_BYTES };
+  return { strategy, data, params, levelCounts: counts, levels, kmax, objects, totalBytes, rawBytes: n * POINT_BYTES };
 }
 
-function mergeNodes(children: MomentNode[], level: number, index: number): MomentNode {
+export function mergeNodes(children: MomentNode[], level: number, index: number): MomentNode {
   let mass = 0;
   let sx = 0;
   let sy = 0;
@@ -503,10 +538,12 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
   let cacheHits = 0;
 
   if (!cache.opened) {
-    const manifest = model.objects[0]!;
-    const header = model.objects[1]!;
-    requests.push({ key: manifest.key, offset: 0, len: manifest.bytes, round, phase: "open" });
-    requests.push({ key: header.key, offset: 0, len: header.bytes, round, phase: "open" });
+    // Manifest (+ `ripmap.bin` header for the ripmap) are read concurrently on open.
+    for (const obj of model.objects) {
+      if (obj.kind === "manifest" || obj.kind === "header") {
+        requests.push({ key: obj.key, offset: 0, len: obj.bytes, round, phase: "open" });
+      }
+    }
     round++;
     cache.opened = true;
   }
@@ -612,7 +649,7 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
   const trace: TraceEntry[][] = counts.map(() => []);
   const items: FrontierItem[] = [];
   if (!yRange) {
-    return { query, yRange, effectiveY, xFactor, yFactor, trace, items, requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
+    return { query, yRange, effectiveY, xFactor, yFactor, trace, items, groups: [], requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
   }
 
   // Phase 2: frontier with the ripmap decision policy.
@@ -626,6 +663,7 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
     if (w * w + span * span < threshold * threshold) {
       return { node, decision: { kind: "resolve", reason: "fits" }, detail };
     }
+    if (model.strategy === "tree") return { node, decision: { kind: "expand", reason: "too-big" }, detail };
     if (w <= MAX_PLANE_BLOCK_WIDTH * threshold) {
       const nd = neededDepth(node, w, yFactor, threshold);
       detail.hMax = nd.hMax;
@@ -669,15 +707,10 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
     if (kind === "resolved") {
       const d = entry.decision as Extract<Decision, { kind: "resolve" }>;
       items.push({ kind: "resolved", node, reason: d.reason });
-      kernelCount++;
     } else if (kind === "leaf") {
       items.push({ kind: "leaf", node });
       if (cache.leaves.has(node.index)) cacheHits++;
       else missingLeaves.push(node.index);
-      for (let i = node.start; i < node.end; i++) {
-        const x = model.data.xs[i]!;
-        if (x >= minX && x <= maxX) kernelCount++;
-      }
     } else {
       const k = (entry.decision as Extract<Decision, { kind: "plane" }>).k;
       const cells = planeCells(model, node, k);
@@ -720,6 +753,9 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
     round++;
   }
 
+  const groups = assembleGroups(model, items, query, xFactor, yFactor, threshold);
+  kernelCount += groups.length;
+
   return {
     query,
     yRange,
@@ -728,6 +764,7 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
     yFactor,
     trace,
     items,
+    groups,
     requests,
     rounds: round,
     wireBytes: sum(requests),
@@ -738,4 +775,75 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
 
 function sum(requests: RangeRequest[]) {
   return requests.reduce((s, r) => s + r.len, 0);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Frame assembly (`assemble_frame` in `progressive-common/src/render.rs`).
+
+function fitsMergedGroup(node: MomentNode, xFactor: number, yFactor: number, threshold: number) {
+  const dx = Math.max(node.x - node.minX, node.maxX - node.x) * xFactor;
+  const dy = Math.max(node.y - node.minY, node.maxY - node.y) * yFactor;
+  return dx * dx + dy * dy < threshold * threshold;
+}
+
+function fitsThreshold(node: MomentNode, xFactor: number, yFactor: number, threshold: number) {
+  const dx = (node.maxX - node.minX) * xFactor;
+  const dy = (node.maxY - node.minY) * yFactor;
+  return dx * dx + dy * dy < threshold * threshold;
+}
+
+function assembleGroups(
+  model: RipmapModel,
+  items: FrontierItem[],
+  query: ViewQuery,
+  xFactor: number,
+  yFactor: number,
+  threshold: number,
+): KernelGroup[] {
+  const groups: KernelGroup[] = [];
+  const { xs } = model.data;
+
+  const pushGroup = (node: MomentNode, item: number, rawPoints: number) => {
+    if (node.mass <= 0 && node.minX > node.maxX) return;
+    const last = groups[groups.length - 1];
+    if (last) {
+      const combined = mergeNodes([last.node, node], -1, -1);
+      combined.start = Math.min(last.node.start, node.start);
+      combined.end = Math.max(last.node.end, node.end);
+      if (fitsMergedGroup(combined, xFactor, yFactor, threshold)) {
+        last.node = combined;
+        if (last.items[last.items.length - 1] !== item) last.items.push(item);
+        last.parts++;
+        last.rawPoints += rawPoints;
+        return;
+      }
+    }
+    groups.push({ node, items: [item], parts: 1, rawPoints });
+  };
+
+  // Recursively halve an x-sorted run of raw points until each half fits (`collect_points`).
+  const collect = (start: number, end: number, item: number) => {
+    if (start >= end) return;
+    const node = summarize(model.data, -1, -1, start, end);
+    if (end - start === 1 || fitsThreshold(node, xFactor, yFactor, threshold)) {
+      pushGroup(node, item, end - start);
+    } else {
+      const mid = start + ((end - start) >> 1);
+      collect(start, mid, item);
+      collect(mid, end, item);
+    }
+  };
+
+  for (const [i, item] of items.entries()) {
+    if (item.kind === "resolved") {
+      pushGroup(item.node, i, 0);
+    } else if (item.kind === "leaf") {
+      let start = item.node.start;
+      let end = item.node.end;
+      while (start < end && xs[start]! < query.minX) start++;
+      while (end > start && xs[end - 1]! > query.maxX) end--;
+      collect(start, end, i);
+    }
+  }
+  return groups;
 }
