@@ -308,24 +308,32 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   }
 
   // ---------------------------------------------------------------- geometry
-  const plotW = () => Math.max(screen.clientWidth - GUTTER, 10);
-  const plotH = () => Math.max(screen.clientHeight - 2 * PAD_Y, 10);
-  const sx = (x: number) => GUTTER + ((x - state.minX) / (state.maxX - state.minX)) * plotW();
-  const invX = (px: number) => state.minX + ((px - GUTTER) / plotW()) * (state.maxX - state.minX);
+  // Canvas size is measured once per update (`measure`), never inside per-point transforms:
+  // reading `clientWidth` there forces a synchronous layout for every projected point.
+  const geom = { W: 0, H: 0, plotW: 10, plotH: 10 };
+  const measure = () => {
+    geom.W = screen.clientWidth;
+    geom.H = Math.round(Math.min(Math.max(geom.W * 0.45, 280), 520));
+    geom.plotW = Math.max(geom.W - GUTTER, 10);
+    geom.plotH = Math.max(geom.H - 2 * PAD_Y, 10);
+    screen.style.height = `${geom.H}px`;
+  };
+  const plotW = () => geom.plotW;
+  const plotH = () => geom.plotH;
+  const sx = (x: number) => GUTTER + ((x - state.minX) / (state.maxX - state.minX)) * geom.plotW;
+  const invX = (px: number) => state.minX + ((px - GUTTER) / geom.plotW) * (state.maxX - state.minX);
   const yr = () => result?.effectiveY ?? [0, 1];
   const sy = (y: number) => {
     const [y0, y1] = yr();
-    return PAD_Y + (1 - (y - y0) / Math.max(y1 - y0, 1e-12)) * plotH();
+    return PAD_Y + (1 - (y - y0) / Math.max(y1 - y0, 1e-12)) * geom.plotH;
   };
   const invY = (py: number) => {
     const [y0, y1] = yr();
-    return y0 + (1 - (py - PAD_Y) / plotH()) * (y1 - y0);
+    return y0 + (1 - (py - PAD_Y) / geom.plotH) * (y1 - y0);
   };
 
-  const screenHeight = () => Math.round(Math.min(Math.max(screen.clientWidth * 0.45, 280), 520));
-
   function update() {
-    screen.style.height = `${screenHeight()}px`;
+    measure();
     const query: ViewQuery = {
       minX: state.minX,
       maxX: state.maxX,
@@ -353,8 +361,7 @@ export async function runRipmapPage(args: { output: HTMLElement }) {
   }
 
   function drawScreen(r: QueryResult) {
-    const W = screen.clientWidth;
-    const H = screenHeight();
+    const { W, H } = geom;
     const ctx = setupCanvas(screen, W, H);
     const c = colors(root);
     ctx.fillStyle = c.panel;
