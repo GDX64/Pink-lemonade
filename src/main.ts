@@ -4,6 +4,7 @@ import { runBenchmarkPage } from "./pages/benchmark/benchmark-page";
 import { runFigurePage } from "./pages/figures-page";
 import { renderMseChart } from "./pages/mse/mse-chart";
 import { runMsePage } from "./pages/mse/mse-page";
+import { runGridPage } from "./pages/ripmap/grid-page";
 import { runRipmapPage } from "./pages/ripmap/ripmap-page";
 
 const root = document.createElement("div");
@@ -20,7 +21,7 @@ title.style.margin = "0 0 12px 0";
 
 const subtitle = document.createElement("p");
 subtitle.textContent =
-  "Run paper artifacts in-browser: application, merge benchmark, MSE estimation, ripmap, x-tree and quadtree explorers, and figure rendering.";
+  "Run paper artifacts in-browser: application, merge benchmark, MSE estimation, ripmap, x-tree, quadtree and sparse grid explorers, and figure rendering.";
 subtitle.style.margin = "0 0 20px 0";
 
 const menu = document.createElement("ul");
@@ -107,6 +108,13 @@ const actions: Array<{
     label: "Quadtree explorer",
     run: async () => {
       await runRipmapPage({ output, strategy: "quadtree" });
+    },
+  },
+  {
+    page: "grid",
+    label: "Sparse grid explorer",
+    run: async () => {
+      await runGridPage({ output });
     },
   },
   {

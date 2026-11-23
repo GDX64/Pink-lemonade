@@ -18,6 +18,7 @@ import {
   countInlineDepths,
   runQuadQuery,
 } from "../src/pages/ripmap/quadtree-model";
+import { GRID_PARAMS, buildGrid, indexAt, maxLevelFor, quantize, runGridQuery } from "../src/pages/ripmap/grid-model";
 
 const view = (minX: number, maxX: number): ViewQuery => ({
   minX,
@@ -172,5 +173,59 @@ describe("quadtree explorer model", () => {
       offset += info.count * RECORD_BYTES;
     }
     expect(model.objects[1]!.bytes).toBe(offset);
+  });
+});
+
+describe("sparse grid explorer model", () => {
+  it("mirrors max_level_for and nests levels exactly", () => {
+    expect(maxLevelFor(1, 256)).toBe(0);
+    expect(maxLevelFor(257, 256)).toBe(1);
+    expect(maxLevelFor(10_000_000, 256)).toBe(16);
+    for (const v of [0, 0.1, 0.333333, 0.5, 0.9999999, 1]) {
+      const q = quantize(v, 0, 1);
+      for (let level = 1; level <= 24; level++) expect(indexAt(q, level) >>> 1).toBe(indexAt(q, level - 1));
+    }
+  });
+
+  it("stores every plane's cells column-major with consistent CSC pointers and exact mass", () => {
+    const data = generateDataset("noisy_spikes", 100_000);
+    const model = buildGrid(data, GRID_PARAMS);
+    const total = data.ws.reduce((s, w) => s + w, 0);
+    expect(model.planes.length).toBeGreaterThan(0);
+    for (const p of model.planes) {
+      expect(p.i - p.j).toBeGreaterThanOrEqual(GRID_PARAMS.minAspect);
+      expect(p.cells.length * GRID_PARAMS.minPointsPerCell).toBeLessThanOrEqual(data.xs.length);
+      expect(p.colStarts[p.colStarts.length - 1]).toBe(p.cells.length);
+      for (let c = 0; c + 1 < p.colStarts.length; c++) {
+        for (let k = p.colStarts[c]!; k < p.colStarts[c + 1]!; k++) expect(p.cells[k]!.col).toBe(c);
+      }
+      expect(p.cells.reduce((s, c) => s + c.mass, 0)).toBeCloseTo(total, 6);
+    }
+    expect(model.objects.map((o) => o.key)).toEqual(["manifest.bin", "columns.bin", "cells.bin", "points.bin"]);
+  });
+
+  it("answers views with exact mass and y-range in about two rounds", () => {
+    for (const shape of ["noisy_spikes", "random_walk"] as const) {
+      const data = generateDataset(shape, 100_000);
+      const model = buildGrid(data, GRID_PARAMS);
+      for (const [lo, hi] of [[0, 1], [0.4123, 0.4567], [0.31, 0.3105]] as const) {
+        const r = runGridQuery(model, view(lo, hi));
+        let mass = 0;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        for (let i = 0; i < data.xs.length; i++) {
+          if (data.xs[i]! < lo || data.xs[i]! > hi) continue;
+          mass += data.ws[i]!;
+          minY = Math.min(minY, data.ys[i]!);
+          maxY = Math.max(maxY, data.ys[i]!);
+        }
+        expect(r.yRange).toEqual([minY, maxY]);
+        let got = r.groups.reduce((s, g) => s + g.node.mass, 0);
+        for (const rd of r.chosen!.renders) if (rd.kind === "cells") got += rd.cells.reduce((s, c) => s + c.mass, 0);
+        expect(got / mass).toBeCloseTo(1, 9);
+        // open + records + cells/raw.
+        expect(r.rounds).toBeLessThanOrEqual(3);
+      }
+    }
   });
 });

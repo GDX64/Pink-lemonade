@@ -42,7 +42,7 @@ type AnyModel = RipmapModel | QuadModel;
  * kernels, and which byte ranges are fetched.
  */
 
-const STYLE = `
+export const STYLE = `
 .rm { --bg:#f6f7fb; --panel:#ffffff; --ink:#1b2433; --muted:#5d6b80; --line:#dde3ec; --grid:#eef1f6;
   --plane:#7c4dff; --resolved:#0f9d8a; --leaf:#f07c1f; --expand:#b7c2d1; --boundary:#8a96a8;
   --open:#64748b; --yrange:#2f7de1; --data:#1b2433; --kde:#d6336c; --accent:#d6336c; --group:#c2255c;
@@ -103,8 +103,8 @@ const STYLE = `
 @media (max-width: 1000px) { .rm .two { grid-template-columns:minmax(0,1fr); } }
 `;
 
-const GUTTER = 88; // left label gutter shared by the screen and the hierarchy canvas
-const PAD_Y = 12;
+export const GUTTER = 88; // left label gutter shared by the screen and the hierarchy canvas
+export const PAD_Y = 12;
 const LEVEL_ROW = 26;
 const QUAD_ROW = 34;
 
@@ -1322,7 +1322,7 @@ const TEXT: Record<PageStrategy, { title: string; lead: string; screenLegend: st
   },
 };
 
-interface Palette {
+export interface Palette {
   panel: string;
   ink: string;
   muted: string;
@@ -1338,7 +1338,7 @@ interface Palette {
   dataRgb: [number, number, number];
 }
 
-function colors(root: HTMLElement): Palette {
+export function colors(root: HTMLElement): Palette {
   const s = getComputedStyle(root);
   const v = (name: string) => s.getPropertyValue(name).trim();
   return {
@@ -1363,7 +1363,7 @@ function hexToRgb(hex: string): [number, number, number] {
   return m ? [parseInt(m[1]!, 16), parseInt(m[2]!, 16), parseInt(m[3]!, 16)] : [30, 30, 30];
 }
 
-function makeSprite() {
+export function makeSprite() {
   const cache = new Map<string, HTMLCanvasElement>();
   return {
     get(color: string) {
@@ -1388,12 +1388,12 @@ function makeSprite() {
   };
 }
 
-function withAlpha(hex: string, a: number) {
+export function withAlpha(hex: string, a: number) {
   const [r, g, b] = hexToRgb(hex);
   return `rgba(${r},${g},${b},${a.toFixed(3)})`;
 }
 
-function setupCanvas(canvas: HTMLCanvasElement, w: number, h: number) {
+export function setupCanvas(canvas: HTMLCanvasElement, w: number, h: number) {
   const dpr = window.devicePixelRatio || 1;
   canvas.style.height = `${h}px`;
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -1405,7 +1405,7 @@ function setupCanvas(canvas: HTMLCanvasElement, w: number, h: number) {
   return ctx;
 }
 
-function lowerBound(xs: Float64Array, value: number) {
+export function lowerBound(xs: Float64Array, value: number) {
   let lo = 0;
   let hi = xs.length;
   while (lo < hi) {
@@ -1416,23 +1416,23 @@ function lowerBound(xs: Float64Array, value: number) {
   return lo;
 }
 
-function el(tag: string, cls?: string) {
+export function el(tag: string, cls?: string) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   return e;
 }
 
-function fmtBytes(b: number) {
+export function fmtBytes(b: number) {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KiB`;
   return `${(b / 1024 / 1024).toFixed(2)} MiB`;
 }
 
-function fmtCount(n: number) {
+export function fmtCount(n: number) {
   return n.toLocaleString("en-US");
 }
 
-function fmtNum(v: number) {
+export function fmtNum(v: number) {
   const a = Math.abs(v);
   if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(2);
   return v.toFixed(a < 1 ? 4 : a < 100 ? 2 : 1);
