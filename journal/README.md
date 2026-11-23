@@ -9,3 +9,4 @@ Chronological research notes, ablations, and measured benchmark results for `pin
 - [2026-11-22: Classic Moment Quadtree (and in-browser strategy explorers)](./2026-11-22-moment-quadtree.md)
 - [2026-11-22: Sparse Moment Grid Pyramid (shape-matched cells, two round trips)](./2026-11-22-sparse-grid.md)
 - [2026-11-22: Moment Ripmap v2 (`PLPRIPM2`) — Sparse 16-Byte Planes, Inline Directories, and Level-Jumping Client](./2026-11-22-ripmap-v2-sparse-planes.md)
+- [2026-11-22: Head-to-Head — Ripmap v2 vs Sparse Grid, plus a σ = 4 px Probe](./2026-11-22-ripmap-v2-vs-sparse-grid.md)
