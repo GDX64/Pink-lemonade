@@ -1,18 +1,17 @@
 //! Offline builder: column pyramid plus sparse moment planes at several aspect ratios.
 //!
 //! Points arrive x-sorted, so every column at every level is a contiguous run of
-//! `points.bin`. For each aspect `d = i - j` the builder finds the finest level `(i, j)` whose
-//! plane keeps at least `min_points_per_cell` points per non-empty cell on average (aborting a
-//! pass as soon as it overflows that budget), then derives every coarser level `(i-1, j-1)` of
-//! the same aspect by merging 2×2 cells.
+//! `points.bin`. For each aspect `d = i - j`, every level `(i, i - d)` with `i ≤ max_level` and
+//! `j ≤ MAX_ROW_LEVEL` is built directly from the points, keeping only the columns that pass a
+//! per-column density gate ([`Gate`]); a plane where no column passes is not stored.
 
-use pink_lemonade_progressive_common::{Moments, MomentCell, Node, PointCollector};
+use pink_lemonade_progressive_common::{Moments, Node, PointCollector, SparseCell};
 use pink_lemonade_progressive_core::{BuildError, DatasetBuilder, ObjectWriter, Point, StoreError};
 
 use crate::SparseGridStrategy;
 use crate::format::{
-    Bounds, CELLS_KEY, COLUMNS_KEY, GRID_CELL_BYTES, LevelInfo, MANIFEST_KEY, MAX_LEVEL, Manifest,
-    POINTS_KEY, PlaneInfo, index_at, quantize, write_cell, write_record,
+    Bounds, CELLS_KEY, COLUMNS_KEY, GRID_CELL_BYTES, LevelInfo, MANIFEST_KEY, MAX_LEVEL,
+    MAX_ROW_LEVEL, Manifest, POINTS_KEY, PlaneInfo, index_at, quantize, write_cell, write_record,
 };
 
 pub struct SparseGridBuilder {
@@ -137,37 +136,44 @@ fn build(
             .collect();
     }
 
-    // Planes, aspect by aspect.
+    // Planes, aspect by aspect: every level `(i, i - d)` is computed straight from the points,
+    // keeping only the columns that pass the per-column density gate.
     let qy: Vec<u32> = points.iter().map(|p| quantize(p.y, bounds.y0, bounds.h)).collect();
-    let limit = n / config.min_points_per_cell.max(1) as usize;
+    let gate = Gate {
+        min_points_per_cell: config.min_points_per_cell.max(1) as u64,
+        span_factor: 1u64 << config.sparse_extra_depth.min(8),
+    };
     let mut planes: Vec<Vec<BuiltPlane>> = (0..=max_level).map(|_| Vec::new()).collect();
     let mut sink = writer.create_object(CELLS_KEY)?;
     let mut written_cells = 0u64;
+    let mut scratch = RowScratch::default();
     let mut buf = Vec::new();
     for d in config.aspects() {
-        let i_fine = (max_level as i64).min(d + MAX_LEVEL as i64);
-        let j_fine = i_fine - d;
-        if i_fine < 0 || j_fine < 0 {
-            continue;
-        }
-        let (mut i, mut j) = (i_fine as u32, j_fine as u32);
-        let mut cells = loop {
-            if let Some(cells) = grid_cells(points, &qy, &starts[i as usize], j, limit) {
-                break Some(cells);
+        for i in d.max(0)..=max_level as i64 {
+            let j = i - d;
+            if j > MAX_ROW_LEVEL as i64 {
+                break;
             }
-            if i == 0 || j == 0 {
-                break None;
+            let (i, j) = (i as u32, j as u32);
+            let cells = gated_cells(
+                points,
+                &qy,
+                &starts[i as usize],
+                &nodes[i as usize],
+                j,
+                &bounds,
+                gate,
+                &mut scratch,
+            );
+            if cells.is_empty() {
+                continue;
             }
-            i -= 1;
-            j -= 1;
-        };
-        while let Some(level_cells) = cells {
             buf.clear();
             let mut col_starts = vec![0u32; (1usize << i) + 1];
-            for cell in &level_cells {
+            for cell in &cells {
                 col_starts[cell.col as usize + 1] += 1;
                 let (x_lo, dx, y_lo, dy) = bounds.cell_rect(i, cell.col as u64, j, cell.row as u64);
-                write_cell(cell.row, MomentCell::pack(cell.m, x_lo, dx, y_lo, dy), &mut buf);
+                write_cell(SparseCell::pack(cell.row as u16, cell.m, x_lo, dx, y_lo, dy), &mut buf);
             }
             for c in 1..col_starts.len() {
                 col_starts[c] += col_starts[c - 1];
@@ -177,15 +183,12 @@ fn build(
                 info: PlaneInfo {
                     j,
                     offset: written_cells * GRID_CELL_BYTES as u64,
-                    cells: level_cells.len() as u64,
+                    cells: cells.len() as u64,
                     id: 0,
                 },
                 col_starts,
             });
-            written_cells += level_cells.len() as u64;
-            cells = (i > 0 && j > 0).then(|| coarsen(&level_cells));
-            i = i.saturating_sub(1);
-            j = j.saturating_sub(1);
+            written_cells += cells.len() as u64;
         }
     }
     sink.flush().map_err(StoreError::from)?;
@@ -217,59 +220,93 @@ fn build(
     Ok(())
 }
 
-/// Non-empty cells of plane `(i, j)` column-major (columns given by their point starts), or
-/// `None` as soon as there are more than `limit`.
-fn grid_cells(points: &[Point], qy: &[u32], starts: &[u32], j: u32, limit: usize) -> Option<Vec<GridCell>> {
-    let mut out = Vec::new();
-    let mut buf: Vec<(u32, u32)> = Vec::new();
-    for (c, w) in starts.windows(2).enumerate() {
-        let (s, e) = (w[0] as usize, w[1] as usize);
-        if s == e {
-            continue;
-        }
-        buf.clear();
-        buf.extend((s..e).map(|k| (index_at(qy[k], j) as u32, k as u32)));
-        buf.sort_unstable();
-        let mut k = 0;
-        while k < buf.len() {
-            let row = buf[k].0;
-            let mut m = Moments::default();
-            while k < buf.len() && buf[k].0 == row {
-                m.push(points[buf[k].1 as usize]);
-                k += 1;
-            }
-            out.push(GridCell { col: c as u32, row, m });
-            if out.len() > limit {
-                return None;
-            }
-        }
-    }
-    Some(out)
+/// Per-column density gate: a column of `p` points is stored in plane `(i, j)` only when it fills
+/// at most `p / min_points_per_cell` rows and its own y-extent spans at most
+/// `span_factor · p / min_points_per_cell` rows. This is the ripmap's "dense depth + extra" bound,
+/// measured on the column's own extent instead of the whole bounding box.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Gate {
+    pub(crate) min_points_per_cell: u64,
+    pub(crate) span_factor: u64,
 }
 
-/// Merge 2×2 cells: plane `(i, j)` → `(i - 1, j - 1)`, keeping column-major order.
-fn coarsen(cells: &[GridCell]) -> Vec<GridCell> {
-    let mut out = Vec::with_capacity(cells.len() / 2);
-    let mut buf: Vec<(u32, Moments)> = Vec::new();
-    let mut k = 0;
-    while k < cells.len() {
-        let col = cells[k].col >> 1;
-        buf.clear();
-        while k < cells.len() && cells[k].col >> 1 == col {
-            buf.push((cells[k].row >> 1, cells[k].m));
-            k += 1;
+impl Gate {
+    fn max_rows(&self, points: u64) -> u64 {
+        points / self.min_points_per_cell
+    }
+}
+
+/// Row bookkeeping reused across columns: `stamp[row] == generation` marks rows already seen in
+/// the current column, `slot[row]` is their index in the column's accumulators.
+#[derive(Default)]
+struct RowScratch {
+    stamp: Vec<u32>,
+    slot: Vec<u32>,
+    generation: u32,
+}
+
+/// Non-empty cells of plane `(i, j)` column-major, for the columns that pass `gate`.
+#[allow(clippy::too_many_arguments)]
+fn gated_cells(
+    points: &[Point],
+    qy: &[u32],
+    starts: &[u32],
+    nodes: &[Node],
+    j: u32,
+    bounds: &Bounds,
+    gate: Gate,
+    scratch: &mut RowScratch,
+) -> Vec<GridCell> {
+    let rows = 1usize << j;
+    scratch.stamp.clear();
+    scratch.stamp.resize(rows, 0);
+    scratch.slot.resize(rows, 0);
+    scratch.generation = 0;
+    let mut out = Vec::new();
+    let mut seen: Vec<u32> = Vec::new();
+    let mut accs: Vec<Moments> = Vec::new();
+    for (c, w) in starts.windows(2).enumerate() {
+        let (s, e) = (w[0] as usize, w[1] as usize);
+        let max_rows = gate.max_rows((e - s) as u64);
+        if max_rows == 0 {
+            continue;
         }
-        buf.sort_by_key(|e| e.0);
-        let mut t = 0;
-        while t < buf.len() {
-            let row = buf[t].0;
-            let mut m = Moments::default();
-            while t < buf.len() && buf[t].0 == row {
-                m.merge(buf[t].1);
-                t += 1;
+        // Span check from the exact column node, before touching any point.
+        let node = &nodes[c];
+        let lo = index_at(quantize(node.min_y, bounds.y0, bounds.h), j);
+        let hi = index_at(quantize(node.max_y, bounds.y0, bounds.h), j);
+        if hi - lo + 1 > gate.span_factor * max_rows {
+            continue;
+        }
+        scratch.generation += 1;
+        let generation = scratch.generation;
+        seen.clear();
+        accs.clear();
+        let mut overflow = false;
+        for k in s..e {
+            let row = index_at(qy[k], j) as usize;
+            if scratch.stamp[row] != generation {
+                if seen.len() as u64 == max_rows {
+                    overflow = true;
+                    break;
+                }
+                scratch.stamp[row] = generation;
+                scratch.slot[row] = seen.len() as u32;
+                seen.push(row as u32);
+                accs.push(Moments::default());
             }
-            out.push(GridCell { col, row, m });
+            accs[scratch.slot[row] as usize].push(points[k]);
         }
+        if overflow {
+            continue;
+        }
+        let mut order: Vec<usize> = (0..seen.len()).collect();
+        order.sort_unstable_by_key(|&t| seen[t]);
+        out.extend(order.into_iter().map(|t| GridCell {
+            col: c as u32,
+            row: seen[t],
+            m: accs[t],
+        }));
     }
     out
 }
@@ -286,35 +323,31 @@ mod tests {
         assert_eq!(max_level_for(10_000_000, 256), 16);
     }
 
+    /// A dense flat band passes the gate at fine rows, a column spread over the whole bounding
+    /// box does not, and the stored cells keep the column's exact mass.
     #[test]
-    fn coarsening_matches_direct_build() {
-        let points: Vec<Point> = (0..4_000)
-            .map(|k| {
-                let x = k as f64 * 0.25;
-                Point::new(x, (x * 0.11).sin() * 5.0 + (k % 13) as f64 * 0.1, 1.0 + (k % 3) as f64)
-            })
+    fn gate_keeps_dense_columns_and_drops_sparse_ones() {
+        let mut points: Vec<Point> = (0..4_000)
+            .map(|k| Point::new(k as f64 / 8_000.0, 0.5 + (k % 7) as f64 * 1e-3, 1.0))
             .collect();
-        let (x0, w) = (points[0].x, points[3_999].x - points[0].x);
-        let qy: Vec<u32> = points.iter().map(|p| quantize(p.y, -6.0, 13.0)).collect();
-        let starts = |l: u32| -> Vec<u32> {
-            let mut s = vec![0u32; (1 << l) + 1];
-            for p in &points {
-                s[index_at(quantize(p.x, x0, w), l) as usize + 1] += 1;
-            }
-            for c in 1..s.len() {
-                s[c] += s[c - 1];
-            }
-            s
-        };
-        let fine = grid_cells(&points, &qy, &starts(6), 5, usize::MAX).unwrap();
-        let direct = grid_cells(&points, &qy, &starts(5), 4, usize::MAX).unwrap();
-        let merged = coarsen(&fine);
-        assert_eq!(merged.len(), direct.len());
-        for (a, b) in merged.iter().zip(&direct) {
-            assert_eq!((a.col, a.row), (b.col, b.row));
-            assert!((a.m.mass - b.m.mass).abs() < 1e-9);
-            assert!((a.m.m2_yy - b.m.m2_yy).abs() < 1e-6 * b.m.m2_yy.max(1.0));
-        }
-        assert!(grid_cells(&points, &qy, &starts(6), 5, 3).is_none());
+        points.extend(
+            (0..4_000).map(|k| Point::new(0.5 + k as f64 / 8_000.0, (k * 7_919 % 4_000) as f64 / 4_000.0, 1.0)),
+        );
+        let bounds = Bounds { x0: 0.0, w: 1.0, y0: 0.0, h: 1.0 };
+        let qy: Vec<u32> = points.iter().map(|p| quantize(p.y, 0.0, 1.0)).collect();
+        let starts = [0u32, 4_000, 8_000];
+        let nodes = [Node::from_points(&points[..4_000]), Node::from_points(&points[4_000..])];
+        let gate = Gate { min_points_per_cell: 16, span_factor: 4 };
+        let mut scratch = RowScratch::default();
+        // 2^12 rows: the band covers ~25 rows (passes), the spread column ~4,000 rows (fails).
+        let cells = gated_cells(&points, &qy, &starts, &nodes, 12, &bounds, gate, &mut scratch);
+        assert!(!cells.is_empty());
+        assert!(cells.iter().all(|c| c.col == 0), "the spread column must be dropped");
+        assert!(cells.windows(2).all(|w| w[0].row < w[1].row), "rows sorted");
+        let mass: f64 = cells.iter().map(|c| c.m.mass).sum();
+        assert!((mass - 4_000.0).abs() < 1e-9);
+        // 2^4 rows: both columns pass.
+        let coarse = gated_cells(&points, &qy, &starts, &nodes, 4, &bounds, gate, &mut scratch);
+        assert!(coarse.iter().any(|c| c.col == 1));
     }
 }

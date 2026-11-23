@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use pink_lemonade_progressive_common::{
-    Decision, FrontierItem, LruPageCache, Node, POINT_BYTES, assemble_frame, coalesce_runs,
-    coalesce_spans, decode_points, join2, read_whole_object, standard_decision, try_join_all,
+    DEFAULT_MANIFEST_READ_BYTES, Decision, FrontierItem, LruPageCache, Node, POINT_BYTES,
+    assemble_frame, coalesce_runs, coalesce_spans, decode_points, join2, offscreen_y, push_group,
+    read_small_object, standard_decision, try_join_all,
 };
 use pink_lemonade_progressive_core::{
     ByteRangeStore, ClientError, Frame, Point, ProgressiveClient, ViewQuery, async_trait,
@@ -75,7 +76,7 @@ enum Render {
 
 impl SparseGridClient {
     pub async fn open(store: Arc<dyn ByteRangeStore>, memory_budget_bytes: usize) -> Result<Self, ClientError> {
-        let raw = read_whole_object(store.as_ref(), MANIFEST_KEY).await?;
+        let raw = read_small_object(store.as_ref(), MANIFEST_KEY, DEFAULT_MANIFEST_READ_BYTES).await?;
         let manifest = Manifest::decode(&raw)?;
         let cache = LruPageCache::new(memory_budget_bytes.saturating_sub(manifest.approx_memory_bytes()));
         Ok(Self { store, manifest, cache })
@@ -259,7 +260,12 @@ impl SparseGridClient {
                 if standard_decision(&col.node, query, x_factor, y_factor) == Decision::Resolve {
                     return Render::Node(col.node);
                 }
-                match self.pick_plane(col.level, x_factor, y_factor, threshold) {
+                // The per-column gate may have left this column out of the plane (empty run): a
+                // finer plane would fail the same gate, so the column goes raw.
+                match self
+                    .pick_plane(col.level, x_factor, y_factor, threshold)
+                    .filter(|&plane| col.cells[plane].1 > col.cells[plane].0)
+                {
                     Some(plane) => {
                         let (s, e) = col.cells[plane];
                         bytes += (e - s) * GRID_CELL_BYTES as u64;
@@ -276,6 +282,50 @@ impl SparseGridClient {
             })
             .collect();
         (renders, bytes)
+    }
+}
+
+/// Emit one column's cells as kernels: cells far off-screen in y (explicit `y_bounds`) collapse
+/// into one kernel above and one below, and on-screen cells merge greedily in row order while the
+/// merged kernel still fits the threshold (`push_group`). Moments stay exact either way.
+#[allow(clippy::too_many_arguments)]
+fn emit_column_cells(
+    bytes: &[u8],
+    level: u32,
+    c: u64,
+    j: u32,
+    bounds: &crate::format::Bounds,
+    query: &ViewQuery,
+    (x_factor, y_factor): (f64, f64),
+    gpu: &mut Vec<f32>,
+) {
+    let threshold = query.merge_threshold.max(1e-12);
+    let (mut below, mut above) = (Node::default(), Node::default());
+    let mut groups: Vec<Node> = Vec::new();
+    for chunk in bytes.as_chunks::<GRID_CELL_BYTES>().0 {
+        let cell = read_cell(chunk);
+        if cell.is_empty() {
+            continue;
+        }
+        let (x_lo, dx, y_lo, dy) = bounds.cell_rect(level, c, j, cell.bin as u64);
+        let node = cell.unpack(x_lo, dx, y_lo, dy);
+        // `offscreen_y` implies the cell lies entirely above or entirely below the screen.
+        if let Some([lo, _]) = query.y_bounds
+            && offscreen_y(&node, query, y_factor)
+        {
+            let side = if node.max_y < lo { &mut below } else { &mut above };
+            let merged = Node::combined(*side, node);
+            if offscreen_y(&merged, query, y_factor) {
+                *side = merged;
+                continue;
+            }
+        }
+        push_group(node, x_factor, y_factor, threshold, &mut groups);
+    }
+    for n in [below, above].iter().chain(groups.iter()) {
+        if !n.is_empty() {
+            n.emit_gpu(x_factor, y_factor, gpu);
+        }
     }
 }
 
@@ -510,11 +560,7 @@ impl ProgressiveClient for SparseGridClient {
             let Some(bytes) = cells.get(&(info.id, index)) else {
                 return;
             };
-            for chunk in bytes.as_chunks::<GRID_CELL_BYTES>().0 {
-                let (row, cell) = read_cell(chunk);
-                let (x_lo, dx, y_lo, dy) = bounds.cell_rect(level as u32, index, info.j, row);
-                cell.unpack(x_lo, dx, y_lo, dy).emit_gpu(factors.0, factors.1, gpu);
-            }
+            emit_column_cells(bytes, level as u32, index, info.j, &bounds, &query, factors, gpu);
         };
         Ok(assemble_frame(items, &leaves, &query, factors, y_range, true, &mut emit_cells))
     }

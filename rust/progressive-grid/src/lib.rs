@@ -37,8 +37,11 @@ pub use format::MAGIC;
 
 /// Deepest columns average at most this many points (raw edge reads stay this small).
 pub const DEFAULT_COL_LEAF: u32 = 256;
-/// A plane is stored only while its non-empty cells average at least this many points.
+/// A column is stored in a plane only while its non-empty cells average at least this many points.
 pub const DEFAULT_MIN_POINTS_PER_CELL: u32 = 16;
+/// A column may span up to `2^extra` times its dense row budget on its own y-extent
+/// (the ripmap's `sparse_extra_depth`).
+pub const DEFAULT_SPARSE_EXTRA_DEPTH: u32 = 2;
 pub const DEFAULT_MIN_ASPECT: i32 = -2;
 pub const DEFAULT_MAX_ASPECT: i32 = 12;
 pub const DEFAULT_ASPECT_STEP: u32 = 2;
@@ -47,6 +50,8 @@ pub const DEFAULT_ASPECT_STEP: u32 = 2;
 pub struct SparseGridStrategy {
     pub col_leaf: u32,
     pub min_points_per_cell: u32,
+    /// Extra row depth allowed beyond the dense budget (`2^extra`× the rows), per column.
+    pub sparse_extra_depth: u32,
     /// Stored aspects `d = i - j` (columns `2^d`× finer than rows) run from `min_aspect` to
     /// `max_aspect` in steps of `aspect_step`.
     pub min_aspect: i32,
@@ -59,6 +64,7 @@ impl Default for SparseGridStrategy {
         Self {
             col_leaf: DEFAULT_COL_LEAF,
             min_points_per_cell: DEFAULT_MIN_POINTS_PER_CELL,
+            sparse_extra_depth: DEFAULT_SPARSE_EXTRA_DEPTH,
             min_aspect: DEFAULT_MIN_ASPECT,
             max_aspect: DEFAULT_MAX_ASPECT,
             aspect_step: DEFAULT_ASPECT_STEP,

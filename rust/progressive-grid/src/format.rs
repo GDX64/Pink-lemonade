@@ -13,16 +13,17 @@
 //!   first point in `points.bin` (`u32`), and its first cell in each plane of the level
 //!   (`u32` each): the CSC column pointers of every plane at that level, in one read.
 //! - `cells.bin`: every plane back to back; a plane lists its non-empty cells column-major
-//!   (column, then row), each `row: u32` + a 24-byte [`MomentCell`] normalized against the
-//!   cell rectangle.
+//!   (column, then row) as shared 16-byte [`SparseCell`]s (`bin` = row, quantized moments
+//!   normalized against the cell rectangle). A column whose rows fail the per-column density
+//!   gate has an empty run in that plane even though it holds points.
 //! - `points.bin`: 24-byte `(x, y, weight)` records sorted by x, so every column at every
 //!   level is one contiguous run.
 
-use pink_lemonade_progressive_common::{CELL_BYTES, MomentCell, NODE_BYTES, Node, PackedNode};
+use pink_lemonade_progressive_common::{NODE_BYTES, Node, PackedNode, SPARSE_CELL_BYTES, SparseCell};
 use pink_lemonade_progressive_core::ClientError;
 
 pub const MAGIC: [u8; 8] = *b"PLPGRID1";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 pub const MANIFEST_KEY: &str = "manifest.bin";
 pub const COLUMNS_KEY: &str = "columns.bin";
@@ -31,10 +32,12 @@ pub const POINTS_KEY: &str = "points.bin";
 
 /// Fixed-point precision of the quantized coordinates.
 pub const Q_BITS: u32 = 30;
-/// Deepest x- or y-level the builder creates.
+/// Deepest x-level the builder creates.
 pub const MAX_LEVEL: u32 = 24;
-/// `row: u32` + 24-byte moment cell.
-pub const GRID_CELL_BYTES: usize = 4 + CELL_BYTES;
+/// Deepest y-level (row indices are stored in the cell's `u16` bin).
+pub const MAX_ROW_LEVEL: u32 = 16;
+/// Shared 16-byte sparse cell.
+pub const GRID_CELL_BYTES: usize = SPARSE_CELL_BYTES;
 const HEADER_BYTES: usize = 64;
 const PLANE_INFO_BYTES: usize = 20;
 
@@ -155,17 +158,13 @@ pub fn record_cell_start(bytes: &[u8], p: usize) -> u64 {
 }
 
 /// Append one stored cell.
-pub fn write_cell(row: u32, cell: MomentCell, out: &mut Vec<u8>) {
-    out.extend_from_slice(&row.to_le_bytes());
+pub fn write_cell(cell: SparseCell, out: &mut Vec<u8>) {
     out.extend_from_slice(&cell.to_bytes());
 }
 
 /// Decode one stored cell.
-pub fn read_cell(bytes: &[u8]) -> (u64, MomentCell) {
-    (
-        u32::from_le_bytes(bytes[..4].try_into().unwrap()) as u64,
-        MomentCell::from_bytes(bytes[4..GRID_CELL_BYTES].try_into().unwrap()),
-    )
+pub fn read_cell(bytes: &[u8; GRID_CELL_BYTES]) -> SparseCell {
+    SparseCell::from_bytes(bytes)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -245,7 +244,7 @@ impl Manifest {
             let mut planes = Vec::with_capacity(count);
             for _ in 0..count {
                 let j = u32_at(off);
-                if j > MAX_LEVEL {
+                if j > MAX_ROW_LEVEL {
                     return Err(corrupt("plane y-level out of range"));
                 }
                 planes.push(PlaneInfo {
