@@ -21,7 +21,7 @@ Guide for coding agents working in `pink-lemonade`.
   - `rust/progressive-ripmap/` (`pink-lemonade-progressive-ripmap`) — Moment ripmap (`RipmapStrategy`): x-hierarchy plus dense per-block y-bin moment planes (`plane_{ℓ}_{k}.bin`).
   - `rust/progressive-quadtree/` (`pink-lemonade-progressive-quadtree`) — Classic moment quadtree (`QuadtreeStrategy`, `PLPQUAD1`): midpoint quadrant splits over the data bbox, 72-byte records (moments + child/point link), top depths inlined in the manifest, deeper depths back to back in one `nodes.bin` (per-depth offset table), so every dataset is three objects.
 - `benchmarks/` — Exported reports (`benchmarks/results/latest.json`) and Jupyter notebook (`benchmarks/analysis.ipynb`).
-- `journal/` — Chronological experiment notes and benchmark ablations.
+- `journal/` — Chronological experiment notes and benchmark ablations (append-only history; see [Experiment Journal](#experiment-journal)).
 - `requirements.txt` & `.venv/` — Root Python dependencies and virtual environment (`.venv/` gitignored).
 - `dev.py` (+ `dev.ps1`, `dev.cmd`, `dev`) — Cross-shell developer CLI (`./dev ...`).
 
@@ -69,6 +69,13 @@ py -m venv .venv
 - **Virtual-time benchmarking & disk safety:** Standard tests and benchmarks run under Tokio virtual time (`#[tokio::test(start_paused = true)]` or `tokio::time::pause()`) with `NetworkProfile` simulating RTT, bandwidth, and concurrency. Do not run multi-hundred-MB / GB benchmarks on the user's physical disk (`DiskStore`) unless explicitly requested.
 - **Keep `[profile.release]` intact for WASM:** `rust/Cargo.toml` enables LTO + `codegen-units = 1` for release WASM builds; use `--profile fast` (`opt-level = 2`, incremental) for fast native benchmark iteration.
 
+## Experiment Journal
+
+`journal/` is the project's history of what was tried, measured, and concluded. Two rules:
+
+- **Register every experiment.** Any new strategy, ablation, layout or parameter change, or benchmark comparison gets an entry in `journal/YYYY-MM-DD-<topic>.md` (context & goal, design, measured results with the exact scenarios, findings, next hypotheses), indexed in `journal/README.md`. Results that live only in commits or chat are not recorded.
+- **NEVER edit past entries.** They record what was done and believed on their date, including their mistakes. When an earlier entry turns out to be wrong (a miscomputed number, a superseded conclusion), write the correction in a new or the current entry and reference the old one. The only edit allowed outside the current entry is appending a new line to the `journal/README.md` index.
+
 ## Adding a New Progressive Strategy
 
 1. Create a new crate under `rust/progressive-<name>/` and add it to `[workspace] members` in `rust/Cargo.toml`.
@@ -79,3 +86,4 @@ py -m venv .venv
    - Strict adherence to `ClientConfig::memory_budget_bytes` via `memory_bytes()`
    - Cancellation safety when a `query()` future is dropped mid-flight
 4. Verify with `run_conformance_suite` (default 4K points and a larger `point_count` that exercises internal levels), `cargo clippy ... -- -D warnings`, `cargo check --target wasm32-unknown-unknown`, and add the strategy to `rust/progressive-tree/examples/export_reports.rs` to compare it in `benchmarks/analysis.ipynb`.
+5. Register the experiment in a new `journal/` entry (see [Experiment Journal](#experiment-journal)).

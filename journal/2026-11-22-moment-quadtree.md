@@ -80,7 +80,7 @@ The first version packed consecutive depths into `nodes_{g}.bin` objects of ≥ 
 
 - **Layout changes are verified by diffing reports**, not by eye: snapshot `latest.json` and the 10M report, rerun, and compare wire, requests, and kernel counts per workload (exactly deterministic) with latency within 1%. All four strategies other than the one changed must diff to zero.
 - **The explorer models are executable documentation, not benchmarks:** they reproduce the decision policy, merging, and byte ranges exactly, but use their own RNG and default to small `root_cap` values so the descent is visible. Wire numbers there are not comparable to the Rust harness.
-- **Correction to earlier entries:** 10M × 24 B is 228.88 MiB, not 240 MiB. Storage overheads in the 2026-11-20 and 2026-11-21 entries were recomputed: x-tree `+8.6%`, k-d tree `+9.5%`, ripmap `1.78×` with planes `152.7 MiB` (0.67×).
+- **Correction to earlier entries (left unedited as history):** the 2026-11-20 and 2026-11-21 entries take 10M points as `240 MiB` raw, but 10M × 24 B = 240,000,000 B = **228.88 MiB**. Their storage overheads are therefore understated. The correct figures, used in this entry, are x-tree `+8.6%` (not `+3.6%`), k-d tree `+9.5%` (not `+4.4%`), and ripmap `1.78×` (not `1.70×`), with planes `152.7 MiB` (0.67× raw) and fanout-4 x-levels `25.4 MiB`. The v1 overview reduction is `330×`, not `346×`. Measured wire, request, and latency numbers in those entries are unaffected.
 
 ## Next Hypotheses
 
