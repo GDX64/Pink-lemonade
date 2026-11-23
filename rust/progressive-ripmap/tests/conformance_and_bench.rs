@@ -49,6 +49,25 @@ async fn passes_conformance_with_small_root_cap() {
         .expect("RipmapStrategy with small root_cap should satisfy all conformance invariants");
 }
 
+/// Bursty non-uniform x (`BurstyX`) must keep overview wire tiny (regression guard against
+/// one wide gap-straddling node dragging all burst nodes down to level 0).
+#[tokio::test(start_paused = true)]
+async fn bursty_x_overview_stays_compact() {
+    let report = benchmarks::run_on(&RipmapStrategy::default(), BenchmarkScenario::MediumBursty)
+        .await
+        .expect("medium_bursty benchmark failed");
+    let overview = report
+        .workloads
+        .iter()
+        .find(|w| w.name == "cold_overview")
+        .unwrap();
+    let wire = overview.total_transport.total_wire_bytes();
+    assert!(
+        wire < 1024 * 1024,
+        "medium_bursty cold_overview should stay well under 1 MiB, got {wire} B"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn beats_x_tree_on_white_noise() {
     let ripmap = RipmapStrategy::default();

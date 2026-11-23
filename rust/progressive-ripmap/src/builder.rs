@@ -87,6 +87,7 @@ impl RipmapBuilder {
                 fanout: config.fanout.max(2),
                 root_cap: config.root_cap.max(1),
                 min_points_per_bin: config.min_points_per_bin.max(1),
+                sparse_extra_depth: config.sparse_extra_depth,
             },
             points: PointCollector::default(),
         }
@@ -104,6 +105,7 @@ impl DatasetBuilder for RipmapBuilder {
             fanout,
             root_cap,
             min_points_per_bin,
+            sparse_extra_depth,
         } = self.config;
         let points = self.points.points;
 
@@ -150,7 +152,12 @@ impl DatasetBuilder for RipmapBuilder {
 
         for (level, nodes) in level_nodes.iter().enumerate() {
             let block_points = leaf_points as u64 * (fanout as u64).pow(level as u32);
-            let ks = plane_depths_for_level(level, block_points, min_points_per_bin);
+            let ks = plane_depths_for_level(
+                level,
+                block_points,
+                min_points_per_bin,
+                sparse_extra_depth,
+            );
             let max_bins = max_bins_per_block(block_points, min_points_per_bin);
 
             let (dirs, plane_infos) = if ks.is_empty() {

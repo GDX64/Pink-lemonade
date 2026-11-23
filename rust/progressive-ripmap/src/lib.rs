@@ -36,6 +36,8 @@ pub const DEFAULT_ROOT_CAP: u32 = 1024;
 /// Per-block non-empty bin budget: a block is stored in plane `(ℓ, k)` only when its
 /// non-empty bin count is at most `block_points / min_points_per_bin`.
 pub const DEFAULT_MIN_POINTS_PER_BIN: u32 = 16;
+/// Extra y-depth beyond the dense budget allowed for sparse blocks (`non_empty <= block_points / min_points_per_bin`).
+pub const DEFAULT_SPARSE_EXTRA_DEPTH: u8 = 2;
 /// Hard cap on y-depth (`2^14` bins per block).
 pub const MAX_Y_DEPTH: u8 = 14;
 
@@ -45,6 +47,7 @@ pub struct RipmapStrategy {
     pub fanout: u32,
     pub root_cap: u32,
     pub min_points_per_bin: u32,
+    pub sparse_extra_depth: u8,
 }
 
 impl Default for RipmapStrategy {
@@ -54,6 +57,7 @@ impl Default for RipmapStrategy {
             fanout: DEFAULT_FANOUT,
             root_cap: DEFAULT_ROOT_CAP,
             min_points_per_bin: DEFAULT_MIN_POINTS_PER_BIN,
+            sparse_extra_depth: DEFAULT_SPARSE_EXTRA_DEPTH,
         }
     }
 }

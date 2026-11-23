@@ -1,26 +1,29 @@
 /**
- * In-browser model of the hierarchy-based progressive strategies: the moment ripmap
- * (`rust/progressive-ripmap`) and the paged x-tree (`rust/progressive-tree`).
+ * In-browser model of the hierarchy-based progressive strategies: Moment Ripmap v2
+ * (`rust/progressive-ripmap`, `PLPRIPM2`) and the paged x-tree (`rust/progressive-tree`, `PLPTREE2`).
  *
  * Mirrors, at visualization fidelity:
- * - the shared paged moment hierarchy (`level_counts`, `write_hierarchy`, root level inlined
- *   in `manifest.bin`, 64-byte nodes, 24-byte points),
- * - the ripmap's dense per-block y-bin planes (`max_depth`, `bin_geometry`, `plane_{ℓ}_{k}.bin`),
- * - the online query: pruned exact `visible_y_range`, the level-by-level frontier with the
- *   ripmap `decide` policy (`fits_threshold` / `offscreen_y` / `needed_depth`) or the x-tree's
- *   `standard_decision`, and the byte-range requests the client would issue (`coalesce_runs`),
- * - frame assembly (`assemble_frame`): greedy merging of resolved nodes and recursively halved
- *   raw leaf points into the emitted kernels (`push_group` / `collect_points`).
+ * - Ripmap v2 (`PLPRIPM2`): 4-object layout (`manifest.bin`, `levels.bin`, `planes.bin`,
+ *   `points.bin`), 16-byte sparse `SparseCell`s gated per block (`nonEmpty <= blockPoints / minPointsPerBin`),
+ *   inline 6-byte plane directory entries per node, data-derived `planeDepthsForLevel`,
+ *   per-node `x_factor`-guided level jumping, explicit-`y_bounds` Phase-1 skip, cross-`k` cache
+ *   reuse, and greedy merging + off-screen y collapsing of plane cells.
+ * - Paged x-tree (`PLPTREE2`): unchanged shared paged moment hierarchy with `standard_decision`.
  *
  * The Rust code stays the source of truth; constants below are copied from it.
  */
 
 export const NODE_BYTES = 64;
 export const POINT_BYTES = 24;
-export const CELL_BYTES = 24;
+/** 16-byte quantized `SparseCell` (`bin: u16` + 14-byte `QuantizedMoments`). */
+export const CELL_BYTES = 16;
+/** 6-byte inline plane directory slot `(cell_offset: u32, cell_count: u16)`. */
+export const DIR_ENTRY_BYTES = 6;
 export const MAX_Y_DEPTH = 14;
+export const DEFAULT_SPARSE_EXTRA_DEPTH = 2;
 export const MAX_PLANE_BLOCK_WIDTH = 0.9;
 export const OFFSCREEN_MARGIN_SIGMA = 6;
+const MAX_BOUNDARY_JUMP = 3;
 const PLANE_MAX_GAP_BYTES = 16 * 1024;
 const PLANE_MAX_RUN_BYTES = 1024 * 1024;
 const TREE_MAX_GAP_BYTES = 16 * 1024;
@@ -30,7 +33,7 @@ const MAX_COALESCE_LEAVES = 256;
 
 export type DatasetShape = "random_walk" | "noisy_spikes";
 
-/** `moment_ripmap` (x-hierarchy + y-bin planes) or `paged_moment_tree` (x-hierarchy only). */
+/** `moment_ripmap` (`PLPRIPM2` sparse planes) or `paged_moment_tree` (x-hierarchy only). */
 export type Strategy = "ripmap" | "tree";
 
 export interface RipmapParams {
@@ -38,6 +41,7 @@ export interface RipmapParams {
   fanout: number;
   rootCap: number;
   minPointsPerBin: number;
+  sparseExtraDepth?: number;
 }
 
 export const DEFAULT_PARAMS: RipmapParams = {
@@ -45,6 +49,7 @@ export const DEFAULT_PARAMS: RipmapParams = {
   fanout: 4,
   rootCap: 1024,
   minPointsPerBin: 16,
+  sparseExtraDepth: DEFAULT_SPARSE_EXTRA_DEPTH,
 };
 
 /** `PagedTreeStrategy::default()`: fanout 32 (2 KiB pages) and `root_cap = fanout`. */
@@ -103,6 +108,11 @@ export interface StoredObject {
   k?: number;
 }
 
+export interface PlaneDirEntry {
+  cellOffset: number;
+  cellCount: number;
+}
+
 export interface RipmapModel {
   strategy: Strategy;
   data: Dataset;
@@ -112,6 +122,14 @@ export interface RipmapModel {
   levels: MomentNode[][];
   /** Deepest stored y-depth per level (0 = no planes). */
   kmax: number[];
+  /** Stored y-depths `k` per level (`PLPRIPM2` data-derived schedule). */
+  planeDepths: number[][];
+  /** Byte offset of each non-root level inside `levels.bin` (`PLPRIPM2`). */
+  levelByteOffsets: number[];
+  /** Byte offset of each stored plane `(ℓ, slot)` inside `planes.bin` (`PLPRIPM2`). */
+  planeByteOffsets: number[][];
+  /** `blockDirs[ℓ][j][slot]`: inline directory slot `(cellOffset, cellCount)` for block `j`. */
+  blockDirs: PlaneDirEntry[][][];
   objects: StoredObject[];
   totalBytes: number;
   rawBytes: number;
@@ -339,7 +357,42 @@ export function levelCounts(n: number, leafPoints: number, fanout: number, rootC
   return counts;
 }
 
-/** `max_depth` from `progressive-ripmap/src/format.rs`. */
+/** `plane_depths_for_level` from `progressive-ripmap/src/format.rs` (`PLPRIPM2`). */
+export function planeDepthsForLevel(
+  level: number,
+  blockPoints: number,
+  minPointsPerBin: number,
+  sparseExtraDepth = DEFAULT_SPARSE_EXTRA_DEPTH,
+): number[] {
+  if (level === 0) return [];
+  const ratio = Math.floor(blockPoints / Math.max(minPointsPerBin, 1));
+  if (ratio < 2) return [];
+  const kDense = Math.min(Math.floor(Math.log2(ratio)), MAX_Y_DEPTH);
+  const kCap = Math.min(kDense + sparseExtraDepth, MAX_Y_DEPTH);
+  const stride1End = Math.min(Math.max(kDense - 2, 0), kCap);
+
+  const ks: number[] = [];
+  for (let k = 1; k <= stride1End; k++) ks.push(k);
+  let k = stride1End === 0 ? 1 : Math.min(stride1End + 2, kCap);
+  while (k <= kCap) {
+    if (ks[ks.length - 1] !== k) ks.push(k);
+    if (k === kCap) break;
+    k = Math.min(k + 2, kCap);
+  }
+  return ks;
+}
+
+/** `max_bins_per_block` from `progressive-ripmap/src/format.rs`. */
+export function maxBinsPerBlock(blockPoints: number, minPointsPerBin: number): number {
+  return Math.min(Math.floor(blockPoints / Math.max(minPointsPerBin, 1)), 65535);
+}
+
+/** `record_bytes` from `progressive-ripmap/src/format.rs`. */
+export function recordBytesFor(planeCount: number): number {
+  return NODE_BYTES + planeCount * DIR_ENTRY_BYTES;
+}
+
+/** Legacy helper kept for compatibility: deepest dense depth `floor(log2(blockPoints / minPointsPerBin))`. */
 export function maxDepth(blockPoints: number, minPointsPerBin: number): number {
   const ratio = Math.floor(blockPoints / Math.max(minPointsPerBin, 1));
   return ratio < 2 ? 0 : Math.min(Math.floor(Math.log2(ratio)), MAX_Y_DEPTH);
@@ -356,6 +409,7 @@ export function planeKey(level: number, k: number) {
 export function buildRipmap(data: Dataset, inParams: RipmapParams, strategy: Strategy = "ripmap"): RipmapModel {
   // The x-tree always rolls up until at most `fanout` root nodes remain.
   const params = strategy === "tree" ? { ...inParams, rootCap: inParams.fanout } : inParams;
+  const sparseExtra = params.sparseExtraDepth ?? DEFAULT_SPARSE_EXTRA_DEPTH;
   const n = data.xs.length;
   const counts = levelCounts(n, params.leafPoints, params.fanout, params.rootCap);
   const levels: MomentNode[][] = [];
@@ -375,31 +429,142 @@ export function buildRipmap(data: Dataset, inParams: RipmapParams, strategy: Str
     levels.push(nodes);
   }
 
-  const kmax = counts.map((_, level) =>
-    strategy === "tree" ? 0 : maxDepth(blockPointsAt(params, level), params.minPointsPerBin),
-  );
   const rootLevel = counts.length - 1;
-  const objects: StoredObject[] = [
-    { key: "manifest.bin", bytes: 64 + (counts[rootLevel] ?? 0) * NODE_BYTES, kind: "manifest" },
-  ];
-  if (strategy === "ripmap") objects.push({ key: "ripmap.bin", bytes: 20 + counts.length, kind: "header" });
-  for (let level = 0; level < rootLevel; level++) {
-    objects.push({ key: `level_${level}.bin`, bytes: counts[level]! * NODE_BYTES, kind: "level", level });
+
+  if (strategy === "tree") {
+    const kmax = counts.map(() => 0);
+    const planeDepths = counts.map(() => [] as number[]);
+    const levelByteOffsets = counts.map(() => 0);
+    const planeByteOffsets = counts.map(() => [] as number[]);
+    const blockDirs = counts.map((c) => Array.from({ length: c }, () => [] as PlaneDirEntry[]));
+    const objects: StoredObject[] = [
+      { key: "manifest.bin", bytes: 32 + counts.length * 8 + (counts[rootLevel] ?? 0) * NODE_BYTES, kind: "manifest" },
+    ];
+    for (let level = 0; level < rootLevel; level++) {
+      objects.push({ key: `level_${level}.bin`, bytes: counts[level]! * NODE_BYTES, kind: "level", level });
+    }
+    objects.push({ key: "points.bin", bytes: n * POINT_BYTES, kind: "points" });
+    const totalBytes = objects.reduce((s, o) => s + o.bytes, 0);
+    return {
+      strategy,
+      data,
+      params,
+      levelCounts: counts,
+      levels,
+      kmax,
+      planeDepths,
+      levelByteOffsets,
+      planeByteOffsets,
+      blockDirs,
+      objects,
+      totalBytes,
+      rawBytes: n * POINT_BYTES,
+    };
   }
+
+  // PLPRIPM2: 4 objects (`manifest.bin`, `levels.bin`, `planes.bin`, `points.bin`),
+  // 16-byte sparse cells gated per block, inline per-node directories.
+  const planeDepths = counts.map((_, level) =>
+    planeDepthsForLevel(level, blockPointsAt(params, level), params.minPointsPerBin, sparseExtra),
+  );
+  const kmax = planeDepths.map((ks) => (ks.length > 0 ? ks[ks.length - 1]! : 0));
+  const levelByteOffsets: number[] = counts.map(() => 0);
+  const planeByteOffsets: number[][] = planeDepths.map((ks) => ks.map(() => 0));
+  const blockDirs: PlaneDirEntry[][][] = counts.map((c, level) =>
+    Array.from({ length: c }, () => planeDepths[level]!.map(() => ({ cellOffset: 0, cellCount: 0 }))),
+  );
+
+  let levelsBytes = 0;
+  let planesBytes = 0;
+  const { ys } = data;
+
   for (let level = 0; level < counts.length; level++) {
-    for (let k = 1; k <= kmax[level]!; k++) {
-      objects.push({
-        key: planeKey(level, k),
-        bytes: counts[level]! * 2 ** k * CELL_BYTES,
-        kind: "plane",
-        level,
-        k,
-      });
+    const ks = planeDepths[level]!;
+    const nodes = levels[level]!;
+    const bp = blockPointsAt(params, level);
+    const maxBins = maxBinsPerBlock(bp, params.minPointsPerBin);
+
+    if (ks.length > 0) {
+      const kHi = ks[ks.length - 1]!;
+      const kLo = ks[0]!;
+      const finest = 1 << kHi;
+      const occupied = new Uint8Array(finest);
+      const cellCountsPerPlane = ks.map(() => 0);
+
+      for (let j = 0; j < nodes.length; j++) {
+        const node = nodes[j]!;
+        const dy = node.maxY - node.minY;
+        const inv = dy > 0 ? finest / dy : 0;
+        occupied.fill(0);
+        for (let i = node.start; i < node.end; i++) {
+          const b = dy > 0 ? Math.min(Math.floor((ys[i]! - node.minY) * inv), finest - 1) : 0;
+          occupied[b] = 1;
+        }
+
+        let len = finest;
+        let slot = ks.length - 1;
+        for (let k = kHi; k >= kLo; k--) {
+          if (ks[slot] === k) {
+            let nonEmpty = 0;
+            for (let b = 0; b < len; b++) nonEmpty += occupied[b]!;
+            if (nonEmpty > 0 && nonEmpty <= maxBins) {
+              blockDirs[level]![j]![slot] = {
+                cellOffset: cellCountsPerPlane[slot]!,
+                cellCount: nonEmpty,
+              };
+              cellCountsPerPlane[slot]! += nonEmpty;
+            }
+            if (slot === 0) break;
+            slot--;
+          }
+          if (k > kLo) {
+            len >>>= 1;
+            for (let b = 0; b < len; b++) occupied[b] = occupied[2 * b]! | occupied[2 * b + 1]!;
+          }
+        }
+      }
+
+      for (let slot = 0; slot < ks.length; slot++) {
+        planeByteOffsets[level]![slot] = planesBytes;
+        planesBytes += cellCountsPerPlane[slot]! * CELL_BYTES;
+      }
+    }
+
+    if (level < rootLevel) {
+      levelByteOffsets[level] = levelsBytes;
+      levelsBytes += nodes.length * recordBytesFor(ks.length);
     }
   }
+
+  let manifestBytes = 40;
+  for (let level = 0; level < counts.length; level++) {
+    manifestBytes += 17 + planeDepths[level]!.length * 17;
+  }
+  if (rootLevel >= 0) {
+    manifestBytes += counts[rootLevel]! * recordBytesFor(planeDepths[rootLevel]!.length);
+  }
+
+  const objects: StoredObject[] = [{ key: "manifest.bin", bytes: manifestBytes, kind: "manifest" }];
+  if (levelsBytes > 0) objects.push({ key: "levels.bin", bytes: levelsBytes, kind: "level" });
+  if (planesBytes > 0) objects.push({ key: "planes.bin", bytes: planesBytes, kind: "plane" });
   objects.push({ key: "points.bin", bytes: n * POINT_BYTES, kind: "points" });
   const totalBytes = objects.reduce((s, o) => s + o.bytes, 0);
-  return { strategy, data, params, levelCounts: counts, levels, kmax, objects, totalBytes, rawBytes: n * POINT_BYTES };
+
+  return {
+    strategy,
+    data,
+    params,
+    levelCounts: counts,
+    levels,
+    kmax,
+    planeDepths,
+    levelByteOffsets,
+    planeByteOffsets,
+    blockDirs,
+    objects,
+    totalBytes,
+    rawBytes: n * POINT_BYTES,
+  };
 }
 
 export function mergeNodes(children: MomentNode[], level: number, index: number): MomentNode {
@@ -502,6 +667,84 @@ export function coalesceRuns(indices: number[], maxGap: number, maxRun: number):
   return runs;
 }
 
+function coalesceByteSpans(spans: Array<[number, number]>, maxGap: number, maxRun: number): Array<[number, number]> {
+  const clean = spans.filter(([, len]) => len > 0).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (clean.length === 0) return [];
+  const reads: Array<[number, number]> = [];
+  let [start, end] = [clean[0]![0], clean[0]![0] + clean[0]![1]];
+  for (let i = 1; i < clean.length; i++) {
+    const [s, len] = clean[i]!;
+    const e = s + len;
+    if (s <= end + maxGap && Math.max(e, end) - start <= maxRun) {
+      end = Math.max(end, e);
+    } else {
+      reads.push([start, end]);
+      [start, end] = [s, e];
+    }
+  }
+  reads.push([start, end]);
+  return reads;
+}
+
+/** Count emitted GPU kernels for a sparse plane block after greedy merging + safe off-screen y collapsing. */
+function countMergedPlaneKernels(
+  node: MomentNode,
+  cells: PlaneCell[],
+  query: ViewQuery,
+  xFactor: number,
+  yFactor: number,
+  threshold: number,
+): number {
+  let below: MomentNode | null = null;
+  let above: MomentNode | null = null;
+  const onScreen: MomentNode[] = [];
+  for (const cell of cells) {
+    if (cell.count <= 0 || cell.mass <= 0) continue;
+    const cellNode: MomentNode = {
+      level: -1,
+      index: cell.bin,
+      start: node.start,
+      end: node.end,
+      minX: node.minX,
+      maxX: node.maxX,
+      minY: cell.lo,
+      maxY: cell.lo + cell.h,
+      mass: cell.mass,
+      x: cell.x,
+      y: cell.y,
+      cxx: cell.cxx,
+      cxy: cell.cxy,
+      cyy: cell.cyy,
+    };
+    if (query.yBounds) {
+      const [ylo, yhi] = query.yBounds;
+      if (cellNode.maxY < ylo && offscreenY(cellNode, query, yFactor)) {
+        const cand: MomentNode = below ? mergeNodes([below, cellNode], -1, -1) : cellNode;
+        if (offscreenY(cand, query, yFactor)) {
+          below = cand;
+          continue;
+        }
+      } else if (cellNode.minY > yhi && offscreenY(cellNode, query, yFactor)) {
+        const cand: MomentNode = above ? mergeNodes([above, cellNode], -1, -1) : cellNode;
+        if (offscreenY(cand, query, yFactor)) {
+          above = cand;
+          continue;
+        }
+      }
+    }
+    const last = onScreen[onScreen.length - 1];
+    if (last) {
+      const combined = mergeNodes([last, cellNode], -1, -1);
+      if (fitsMergedGroup(combined, xFactor, yFactor, threshold)) {
+        onScreen[onScreen.length - 1] = combined;
+        continue;
+      }
+    }
+    onScreen.push(cellNode);
+  }
+  return onScreen.length + (below ? 1 : 0) + (above ? 1 : 0);
+}
+
 /** `needed_depth` from `progressive-ripmap/src/client.rs`. */
 export function neededDepth(node: MomentNode, w: number, yFactor: number, threshold: number) {
   const hMax = Math.sqrt(Math.max(threshold * threshold - w * w, 0));
@@ -533,12 +776,13 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
   const { levels, params, levelCounts: counts } = model;
   const rootLevel = counts.length - 1;
   const fanout = params.fanout;
+  const isV2 = model.strategy === "ripmap";
   const requests: RangeRequest[] = [];
   let round = 0;
   let cacheHits = 0;
 
   if (!cache.opened) {
-    // Manifest (+ `ripmap.bin` header for the ripmap) are read concurrently on open.
+    // Manifest is read in a single EOF-clamped request on open.
     for (const obj of model.objects) {
       if (obj.kind === "manifest" || obj.kind === "header") {
         requests.push({ key: obj.key, offset: 0, len: obj.bytes, round, phase: "open" });
@@ -548,16 +792,19 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
     cache.opened = true;
   }
 
-  // Fetch tree pages (children of `parents` at `childLevel`) not yet cached: one round.
-  const fetchPages = (childLevel: number, parents: number[], phase: RangeRequest["phase"]) => {
-    const missing = parents.filter((p) => {
-      const hit = cache.treePages.has(`${childLevel}:${p}`);
+  // Fetch tree pages at `targetLevel` (each page = `fanout` records) not yet cached: one round.
+  const fetchPages = (targetLevel: number, pageIndices: number[], phase: RangeRequest["phase"], r = round): boolean => {
+    const missing = [...new Set(pageIndices)].filter((p) => {
+      const hit = cache.treePages.has(`${targetLevel}:${p}`);
       if (hit) cacheHits++;
       return !hit;
     });
-    if (missing.length === 0) return;
-    const pageBytes = fanout * NODE_BYTES;
-    const total = counts[childLevel]!;
+    if (missing.length === 0) return false;
+    const stride = isV2 ? recordBytesFor(model.planeDepths[targetLevel]!.length) : NODE_BYTES;
+    const pageBytes = fanout * stride;
+    const total = counts[targetLevel]!;
+    const baseOff = isV2 ? model.levelByteOffsets[targetLevel]! : 0;
+    const key = isV2 ? "levels.bin" : `level_${targetLevel}.bin`;
     for (const [start, count] of coalesceRuns(
       missing,
       Math.floor(TREE_MAX_GAP_BYTES / pageBytes),
@@ -566,15 +813,35 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
       const first = start * fanout;
       const last = Math.min((start + count) * fanout, total);
       requests.push({
-        key: `level_${childLevel}.bin`,
-        offset: first * NODE_BYTES,
-        len: (last - first) * NODE_BYTES,
-        round,
+        key,
+        offset: baseOff + first * stride,
+        len: (last - first) * stride,
+        round: r,
         phase,
       });
-      for (let p = start; p < start + count; p++) cache.treePages.add(`${childLevel}:${p}`);
+      for (let p = start; p < start + count; p++) cache.treePages.add(`${targetLevel}:${p}`);
     }
-    round++;
+    return true;
+  };
+
+  const fetchDescendants = (parentLevel: number, targetLevel: number, parents: number[], phase: RangeRequest["phase"]) => {
+    const step = parentLevel - targetLevel;
+    const pagesPerParent = fanout ** (step - 1);
+    const totalPages = Math.ceil(counts[targetLevel]! / fanout);
+    const needed: number[] = [];
+    for (const p of parents) {
+      const lo = p * pagesPerParent;
+      const hi = Math.min((p + 1) * pagesPerParent, totalPages);
+      for (let page = lo; page < hi; page++) needed.push(page);
+    }
+    if (fetchPages(targetLevel, needed, phase)) round++;
+    const out: MomentNode[] = [];
+    for (const page of needed) {
+      const base = page * fanout;
+      const end = Math.min(base + fanout, counts[targetLevel]!);
+      for (let idx = base; idx < end; idx++) out.push(levels[targetLevel]![idx]!);
+    }
+    return out;
   };
 
   const leafRequests = (missing: number[], phase: RangeRequest["phase"], r: number) => {
@@ -596,113 +863,311 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
   const children = (level: number, parent: number) =>
     levels[level - 1]!.slice(parent * fanout, (parent + 1) * fanout);
 
-  // Phase 1: pruned exact visible_y_range.
   const { minX, maxX } = query;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  let candidates: MomentNode[] = [];
-  for (const node of levels[rootLevel] ?? []) {
-    if (node.maxX < minX || node.minX > maxX) continue;
-    if (minX <= node.minX && node.maxX <= maxX) {
-      minY = Math.min(minY, node.minY);
-      maxY = Math.max(maxY, node.maxY);
-    } else candidates.push(node);
+  const sigma = Math.max(query.sigmaPx, 1e-12);
+  const xFactor = query.screenW / Math.max(maxX - minX, 1e-12) / sigma;
+  const threshold = Math.max(query.mergeThreshold, 1e-12);
+  const trace: TraceEntry[][] = counts.map(() => []);
+  const items: FrontierItem[] = [];
+
+  if (!isV2) {
+    // Unchanged `paged_moment_tree` (x-tree) traversal.
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let candidates: MomentNode[] = [];
+    for (const node of levels[rootLevel] ?? []) {
+      if (node.maxX < minX || node.minX > maxX) continue;
+      if (minX <= node.minX && node.maxX <= maxX) {
+        minY = Math.min(minY, node.minY);
+        maxY = Math.max(maxY, node.maxY);
+      } else candidates.push(node);
+    }
+    let straddling = candidates.filter((c) => c.minY < minY || c.maxY > maxY);
+    for (let childLevel = rootLevel - 1; childLevel >= 0 && straddling.length > 0; childLevel--) {
+      if (fetchPages(childLevel, straddling.map((s) => s.index), "y-range")) round++;
+      candidates = [];
+      for (const parent of straddling) {
+        for (const node of children(childLevel + 1, parent.index)) {
+          if (node.maxX < minX || node.minX > maxX) continue;
+          if (minX <= node.minX && node.maxX <= maxX) {
+            minY = Math.min(minY, node.minY);
+            maxY = Math.max(maxY, node.maxY);
+          } else candidates.push(node);
+        }
+      }
+      straddling = candidates.filter((c) => c.minY < minY || c.maxY > maxY);
+    }
+    if (straddling.length > 0) {
+      const missing = straddling.map((s) => s.index).filter((l) => !cache.leaves.has(l));
+      if (missing.length > 0) {
+        leafRequests(missing, "y-range", round);
+        round++;
+      }
+      for (const leaf of straddling) {
+        for (let i = leaf.start; i < leaf.end; i++) {
+          const x = model.data.xs[i]!;
+          if (x >= minX && x <= maxX) {
+            minY = Math.min(minY, model.data.ys[i]!);
+            maxY = Math.max(maxY, model.data.ys[i]!);
+          }
+        }
+      }
+    }
+    const yRange: [number, number] | null = minY <= maxY ? [minY, maxY] : null;
+    const effectiveY = query.yBounds ?? yRange ?? [0, 1];
+    const yFactor = query.screenH / Math.max(effectiveY[1] - effectiveY[0], 1e-12) / sigma;
+    if (!yRange) {
+      return { query, yRange, effectiveY, xFactor, yFactor, trace, items, groups: [], requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
+    }
+    const done: Array<{ kind: "resolved" | "leaf"; entry: TraceEntry }> = [];
+    const classify = (node: MomentNode, level: number, expand: MomentNode[]) => {
+      if (node.maxX < minX || node.minX > maxX) return;
+      const fullyInside = minX <= node.minX && node.maxX <= maxX;
+      const w = (node.maxX - node.minX) * xFactor;
+      const span = (node.maxY - node.minY) * yFactor;
+      const detail: DecisionDetail = { w, span, hMax: NaN, kNeeded: null, kmax: 0, fullyInside };
+      const decision: Decision = !fullyInside
+        ? { kind: "expand", reason: "boundary" }
+        : offscreenY(node, query, yFactor)
+          ? { kind: "resolve", reason: "offscreen" }
+          : w * w + span * span < threshold * threshold
+            ? { kind: "resolve", reason: "fits" }
+            : { kind: "expand", reason: "too-big" };
+      const entry = { node, decision, detail };
+      trace[level]!.push(entry);
+      if (decision.kind === "resolve") done.push({ kind: "resolved", entry });
+      else if (level > 0) expand.push(node);
+      else done.push({ kind: "leaf", entry });
+    };
+    let expand: MomentNode[] = [];
+    for (const node of levels[rootLevel] ?? []) classify(node, rootLevel, expand);
+    for (let childLevel = rootLevel - 1; childLevel >= 0 && expand.length > 0; childLevel--) {
+      if (fetchPages(childLevel, expand.map((e) => e.index), "frontier")) round++;
+      const next: MomentNode[] = [];
+      for (const parent of expand) {
+        for (const node of children(childLevel + 1, parent.index)) classify(node, childLevel, next);
+      }
+      expand = next;
+    }
+    const missingLeaves: number[] = [];
+    for (const { kind, entry } of done.sort((a, b) => a.entry.node.minX - b.entry.node.minX)) {
+      if (kind === "resolved") {
+        const d = entry.decision as Extract<Decision, { kind: "resolve" }>;
+        items.push({ kind: "resolved", node: entry.node, reason: d.reason });
+      } else {
+        items.push({ kind: "leaf", node: entry.node });
+        if (cache.leaves.has(entry.node.index)) cacheHits++;
+        else missingLeaves.push(entry.node.index);
+      }
+    }
+    if (missingLeaves.length > 0) {
+      leafRequests(missingLeaves, "planes+leaves", round);
+      round++;
+    }
+    const groups = assembleGroups(model, items, query, xFactor, yFactor, threshold);
+    return { query, yRange, effectiveY, xFactor, yFactor, trace, items, groups, requests, rounds: round, wireBytes: sum(requests), kernelCount: groups.length, cacheHits };
   }
-  let straddling = candidates.filter((c) => c.minY < minY || c.maxY > maxY);
-  for (let childLevel = rootLevel - 1; childLevel >= 0 && straddling.length > 0; childLevel--) {
-    fetchPages(childLevel, straddling.map((s) => s.index), "y-range");
-    candidates = [];
-    for (const parent of straddling) {
-      for (const node of children(childLevel + 1, parent.index)) {
+
+  // PLPRIPM2 Phase 0: per-node x_factor-guided jump to initial mixed-level frontier.
+  const explicitYFactor = query.yBounds
+    ? query.screenH / Math.max(query.yBounds[1] - query.yBounds[0], 1e-12) / sigma
+    : null;
+  const byLevel: MomentNode[][] = counts.map(() => []);
+  byLevel[rootLevel] = (levels[rootLevel] ?? []).filter((n) => !(n.maxX < minX || n.minX > maxX));
+  if (byLevel[rootLevel]!.length === 0) {
+    return { query, yRange: null, effectiveY: query.yBounds ?? [0, 1], xFactor, yFactor: explicitYFactor ?? 1, trace, items, groups: [], requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
+  }
+  const targetW = MAX_PLANE_BLOCK_WIDTH * threshold;
+  for (let curLevel = rootLevel; curLevel >= 1; curLevel--) {
+    const curNodes = byLevel[curLevel]!;
+    byLevel[curLevel] = [];
+    if (curNodes.length === 0) continue;
+    const byDrop = new Map<number, number[]>();
+    for (const node of curNodes) {
+      const fullyInside = minX <= node.minX && node.maxX <= maxX;
+      const isOffscreen = fullyInside && explicitYFactor !== null && offscreenY(node, query, explicitYFactor);
+      const w = (node.maxX - node.minX) * xFactor;
+      if (w <= targetW || isOffscreen) {
+        byLevel[curLevel]!.push(node);
+      } else {
+        const idealDrop = Math.max(Math.ceil(Math.log(w / targetW) / Math.log(fanout)), 1);
+        const drop = Math.min(idealDrop, MAX_BOUNDARY_JUMP, curLevel);
+        const list = byDrop.get(drop) ?? [];
+        list.push(node.index);
+        byDrop.set(drop, list);
+      }
+    }
+    for (const [drop, parents] of byDrop) {
+      const targetLevel = curLevel - drop;
+      const desc = fetchDescendants(curLevel, targetLevel, parents, "frontier");
+      for (const n of desc) {
+        if (!(n.maxX < minX || n.minX > maxX)) byLevel[targetLevel]!.push(n);
+      }
+    }
+  }
+  const initNodes: MomentNode[] = [];
+  for (let l = 0; l < counts.length; l++) initNodes.push(...byLevel[l]!);
+  initNodes.sort((a, b) => a.index * fanout ** a.level - b.index * fanout ** b.level);
+
+  // PLPRIPM2 Phase 1: pruned exact visible_y_range (skipped completely when explicit yBounds is set).
+  let knownYRange: [number, number] | null = null;
+  if (!query.yBounds) {
+    let minY = Infinity;
+    let maxY = -Infinity;
+    const stradByLevel: MomentNode[][] = counts.map(() => []);
+    for (const node of initNodes) {
+      if (minX <= node.minX && node.maxX <= maxX) {
+        minY = Math.min(minY, node.minY);
+        maxY = Math.max(maxY, node.maxY);
+      } else {
+        stradByLevel[node.level]!.push(node);
+      }
+    }
+    for (let curLevel = rootLevel; curLevel >= 1; curLevel--) {
+      const active = stradByLevel[curLevel]!.filter((c) => c.minY < minY || c.maxY > maxY);
+      if (active.length === 0) continue;
+      const drop = Math.min(curLevel, MAX_BOUNDARY_JUMP);
+      const targetLevel = curLevel - drop;
+      const desc = fetchDescendants(curLevel, targetLevel, active.map((s) => s.index), "y-range");
+      for (const node of desc) {
         if (node.maxX < minX || node.minX > maxX) continue;
         if (minX <= node.minX && node.maxX <= maxX) {
           minY = Math.min(minY, node.minY);
           maxY = Math.max(maxY, node.maxY);
-        } else candidates.push(node);
-      }
-    }
-    straddling = candidates.filter((c) => c.minY < minY || c.maxY > maxY);
-  }
-  if (straddling.length > 0) {
-    const missing = straddling.map((s) => s.index).filter((l) => !cache.leaves.has(l));
-    if (missing.length > 0) {
-      leafRequests(missing, "y-range", round);
-      round++;
-    }
-    for (const leaf of straddling) {
-      for (let i = leaf.start; i < leaf.end; i++) {
-        const x = model.data.xs[i]!;
-        if (x >= minX && x <= maxX) {
-          minY = Math.min(minY, model.data.ys[i]!);
-          maxY = Math.max(maxY, model.data.ys[i]!);
+        } else {
+          stradByLevel[targetLevel]!.push(node);
         }
       }
     }
+    const leafStrad = stradByLevel[0]!.filter((c) => c.minY < minY || c.maxY > maxY);
+    if (leafStrad.length > 0) {
+      const missing = leafStrad.map((s) => s.index).filter((l) => !cache.leaves.has(l));
+      if (missing.length > 0) {
+        leafRequests(missing, "y-range", round);
+        round++;
+      }
+      for (const leaf of leafStrad) {
+        for (let i = leaf.start; i < leaf.end; i++) {
+          const x = model.data.xs[i]!;
+          if (x >= minX && x <= maxX) {
+            minY = Math.min(minY, model.data.ys[i]!);
+            maxY = Math.max(maxY, model.data.ys[i]!);
+          }
+        }
+      }
+    }
+    knownYRange = minY <= maxY ? [minY, maxY] : null;
+    if (!knownYRange) {
+      return { query, yRange: null, effectiveY: [0, 1], xFactor, yFactor: 1, trace, items, groups: [], requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
+    }
   }
-  const yRange: [number, number] | null = minY <= maxY ? [minY, maxY] : null;
-  const effectiveY = query.yBounds ?? yRange ?? [0, 1];
-  const sigma = Math.max(query.sigmaPx, 1e-12);
-  const xFactor = query.screenW / Math.max(maxX - minX, 1e-12) / sigma;
+
+  const effectiveY = query.yBounds ?? knownYRange ?? [0, 1];
   const yFactor = query.screenH / Math.max(effectiveY[1] - effectiveY[0], 1e-12) / sigma;
-  const threshold = Math.max(query.mergeThreshold, 1e-12);
 
-  const trace: TraceEntry[][] = counts.map(() => []);
-  const items: FrontierItem[] = [];
-  if (!yRange) {
-    return { query, yRange, effectiveY, xFactor, yFactor, trace, items, groups: [], requests, rounds: round, wireBytes: sum(requests), kernelCount: 0, cacheHits };
-  }
-
-  // Phase 2: frontier with the ripmap decision policy.
-  const decide = (node: MomentNode, level: number, fullyInside: boolean): TraceEntry => {
+  // PLPRIPM2 Phase 2: frontier with sparse per-block plane directory check.
+  const decide = (node: MomentNode, level: number, fullyInside: boolean): { entry: TraceEntry; slot: number } => {
     const w = (node.maxX - node.minX) * xFactor;
     const span = (node.maxY - node.minY) * yFactor;
     const kmax = model.kmax[level] ?? 0;
     const detail: DecisionDetail = { w, span, hMax: NaN, kNeeded: null, kmax, fullyInside };
-    if (!fullyInside) return { node, decision: { kind: "expand", reason: "boundary" }, detail };
-    if (offscreenY(node, query, yFactor)) return { node, decision: { kind: "resolve", reason: "offscreen" }, detail };
+    if (!fullyInside) return { entry: { node, decision: { kind: "expand", reason: "boundary" }, detail }, slot: -1 };
+    if (offscreenY(node, query, yFactor)) return { entry: { node, decision: { kind: "resolve", reason: "offscreen" }, detail }, slot: -1 };
     if (w * w + span * span < threshold * threshold) {
-      return { node, decision: { kind: "resolve", reason: "fits" }, detail };
+      return { entry: { node, decision: { kind: "resolve", reason: "fits" }, detail }, slot: -1 };
     }
-    if (model.strategy === "tree") return { node, decision: { kind: "expand", reason: "too-big" }, detail };
     if (w <= MAX_PLANE_BLOCK_WIDTH * threshold) {
       const nd = neededDepth(node, w, yFactor, threshold);
       detail.hMax = nd.hMax;
       detail.kNeeded = nd.k;
-      if (nd.k <= kmax) return { node, decision: { kind: "plane", k: nd.k }, detail };
-      return { node, decision: { kind: "expand", reason: "k-exceeds-kmax" }, detail };
+      const ks = model.planeDepths[level]!;
+      const dirs = model.blockDirs[level]![node.index]!;
+      for (let slot = 0; slot < ks.length; slot++) {
+        if (ks[slot]! >= nd.k && dirs[slot]!.cellCount > 0) {
+          return { entry: { node, decision: { kind: "plane", k: ks[slot]! }, detail }, slot };
+        }
+      }
+      return { entry: { node, decision: { kind: "expand", reason: "k-exceeds-kmax" }, detail }, slot: -1 };
     }
-    return { node, decision: { kind: "expand", reason: "too-wide" }, detail };
+    return { entry: { node, decision: { kind: "expand", reason: "too-wide" }, detail }, slot: -1 };
   };
 
-  const done: Array<{ kind: "resolved" | "plane" | "leaf"; entry: TraceEntry }> = [];
-  const classify = (node: MomentNode, level: number, expand: MomentNode[]) => {
+  const done: Array<{ orderKey: number; kind: "resolved" | "plane" | "leaf"; entry: TraceEntry; slot: number }> = [];
+  const expandByLevel: MomentNode[][] = counts.map(() => []);
+  const classify = (node: MomentNode, level: number) => {
     if (node.maxX < minX || node.minX > maxX) return;
     const fullyInside = minX <= node.minX && node.maxX <= maxX;
-    const entry = decide(node, level, fullyInside);
+    const { entry, slot } = decide(node, level, fullyInside);
     trace[level]!.push(entry);
+    const orderKey = node.index * fanout ** level;
     const d = entry.decision;
-    if (d.kind === "resolve") done.push({ kind: "resolved", entry });
-    else if (d.kind === "plane") done.push({ kind: "plane", entry });
-    else if (level > 0) expand.push(node);
-    else done.push({ kind: "leaf", entry });
+    if (d.kind === "resolve") done.push({ orderKey, kind: "resolved", entry, slot: -1 });
+    else if (d.kind === "plane") done.push({ orderKey, kind: "plane", entry, slot });
+    else if (level > 0) expandByLevel[level]!.push(node);
+    else done.push({ orderKey, kind: "leaf", entry, slot: -1 });
   };
 
-  let expand: MomentNode[] = [];
-  for (const node of levels[rootLevel] ?? []) classify(node, rootLevel, expand);
-  for (let childLevel = rootLevel - 1; childLevel >= 0 && expand.length > 0; childLevel--) {
-    fetchPages(childLevel, expand.map((e) => e.index), "frontier");
-    const next: MomentNode[] = [];
-    for (const parent of expand) {
-      for (const node of children(childLevel + 1, parent.index)) classify(node, childLevel, next);
+  for (const node of initNodes) classify(node, node.level);
+  for (let curLevel = rootLevel; curLevel >= 1; curLevel--) {
+    const expanding = expandByLevel[curLevel]!;
+    expandByLevel[curLevel] = [];
+    if (expanding.length === 0) continue;
+
+    const onlyStraddling = expanding.every((n) => !(minX <= n.minX && n.maxX <= maxX));
+    const lowerEmpty = expandByLevel.slice(1, curLevel).every((a) => a.length === 0);
+    if (onlyStraddling && lowerEmpty && curLevel <= MAX_BOUNDARY_JUMP && curLevel > 1) {
+      const maxSpanSigma = Math.max(...expanding.map((n) => (n.maxY - n.minY) * yFactor), 0);
+      const leafSpanBound = 2 << curLevel;
+      if (maxSpanSigma <= leafSpanBound) {
+        const desc = fetchDescendants(curLevel, 0, expanding.map((e) => e.index), "frontier");
+        for (const leaf of desc) classify(leaf, 0);
+      } else {
+        // Concurrent 1-RTT fetch of `0..curLevel` boundary subtree slices.
+        let fetchedAny = false;
+        for (let lvl = 0; lvl < curLevel; lvl++) {
+          const step = curLevel - lvl;
+          const pagesPerParent = fanout ** (step - 1);
+          const totalPages = Math.ceil(counts[lvl]! / fanout);
+          const needed: number[] = [];
+          for (const e of expanding) {
+            const lo = e.index * pagesPerParent;
+            const hi = Math.min((e.index + 1) * pagesPerParent, totalPages);
+            for (let p = lo; p < hi; p++) needed.push(p);
+          }
+          if (fetchPages(lvl, needed, "frontier", round)) fetchedAny = true;
+        }
+        if (fetchedAny) round++;
+        const walkSub = (parent: MomentNode) => {
+          for (const child of children(parent.level, parent.index)) {
+            if (child.maxX < minX || child.minX > maxX) continue;
+            const fullyInside = minX <= child.minX && child.maxX <= maxX;
+            const { entry, slot } = decide(child, child.level, fullyInside);
+            trace[child.level]!.push(entry);
+            const orderKey = child.index * fanout ** child.level;
+            const d = entry.decision;
+            if (d.kind === "resolve") done.push({ orderKey, kind: "resolved", entry, slot: -1 });
+            else if (d.kind === "plane") done.push({ orderKey, kind: "plane", entry, slot });
+            else if (child.level === 0) done.push({ orderKey, kind: "leaf", entry, slot: -1 });
+            else walkSub(child);
+          }
+        };
+        for (const parent of expanding) walkSub(parent);
+      }
+      break;
     }
-    expand = next;
+
+    const childLevel = curLevel - 1;
+    if (fetchPages(childLevel, expanding.map((e) => e.index), "frontier")) round++;
+    for (const parent of expanding) {
+      for (const child of children(curLevel, parent.index)) classify(child, childLevel);
+    }
   }
 
-  // Phase 3: raw boundary leaves and plane blocks, fetched concurrently in one round.
+  // PLPRIPM2 Phase 3: concurrent raw leaves + coalesced sparse `planes.bin` spans (with cross-k cache reuse).
   const missingLeaves: number[] = [];
-  const missingPlanes = new Map<string, number[]>();
+  const missingPlaneSpans: Array<[number, number]> = [];
   let kernelCount = 0;
-  for (const { kind, entry } of done.sort((a, b) => a.entry.node.minX - b.entry.node.minX)) {
+  for (const { kind, entry, slot } of done.sort((a, b) => a.orderKey - b.orderKey)) {
     const node = entry.node;
     if (kind === "resolved") {
       const d = entry.decision as Extract<Decision, { kind: "resolve" }>;
@@ -712,45 +1177,64 @@ export function runQuery(model: RipmapModel, query: ViewQuery, cache: ClientCach
       if (cache.leaves.has(node.index)) cacheHits++;
       else missingLeaves.push(node.index);
     } else {
-      const k = (entry.decision as Extract<Decision, { kind: "plane" }>).k;
-      const cells = planeCells(model, node, k);
-      items.push({ kind: "plane", node, k, cells });
-      kernelCount += cells.filter((c) => c.count > 0).length;
-      const blockKey = `${node.level}:${k}:${node.index}`;
-      if (cache.planeBlocks.has(blockKey)) {
-        cacheHits++;
-      } else {
-        const key = `${node.level}:${k}`;
-        const list = missingPlanes.get(key) ?? [];
-        list.push(node.index);
-        missingPlanes.set(key, list);
-        cache.planeBlocks.add(blockKey);
+      const ks = model.planeDepths[node.level]!;
+      let actualSlot = slot;
+      let hit = false;
+      for (let trySlot = slot; trySlot < ks.length; trySlot++) {
+        if (cache.planeBlocks.has(`${node.level}:${trySlot}:${node.index}`)) {
+          actualSlot = trySlot;
+          hit = true;
+          cacheHits++;
+          break;
+        }
+      }
+      const actualK = ks[actualSlot]!;
+      const cells = planeCells(model, node, actualK);
+      items.push({ kind: "plane", node, k: actualK, cells });
+      kernelCount += countMergedPlaneKernels(node, cells, query, xFactor, yFactor, threshold);
+      if (!hit) {
+        const dir = model.blockDirs[node.level]![node.index]![slot]!;
+        const byteOff = model.planeByteOffsets[node.level]![slot]! + dir.cellOffset * CELL_BYTES;
+        const byteLen = dir.cellCount * CELL_BYTES;
+        if (byteLen > 0) missingPlaneSpans.push([byteOff, byteLen]);
+        cache.planeBlocks.add(`${node.level}:${slot}:${node.index}`);
       }
     }
   }
-  if (missingLeaves.length > 0 || missingPlanes.size > 0) {
+  if (missingLeaves.length > 0 || missingPlaneSpans.length > 0) {
     leafRequests(missingLeaves, "planes+leaves", round);
-    for (const [key, blocks] of missingPlanes) {
-      const [level, k] = key.split(":").map(Number) as [number, number];
-      const bytesPerBlock = 2 ** k * CELL_BYTES;
-      const total = counts[level]!;
-      for (const [start, count] of coalesceRuns(
-        blocks,
-        Math.floor(PLANE_MAX_GAP_BYTES / bytesPerBlock),
-        Math.max(Math.floor(PLANE_MAX_RUN_BYTES / bytesPerBlock), 1),
-      )) {
-        const end = Math.min(start + count, total);
-        requests.push({
-          key: planeKey(level, k),
-          offset: start * bytesPerBlock,
-          len: (end - start) * bytesPerBlock,
-          round,
-          phase: "planes+leaves",
-        });
-        // Bridged gap blocks arrive too but the Rust client only caches requested ones.
-      }
+    for (const [startByte, endByte] of coalesceByteSpans(missingPlaneSpans, PLANE_MAX_GAP_BYTES, PLANE_MAX_RUN_BYTES)) {
+      requests.push({
+        key: "planes.bin",
+        offset: startByte,
+        len: endByte - startByte,
+        round,
+        phase: "planes+leaves",
+      });
     }
     round++;
+  }
+
+  // Derive exact yRange from frontier + clipped leaves if Phase 1 was skipped (explicit yBounds).
+  let yRange = knownYRange;
+  if (!yRange) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const item of items) {
+      if (item.kind === "resolved" || item.kind === "plane") {
+        lo = Math.min(lo, item.node.minY);
+        hi = Math.max(hi, item.node.maxY);
+      } else {
+        for (let i = item.node.start; i < item.node.end; i++) {
+          const x = model.data.xs[i]!;
+          if (x >= minX && x <= maxX) {
+            lo = Math.min(lo, model.data.ys[i]!);
+            hi = Math.max(hi, model.data.ys[i]!);
+          }
+        }
+      }
+    }
+    yRange = lo <= hi ? [lo, hi] : null;
   }
 
   const groups = assembleGroups(model, items, query, xFactor, yFactor, threshold);

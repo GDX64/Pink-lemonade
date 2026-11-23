@@ -315,18 +315,26 @@ impl RipmapClient {
         Ok(results)
     }
 
-    /// Jump straight from `root_records` toward the level `ℓ*` where `w <= MAX_PLANE_BLOCK_WIDTH * t`.
-    async fn jump_to_initial_level(
+    /// Jump each overlapping root node down only as far as its *own* x-width requires
+    /// (`w <= MAX_PLANE_BLOCK_WIDTH * threshold`), keeping narrow burst nodes (and off-screen
+    /// y-nodes when `y_bounds` is set) at their higher level so one wide gap-straddling node
+    /// cannot drag the whole view down to level 0.
+    async fn jump_to_initial_frontier(
         &mut self,
-        min_x: f64,
-        max_x: f64,
+        query: &ViewQuery,
         x_factor: f64,
+        explicit_y_factor: Option<f64>,
         threshold: f64,
-    ) -> Result<Option<(usize, Vec<(u64, RipmapRecord)>)>, ClientError> {
+    ) -> Result<Vec<(usize, u64, RipmapRecord)>, ClientError> {
         let Some(root_level) = self.manifest.root_level() else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
-        let mut cur_nodes: Vec<(u64, RipmapRecord)> = self
+        let min_x = query.min_x;
+        let max_x = query.max_x;
+        let num_levels = self.manifest.levels.len();
+        let mut by_level: Vec<Vec<(u64, RipmapRecord)>> = vec![Vec::new(); num_levels];
+
+        by_level[root_level] = self
             .manifest
             .root_records
             .iter()
@@ -339,49 +347,60 @@ impl RipmapClient {
                 }
             })
             .collect();
-        if cur_nodes.is_empty() {
-            return Ok(None);
+        if by_level[root_level].is_empty() {
+            return Ok(Vec::new());
         }
 
         let target_w = MAX_PLANE_BLOCK_WIDTH * threshold;
         let fanout_f = self.manifest.fanout as f64;
-        let mut cur_level = root_level;
 
-        while cur_level > 0 {
-            let max_w = cur_nodes
-                .iter()
-                .map(|(_, r)| (r.node.max_x - r.node.min_x) * x_factor)
-                .fold(0.0_f64, f64::max);
-            if max_w <= target_w {
-                break;
+        for cur_level in (1..=root_level).rev() {
+            let nodes = std::mem::take(&mut by_level[cur_level]);
+            if nodes.is_empty() {
+                continue;
             }
-            let ideal_drop = (max_w / target_w).log(fanout_f).ceil().max(1.0) as usize;
-            let all_interior = cur_nodes
-                .iter()
-                .all(|(_, r)| min_x <= r.node.min_x && r.node.max_x <= max_x);
-            let drop = if all_interior {
-                ideal_drop.min(cur_level)
-            } else {
-                ideal_drop.min(MAX_BOUNDARY_JUMP).min(cur_level)
-            };
-            if drop == 0 {
-                break;
+            let mut ready = Vec::new();
+            let mut by_drop: BTreeMap<usize, Vec<u64>> = BTreeMap::new();
+
+            for (idx, rec) in nodes {
+                let n = &rec.node;
+                let fully_inside = min_x <= n.min_x && n.max_x <= max_x;
+                let is_offscreen = fully_inside
+                    && explicit_y_factor.is_some_and(|yf| offscreen_y(n, query, yf));
+                let w = (n.max_x - n.min_x) * x_factor;
+                if w <= target_w || is_offscreen {
+                    ready.push((idx, rec));
+                } else {
+                    let ideal_drop = (w / target_w).log(fanout_f).ceil().max(1.0) as usize;
+                    let drop = ideal_drop.min(MAX_BOUNDARY_JUMP).min(cur_level);
+                    by_drop.entry(drop).or_default().push(idx);
+                }
             }
-            let parents: Vec<u64> = cur_nodes.iter().map(|&(idx, _)| idx).collect();
-            let target_level = cur_level - drop;
-            let descendants = self
-                .fetch_descendants(cur_level, target_level, &parents)
-                .await?;
-            cur_nodes = descendants
-                .into_iter()
-                .filter(|(_, r)| !(r.node.max_x < min_x || r.node.min_x > max_x))
-                .collect();
-            cur_level = target_level;
-            if cur_nodes.is_empty() {
-                return Ok(None);
+            by_level[cur_level] = ready;
+
+            for (drop, parents) in by_drop {
+                let target_level = cur_level - drop;
+                let descendants = self
+                    .fetch_descendants(cur_level, target_level, &parents)
+                    .await?;
+                for (d_idx, d_rec) in descendants {
+                    if !(d_rec.node.max_x < min_x || d_rec.node.min_x > max_x) {
+                        by_level[target_level].push((d_idx, d_rec));
+                    }
+                }
             }
         }
-        Ok(Some((cur_level, cur_nodes)))
+
+        let fanout = self.manifest.fanout as u64;
+        let mut out: Vec<(usize, u64, RipmapRecord)> = Vec::new();
+        for (level, nodes) in by_level.into_iter().enumerate() {
+            for (idx, rec) in nodes {
+                out.push((level, idx, rec));
+            }
+        }
+        // Exact x-monotonic order across mixed levels using each node's starting leaf index.
+        out.sort_unstable_by_key(|&(lvl, idx, _)| idx * fanout.pow(lvl as u32));
+        Ok(out)
     }
 
     fn cached_leaves(&mut self, leaf_indices: &[u64]) -> (HashMap<u64, Arc<[Point]>>, Vec<u64>) {
@@ -420,41 +439,42 @@ impl RipmapClient {
         Ok(resolved)
     }
 
-    /// Exact visible `[min_y, max_y]` starting from `start_nodes` at `start_level`.
+    /// Exact visible `[min_y, max_y]` starting from mixed-level initial frontier nodes.
     async fn visible_y_range_from(
         &mut self,
-        start_level: usize,
-        start_nodes: &[(u64, RipmapRecord)],
+        init_nodes: &[(usize, u64, RipmapRecord)],
         min_x: f64,
         max_x: f64,
     ) -> Result<Option<[f64; 2]>, ClientError> {
         let mut min_y = f64::INFINITY;
         let mut max_y = f64::NEG_INFINITY;
+        let num_levels = self.manifest.levels.len();
+        let mut straddling_by_level: Vec<Vec<(u64, f64, f64)>> = vec![Vec::new(); num_levels];
 
-        let mut straddling = Vec::new();
-        for (idx, rec) in start_nodes {
+        for (lvl, idx, rec) in init_nodes {
             let n = rec.node;
             if min_x <= n.min_x && n.max_x <= max_x {
                 min_y = min_y.min(n.min_y);
                 max_y = max_y.max(n.max_y);
             } else {
-                straddling.push((*idx, n.min_y, n.max_y));
+                straddling_by_level[*lvl].push((*idx, n.min_y, n.max_y));
             }
         }
-        let mut straddling_ids: Vec<u64> = straddling
-            .into_iter()
-            .filter(|&(_, lo, hi)| lo < min_y || hi > max_y)
-            .map(|(idx, _, _)| idx)
-            .collect();
 
-        let mut cur_level = start_level;
-        while cur_level > 0 && !straddling_ids.is_empty() {
+        for cur_level in (1..num_levels).rev() {
+            let ids: Vec<u64> = std::mem::take(&mut straddling_by_level[cur_level])
+                .into_iter()
+                .filter(|&(_, lo, hi)| lo < min_y || hi > max_y)
+                .map(|(idx, _, _)| idx)
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
             let drop = cur_level.min(MAX_BOUNDARY_JUMP);
             let target_level = cur_level - drop;
             let descendants = self
-                .fetch_descendants(cur_level, target_level, &straddling_ids)
+                .fetch_descendants(cur_level, target_level, &ids)
                 .await?;
-            let mut next_candidates = Vec::new();
             for (idx, rec) in descendants {
                 let n = rec.node;
                 if n.max_x < min_x || n.min_x > max_x {
@@ -464,20 +484,19 @@ impl RipmapClient {
                     min_y = min_y.min(n.min_y);
                     max_y = max_y.max(n.max_y);
                 } else {
-                    next_candidates.push((idx, n.min_y, n.max_y));
+                    straddling_by_level[target_level].push((idx, n.min_y, n.max_y));
                 }
             }
-            straddling_ids = next_candidates
-                .into_iter()
-                .filter(|&(_, lo, hi)| lo < min_y || hi > max_y)
-                .map(|(idx, _, _)| idx)
-                .collect();
-            cur_level = target_level;
         }
 
-        if !straddling_ids.is_empty() {
-            let leaves = self.fetch_leaves(&straddling_ids).await?;
-            for leaf_idx in straddling_ids {
+        let leaf_ids: Vec<u64> = std::mem::take(&mut straddling_by_level[0])
+            .into_iter()
+            .filter(|&(_, lo, hi)| lo < min_y || hi > max_y)
+            .map(|(idx, _, _)| idx)
+            .collect();
+        if !leaf_ids.is_empty() {
+            let leaves = self.fetch_leaves(&leaf_ids).await?;
+            for leaf_idx in leaf_ids {
                 if let Some(points) = leaves.get(&leaf_idx) {
                     for p in points.iter() {
                         if p.x >= min_x && p.x <= max_x {
@@ -491,32 +510,32 @@ impl RipmapClient {
         Ok(min_y.is_finite().then_some([min_y, max_y]))
     }
 
-    /// Expand frontier starting from `start_nodes` at `start_level`.
+    /// Expand frontier starting from mixed-level `init_nodes`, preserving exact x-order.
     async fn frontier_from(
         &mut self,
-        start_level: usize,
-        start_nodes: Vec<(u64, RipmapRecord)>,
+        init_nodes: Vec<(usize, u64, RipmapRecord)>,
         query: &ViewQuery,
         x_factor: f64,
         y_factor: f64,
         threshold: f64,
     ) -> Result<Vec<RipmapItem>, ClientError> {
-        enum Item {
-            Done(RipmapItem),
-            Expand {
-                idx: u64,
-                straddling: bool,
-                span_sigma: f64,
-            },
-        }
-
         let min_x = query.min_x;
         let max_x = query.max_x;
+        let fanout = self.manifest.fanout as u64;
+        let num_levels = self.manifest.levels.len();
 
-        let classify = |rec: RipmapRecord, level: usize, index: u64, manifest: &RipmapManifest| -> Option<Item> {
+        let mut done: Vec<(u64, RipmapItem)> = Vec::with_capacity(init_nodes.len());
+        let mut expand_by_level: Vec<Vec<(u64, bool, f64)>> = vec![Vec::new(); num_levels];
+
+        let classify_into = |rec: RipmapRecord,
+                             level: usize,
+                             index: u64,
+                             manifest: &RipmapManifest,
+                             done: &mut Vec<(u64, RipmapItem)>,
+                             expand_by_level: &mut [Vec<(u64, bool, f64)>]| {
             let node = rec.node;
             if node.max_x < min_x || node.min_x > max_x {
-                return None;
+                return;
             }
             let fully_inside = min_x <= node.min_x && node.max_x <= max_x;
             let decision = if fully_inside {
@@ -524,153 +543,121 @@ impl RipmapClient {
             } else {
                 RipmapDecision::Expand
             };
-            Some(match decision {
-                RipmapDecision::Resolve => Item::Done(RipmapItem::Resolved(node)),
+            let order_key = index * fanout.pow(level as u32);
+            match decision {
+                RipmapDecision::Resolve => done.push((order_key, RipmapItem::Resolved(node))),
                 RipmapDecision::Plane(slot) => {
                     let dir = rec.planes[slot];
-                    Item::Done(RipmapItem::Plane {
-                        level,
-                        slot,
-                        index,
-                        node,
-                        dir,
-                        all_dirs: rec.planes,
-                    })
+                    done.push((
+                        order_key,
+                        RipmapItem::Plane {
+                            level,
+                            slot,
+                            index,
+                            node,
+                            dir,
+                            all_dirs: rec.planes,
+                        },
+                    ));
                 }
-                RipmapDecision::Expand if level > 0 => Item::Expand {
-                    idx: index,
-                    straddling: !fully_inside,
-                    span_sigma: (node.max_y - node.min_y) * y_factor,
-                },
-                RipmapDecision::Expand => Item::Done(RipmapItem::Leaf(index)),
-            })
+                RipmapDecision::Expand if level > 0 => {
+                    expand_by_level[level].push((
+                        index,
+                        !fully_inside,
+                        (node.max_y - node.min_y) * y_factor,
+                    ));
+                }
+                RipmapDecision::Expand => done.push((order_key, RipmapItem::Leaf(index))),
+            }
         };
 
-        let mut frontier: Vec<Item> = start_nodes
-            .into_iter()
-            .filter_map(|(idx, rec)| classify(rec, start_level, idx, &self.manifest))
-            .collect();
+        for (lvl, idx, rec) in init_nodes {
+            classify_into(
+                rec,
+                lvl,
+                idx,
+                &self.manifest,
+                &mut done,
+                &mut expand_by_level,
+            );
+        }
 
-        let fanout = self.manifest.fanout as u64;
-        let mut cur_level = start_level;
-
-        while cur_level > 0 {
-            let mut expand_all = Vec::new();
-            let mut only_straddling = true;
-            let mut max_span_sigma = 0.0_f64;
-            for item in &frontier {
-                if let Item::Expand {
-                    idx,
-                    straddling,
-                    span_sigma,
-                } = *item
-                {
-                    expand_all.push(idx);
-                    if !straddling {
-                        only_straddling = false;
-                    }
-                    max_span_sigma = max_span_sigma.max(span_sigma);
-                }
+        for cur_level in (1..num_levels).rev() {
+            let expanding = std::mem::take(&mut expand_by_level[cur_level]);
+            if expanding.is_empty() {
+                continue;
             }
-            if expand_all.is_empty() {
-                break;
-            }
+            let only_straddling = expanding.iter().all(|&(_, s, _)| s);
+            let max_span_sigma = expanding
+                .iter()
+                .map(|&(_, _, sp)| sp)
+                .fold(0.0_f64, f64::max);
+            let expand_all: Vec<u64> = expanding.iter().map(|&(idx, _, _)| idx).collect();
 
             // Fast path: when only straddling boundary nodes remain within `MAX_BOUNDARY_JUMP`
-            // levels of level 0:
-            // - On low-span curves (`<= 16σ`), jump straight to `level_0` (2 requests, 1 RTT)
-            //   since interior leaves resolve directly and merge cleanly.
-            // - On tall-span blocks (`> 16σ`, e.g. white noise), fetch `0..cur_level` concurrently
-            //   in 1 RTT so interior siblings still hit their Level-2/1 sparse planes.
-            if only_straddling && cur_level <= MAX_BOUNDARY_JUMP && cur_level > 1 {
-                let mut next = Vec::with_capacity(frontier.len() + expand_all.len() * 16);
-                if max_span_sigma <= 16.0 {
+            // levels of level 0 and no lower levels have pending expansions:
+            // - If vertical span `<= 2 * 2^cur_level` (Brownian leaf-span bound: ~2σ per leaf),
+            //   jump straight to `level_0` (2 requests, 1 RTT) since interior leaves fit directly.
+            // - Otherwise fetch `0..cur_level` concurrently in 1 RTT so interior siblings still
+            //   use their sparse planes.
+            let lower_empty = expand_by_level[1..cur_level].iter().all(Vec::is_empty);
+            if only_straddling && lower_empty && cur_level <= MAX_BOUNDARY_JUMP && cur_level > 1 {
+                let leaf_span_bound = (2u64 << cur_level) as f64;
+                if max_span_sigma <= leaf_span_bound {
                     let leaves_desc = self.fetch_descendants(cur_level, 0, &expand_all).await?;
-                    let mut by_parent: HashMap<u64, Vec<(u64, RipmapRecord)>> =
-                        HashMap::with_capacity(expand_all.len());
-                    let leaves_per_parent = fanout.pow(cur_level as u32);
                     for (leaf_idx, rec) in leaves_desc {
-                        by_parent
-                            .entry(leaf_idx / leaves_per_parent)
-                            .or_default()
-                            .push((leaf_idx, rec));
-                    }
-                    for item in frontier {
-                        match item {
-                            Item::Done(done) => next.push(Item::Done(done)),
-                            Item::Expand { idx, .. } => {
-                                if let Some(leaf_recs) = by_parent.remove(&idx) {
-                                    for (leaf_idx, rec) in leaf_recs {
-                                        if let Some(done) =
-                                            classify(rec, 0, leaf_idx, &self.manifest)
-                                        {
-                                            next.push(done);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        classify_into(
+                            rec,
+                            0,
+                            leaf_idx,
+                            &self.manifest,
+                            &mut done,
+                            &mut expand_by_level,
+                        );
                     }
                 } else {
                     let subtrees = self.fetch_boundary_subtrees(cur_level, &expand_all).await?;
-                    for item in frontier {
-                        match item {
-                            Item::Done(done) => next.push(Item::Done(done)),
-                            Item::Expand { idx, .. } => {
-                                let mut sub_items = Vec::new();
-                                walk_boundary_subtree(
-                                    cur_level,
-                                    idx,
-                                    &subtrees,
-                                    &self.manifest,
-                                    query,
-                                    x_factor,
-                                    y_factor,
-                                    threshold,
-                                    &mut sub_items,
-                                );
-                                next.extend(sub_items.into_iter().map(Item::Done));
-                            }
-                        }
+                    for &idx in &expand_all {
+                        let mut sub_items = Vec::new();
+                        walk_boundary_subtree(
+                            cur_level,
+                            idx,
+                            &subtrees,
+                            &self.manifest,
+                            query,
+                            x_factor,
+                            y_factor,
+                            threshold,
+                            &mut sub_items,
+                        );
+                        done.extend(sub_items);
                     }
                 }
-                frontier = next;
                 break;
             }
 
             let child_level = cur_level - 1;
             let pages = self.fetch_level_pages(child_level, &expand_all).await?;
-            let mut next = Vec::with_capacity(frontier.len() + expand_all.len() * fanout as usize);
-            for item in frontier {
-                match item {
-                    Item::Done(done) => next.push(Item::Done(done)),
-                    Item::Expand { idx, .. } => {
-                        let Some(children) = pages.get(&idx) else {
-                            continue;
-                        };
-                        let base_child = idx * fanout;
-                        next.extend(children.iter().enumerate().filter_map(|(offset, rec)| {
-                            classify(
-                                rec.clone(),
-                                child_level,
-                                base_child + offset as u64,
-                                &self.manifest,
-                            )
-                        }));
-                    }
+            for idx in expand_all {
+                let Some(children) = pages.get(&idx) else {
+                    continue;
+                };
+                let base_child = idx * fanout;
+                for (offset, rec) in children.iter().enumerate() {
+                    classify_into(
+                        rec.clone(),
+                        child_level,
+                        base_child + offset as u64,
+                        &self.manifest,
+                        &mut done,
+                        &mut expand_by_level,
+                    );
                 }
             }
-            frontier = next;
-            cur_level = child_level;
         }
 
-        Ok(frontier
-            .into_iter()
-            .map(|item| match item {
-                Item::Done(done) => done,
-                Item::Expand { .. } => unreachable!("all levels expanded"),
-            })
-            .collect())
+        done.sort_unstable_by_key(|(order_key, _)| *order_key);
+        Ok(done.into_iter().map(|(_, item)| item).collect())
     }
 }
 
@@ -684,7 +671,7 @@ fn walk_boundary_subtree(
     x_factor: f64,
     y_factor: f64,
     threshold: f64,
-    out: &mut Vec<RipmapItem>,
+    out: &mut Vec<(u64, RipmapItem)>,
 ) {
     #[allow(clippy::too_many_arguments)]
     fn visit(
@@ -696,7 +683,7 @@ fn walk_boundary_subtree(
         x_factor: f64,
         y_factor: f64,
         threshold: f64,
-        out: &mut Vec<RipmapItem>,
+        out: &mut Vec<(u64, RipmapItem)>,
     ) {
         let Some(rec) = subtrees[level].get(&node_idx) else {
             return;
@@ -711,19 +698,23 @@ fn walk_boundary_subtree(
         } else {
             RipmapDecision::Expand
         };
+        let fanout = manifest.fanout as u64;
+        let order_key = node_idx * fanout.pow(level as u32);
         match decision {
-            RipmapDecision::Resolve => out.push(RipmapItem::Resolved(node)),
-            RipmapDecision::Plane(slot) => out.push(RipmapItem::Plane {
-                level,
-                slot,
-                index: node_idx,
-                node,
-                dir: rec.planes[slot],
-                all_dirs: rec.planes.clone(),
-            }),
-            RipmapDecision::Expand if level == 0 => out.push(RipmapItem::Leaf(node_idx)),
+            RipmapDecision::Resolve => out.push((order_key, RipmapItem::Resolved(node))),
+            RipmapDecision::Plane(slot) => out.push((
+                order_key,
+                RipmapItem::Plane {
+                    level,
+                    slot,
+                    index: node_idx,
+                    node,
+                    dir: rec.planes[slot],
+                    all_dirs: rec.planes.clone(),
+                },
+            )),
+            RipmapDecision::Expand if level == 0 => out.push((order_key, RipmapItem::Leaf(node_idx))),
             RipmapDecision::Expand => {
-                let fanout = manifest.fanout as u64;
                 let base = node_idx * fanout;
                 for off in 0..fanout {
                     visit(
@@ -1099,19 +1090,20 @@ impl ProgressiveClient for RipmapClient {
         let x_den = (query.max_x - query.min_x).max(1e-12);
         let sigma = query.sigma_px.max(1e-12);
         let x_factor_est = query.screen_w / x_den / sigma;
+        let explicit_y_factor = query.y_bounds.map(|yb| query.factors(yb).1);
 
-        let Some((init_level, init_nodes)) = self
-            .jump_to_initial_level(query.min_x, query.max_x, x_factor_est, threshold)
-            .await?
-        else {
+        let init_nodes = self
+            .jump_to_initial_frontier(&query, x_factor_est, explicit_y_factor, threshold)
+            .await?;
+        if init_nodes.is_empty() {
             return Ok(Frame::empty());
-        };
+        }
 
         let (known_y_range, effective_y) = if let Some(explicit) = query.y_bounds {
             (None, explicit)
         } else {
             let Some(yr) = self
-                .visible_y_range_from(init_level, &init_nodes, query.min_x, query.max_x)
+                .visible_y_range_from(&init_nodes, query.min_x, query.max_x)
                 .await?
             else {
                 return Ok(Frame::empty());
@@ -1121,7 +1113,7 @@ impl ProgressiveClient for RipmapClient {
         let (x_factor, y_factor) = query.factors(effective_y);
 
         let items = self
-            .frontier_from(init_level, init_nodes, &query, x_factor, y_factor, threshold)
+            .frontier_from(init_nodes, &query, x_factor, y_factor, threshold)
             .await?;
 
         let leaf_indices: Vec<u64> = items
