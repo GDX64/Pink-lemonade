@@ -12,3 +12,4 @@ Chronological research notes, ablations, and measured benchmark results for `pin
 - [2026-11-22: Head-to-Head — Ripmap v2 vs Sparse Grid, plus a σ = 4 px Probe](./2026-11-22-ripmap-v2-vs-sparse-grid.md)
 - [2026-11-22: New Benchmark Scenarios — σ = 4 px Kernels and `BurstyX` (Phase A)](./2026-11-22-scenarios-small-kernel-and-bursty-x.md)
 - [2026-11-22: Ripmap v2 Hardening — Data-Driven `k` Caps, Per-Node Level Jumping for `BurstyX`, and Explorer v2 (Phase B + C)](./2026-11-22-ripmap-v2-data-driven-caps-and-bursty-x.md)
+- [2026-11-22: Sparse Grid Phase C (16-Byte Cells, Budgeted Column Gate, Cell Merging) and the Final Head-to-Head](./2026-11-22-sparse-grid-phase-c-and-final-head-to-head.md)
