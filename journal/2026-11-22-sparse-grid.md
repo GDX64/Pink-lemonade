@@ -100,3 +100,18 @@ Grid breakdown (from the ignored diagnostic test `storage_breakdown_at_10m`): `c
 3. **Inline the top levels' records and cells in `manifest.bin`** to make the overview one round trip (the one workload where the ripmap is faster).
 4. **Faster build:** one global sort by `(column at I, qy)` and k-way merges instead of a sort per aspect.
 5. **Ablations:** aspect step 1 vs 2, `min_points_per_cell` 8 / 32, `col_leaf` 128 / 512, and `MAX_COL_WIDTH`.
+
+---
+
+## Addendum (same day) — In-browser explorer (`?page=grid`)
+
+- **`src/pages/ripmap/grid-model.ts`** mirrors the Rust builder and client in TypeScript, and **`grid-page.ts`** renders it. The page shows:
+  - the screen with cells, column kernels, raw edge points and the KDE;
+  - the column decomposition per x-level, with the record pages read in round 1;
+  - a map of every stored plane `(i, j)`, marking the candidate levels, the chosen plane, the planes used by edge chains, and the grids a view needed that were not stored;
+  - the candidate comparison table, byte ranges per object, and round trips.
+- Model tests (`test/ripmap-model.test.ts`) check level nesting, CSC consistency, and exact mass and `y_range` on three views per signal family.
+- **Shape ablation observed in the explorer.** Setup: 300K white noise + spikes, `Zoom 20×` view `[0.45, 0.50]`, cold cache, `σ = 14 px`, `t = 1`, in a ~700 px wide plot. Wire is in-browser model bytes, not the Rust benchmark.
+  - With the default shapes, the client picks plane `(10, 6)` (`d = 4`, 1024 × 64 cells) and reads **40.5 KiB in 3 rounds**.
+  - With square cells only (`d = 0`, quadtree-like), no plane at levels 10 or 11 has rows fine enough, so every column goes raw: **369.1 KiB (105% of the raw window)**. That is 9.1× more, which reproduces the quadtree's failure mode in isolation.
+  - Adding `Y zoom 4×` on the default shapes also goes raw (372.1 KiB). The needed grids `(10, 8)` and `(11, 7)` were dropped by the global 16-points-per-cell cutoff (finding 4), and the plane map shows them as holes next to stored neighbours.
