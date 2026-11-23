@@ -30,6 +30,25 @@ async fn passes_conformance_through_planes() {
         .expect("RipmapStrategy should satisfy conformance at 200K points");
 }
 
+/// Small `root_cap` forces multi-level jumping (`levels.bin`), boundary subtree reads,
+/// and sparse plane caching even at 50K points.
+#[tokio::test(start_paused = true)]
+async fn passes_conformance_with_small_root_cap() {
+    let strategy = RipmapStrategy {
+        root_cap: 16,
+        ..RipmapStrategy::default()
+    };
+    let config = ConformanceConfig {
+        point_count: 50_000,
+        chunk_size: 4_096,
+        require_line_points: true,
+        ..ConformanceConfig::default()
+    };
+    run_conformance_suite(&strategy, &config)
+        .await
+        .expect("RipmapStrategy with small root_cap should satisfy all conformance invariants");
+}
+
 #[tokio::test(start_paused = true)]
 async fn beats_x_tree_on_white_noise() {
     let ripmap = RipmapStrategy::default();

@@ -1,21 +1,18 @@
-//! Moment ripmap strategy: decoupled x/y-resolution dense moment planes.
+//! Moment ripmap strategy (`PLPRIPM2`): decoupled x/y-resolution sparse moment planes.
 //!
-//! Static layout:
-//! - An x-ordered paged moment hierarchy (`manifest.bin` `PLPRIPM1`, `level_*.bin`,
-//!   `points.bin`) with a small fanout (default 4) so x-block widths come in fine steps.
-//!   It provides exact `y_range`, line extrema, and boundary clipping exactly like the 1D tree.
-//! - `ripmap.bin`: plane parameters and the deepest y-depth `kmax(ℓ)` stored per x-level.
-//! - `plane_{ℓ}_{k}.bin`: for every x-block (node) `j` at level `ℓ`, `2^k` dense 24-byte
-//!   [`MomentCell`](pink_lemonade_progressive_common::MomentCell) slots splitting the block's own
-//!   `[min_y, max_y]` into equal bins (empty bins are zero). Block `j`'s cells are the
-//!   contiguous byte range `[j·2^k, (j+1)·2^k) × 24`. Planes are only stored while blocks hold
-//!   at least `min_points_per_bin` points per bin on average (sparser data is cheaper raw).
-//!
-//! Online, a fully-inside x-node at level `ℓ` with on-screen width `w ≤ 0.9σ` (and that does
-//! not already fit as one kernel) is rendered from plane `(ℓ, k)` with the smallest `k` whose
-//! bin height `h` satisfies `w² + h² ≤ 1` (in merge-threshold units). The whole view thus costs
-//! roughly one contiguous byte range per `(ℓ, k)` run of blocks regardless of signal shape,
-//! instead of descending to raw points on vertically incoherent data (white noise).
+//! Static layout (at most 4 objects):
+//! - `manifest.bin` (`PLPRIPM2`): header, per-level offsets and plane directory metadata, plus
+//!   the inlined top (root) level records — loaded in a single EOF-clamped `read_range` (1 RTT).
+//! - `levels.bin`: non-root x-ordered hierarchy levels `0..root_level` packed back-to-back.
+//!   Each record at level `ℓ` holds a 64-byte `PackedNode` followed by inline 6-byte
+//!   `(cell_offset: u32, cell_count: u16)` slots locating that block's sparse cells for every
+//!   stored y-depth `k` at level `ℓ` (zero extra RTTs for sparse offset lookup).
+//! - `planes.bin`: all stored `(ℓ, k)` sparse moment planes packed back-to-back as 16-byte
+//!   quantized `SparseCell`s (non-empty bins only, sorted by `bin: u16`). Per-block adaptive
+//!   gating stores a block in plane `(ℓ, k)` whenever its non-empty bin count is at most
+//!   `block_points / min_points_per_bin`, letting outlier-stretched blocks reach +2 extra depths
+//!   without paying for empty bins.
+//! - `points.bin`: flat packed 24-byte `(x, y, weight)` samples in x-sorted order.
 
 mod builder;
 mod client;
@@ -36,7 +33,8 @@ pub const DEFAULT_LEAF_POINTS: u32 = 32;
 /// over-refinement from choosing a block narrower than ideal.
 pub const DEFAULT_FANOUT: u32 = 4;
 pub const DEFAULT_ROOT_CAP: u32 = 1024;
-/// Planes are stored only while `block_points / 2^k >= min_points_per_bin`.
+/// Per-block non-empty bin budget: a block is stored in plane `(ℓ, k)` only when its
+/// non-empty bin count is at most `block_points / min_points_per_bin`.
 pub const DEFAULT_MIN_POINTS_PER_BIN: u32 = 16;
 /// Hard cap on y-depth (`2^14` bins per block).
 pub const MAX_Y_DEPTH: u8 = 14;
