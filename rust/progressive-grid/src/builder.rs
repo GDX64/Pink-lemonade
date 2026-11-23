@@ -2,8 +2,8 @@
 //!
 //! Points arrive x-sorted, so every column at every level is a contiguous run of
 //! `points.bin`. For each aspect `d = i - j`, every level `(i, i - d)` with `i ≤ max_level` and
-//! `j ≤ MAX_ROW_LEVEL` is built directly from the points, keeping only the columns that pass a
-//! per-column density gate ([`Gate`]); a plane where no column passes is not stored.
+//! `j ≤ MAX_ROW_LEVEL` is built directly from the points under a per-plane cell budget that is
+//! spent on the densest columns first ([`Gate`]); a plane where no column qualifies is not stored.
 
 use pink_lemonade_progressive_common::{Moments, Node, PointCollector, SparseCell};
 use pink_lemonade_progressive_core::{BuildError, DatasetBuilder, ObjectWriter, Point, StoreError};
@@ -140,8 +140,8 @@ fn build(
     // keeping only the columns that pass the per-column density gate.
     let qy: Vec<u32> = points.iter().map(|p| quantize(p.y, bounds.y0, bounds.h)).collect();
     let gate = Gate {
-        min_points_per_cell: config.min_points_per_cell.max(1) as u64,
-        span_factor: 1u64 << config.sparse_extra_depth.min(8),
+        budget: n as u64 / config.min_points_per_cell.max(1) as u64,
+        min_column_points_per_cell: config.min_column_points_per_cell.max(1) as u64,
     };
     let mut planes: Vec<Vec<BuiltPlane>> = (0..=max_level).map(|_| Vec::new()).collect();
     let mut sink = writer.create_object(CELLS_KEY)?;
@@ -155,16 +155,7 @@ fn build(
                 break;
             }
             let (i, j) = (i as u32, j as u32);
-            let cells = gated_cells(
-                points,
-                &qy,
-                &starts[i as usize],
-                &nodes[i as usize],
-                j,
-                &bounds,
-                gate,
-                &mut scratch,
-            );
+            let cells = gated_cells(points, &qy, &starts[i as usize], j, gate, &mut scratch);
             if cells.is_empty() {
                 continue;
             }
@@ -220,20 +211,16 @@ fn build(
     Ok(())
 }
 
-/// Per-column density gate: a column of `p` points is stored in plane `(i, j)` only when it fills
-/// at most `p / min_points_per_cell` rows and its own y-extent spans at most
-/// `span_factor · p / min_points_per_cell` rows. This is the ripmap's "dense depth + extra" bound,
-/// measured on the column's own extent instead of the whole bounding box.
+/// Which columns a plane stores. A column of `p` points qualifies when it fills at most
+/// `p / min_column_points_per_cell` rows; qualifying columns are then admitted densest first
+/// (most points per cell) while the plane's total stays within `budget` cells.
+///
+/// On evenly dense data this keeps whole planes exactly when the old global rule did (average
+/// ≥ `N / budget` points per cell); on uneven data the dense columns still get fine rows.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Gate {
-    pub(crate) min_points_per_cell: u64,
-    pub(crate) span_factor: u64,
-}
-
-impl Gate {
-    fn max_rows(&self, points: u64) -> u64 {
-        points / self.min_points_per_cell
-    }
+    pub(crate) budget: u64,
+    pub(crate) min_column_points_per_cell: u64,
 }
 
 /// Row bookkeeping reused across columns: `stamp[row] == generation` marks rows already seen in
@@ -245,60 +232,76 @@ struct RowScratch {
     generation: u32,
 }
 
-/// Non-empty cells of plane `(i, j)` column-major, for the columns that pass `gate`.
-#[allow(clippy::too_many_arguments)]
-fn gated_cells(
-    points: &[Point],
-    qy: &[u32],
-    starts: &[u32],
-    nodes: &[Node],
-    j: u32,
-    bounds: &Bounds,
-    gate: Gate,
-    scratch: &mut RowScratch,
-) -> Vec<GridCell> {
+/// Non-empty cells of plane `(i, j)` column-major, for the columns admitted by `gate`.
+///
+/// Two passes: count each column's non-empty rows (giving up once it cannot qualify), choose the
+/// densest qualifying columns within the budget, then accumulate moments for those columns only.
+fn gated_cells(points: &[Point], qy: &[u32], starts: &[u32], j: u32, gate: Gate, scratch: &mut RowScratch) -> Vec<GridCell> {
     let rows = 1usize << j;
     scratch.stamp.clear();
     scratch.stamp.resize(rows, 0);
     scratch.slot.resize(rows, 0);
     scratch.generation = 0;
-    let mut out = Vec::new();
-    let mut seen: Vec<u32> = Vec::new();
-    let mut accs: Vec<Moments> = Vec::new();
+
+    // Pass 1: qualifying columns and their non-empty row counts.
+    let mut candidates: Vec<(usize, u64, u64)> = Vec::new(); // (column, points, rows)
     for (c, w) in starts.windows(2).enumerate() {
         let (s, e) = (w[0] as usize, w[1] as usize);
-        let max_rows = gate.max_rows((e - s) as u64);
+        let max_rows = (e - s) as u64 / gate.min_column_points_per_cell;
         if max_rows == 0 {
-            continue;
-        }
-        // Span check from the exact column node, before touching any point.
-        let node = &nodes[c];
-        let lo = index_at(quantize(node.min_y, bounds.y0, bounds.h), j);
-        let hi = index_at(quantize(node.max_y, bounds.y0, bounds.h), j);
-        if hi - lo + 1 > gate.span_factor * max_rows {
             continue;
         }
         scratch.generation += 1;
         let generation = scratch.generation;
+        let mut count = 0u64;
+        for &q in &qy[s..e] {
+            let row = index_at(q, j) as usize;
+            if scratch.stamp[row] != generation {
+                scratch.stamp[row] = generation;
+                count += 1;
+                if count > max_rows {
+                    break;
+                }
+            }
+        }
+        if count <= max_rows {
+            candidates.push((c, (e - s) as u64, count));
+        }
+    }
+    // Densest first (points per cell, compared exactly), ties by column.
+    candidates.sort_unstable_by(|a, b| (b.1 * a.2).cmp(&(a.1 * b.2)).then(a.0.cmp(&b.0)));
+    let mut admitted = vec![false; starts.len().saturating_sub(1)];
+    let mut used = 0u64;
+    for &(c, _, count) in &candidates {
+        if used + count > gate.budget {
+            break;
+        }
+        used += count;
+        admitted[c] = true;
+    }
+
+    // Pass 2: moments of the admitted columns, column-major.
+    let mut out = Vec::with_capacity(used as usize);
+    let mut seen: Vec<u32> = Vec::new();
+    let mut accs: Vec<Moments> = Vec::new();
+    for (c, w) in starts.windows(2).enumerate() {
+        if !admitted[c] {
+            continue;
+        }
+        let (s, e) = (w[0] as usize, w[1] as usize);
+        scratch.generation += 1;
+        let generation = scratch.generation;
         seen.clear();
         accs.clear();
-        let mut overflow = false;
         for k in s..e {
             let row = index_at(qy[k], j) as usize;
             if scratch.stamp[row] != generation {
-                if seen.len() as u64 == max_rows {
-                    overflow = true;
-                    break;
-                }
                 scratch.stamp[row] = generation;
                 scratch.slot[row] = seen.len() as u32;
                 seen.push(row as u32);
                 accs.push(Moments::default());
             }
             accs[scratch.slot[row] as usize].push(points[k]);
-        }
-        if overflow {
-            continue;
         }
         let mut order: Vec<usize> = (0..seen.len()).collect();
         order.sort_unstable_by_key(|&t| seen[t]);
@@ -323,31 +326,33 @@ mod tests {
         assert_eq!(max_level_for(10_000_000, 256), 16);
     }
 
-    /// A dense flat band passes the gate at fine rows, a column spread over the whole bounding
-    /// box does not, and the stored cells keep the column's exact mass.
+    /// Under a tight budget the dense band is admitted first and the spread column is left out;
+    /// with room for both, both are stored; stored cells keep the column's exact mass.
     #[test]
-    fn gate_keeps_dense_columns_and_drops_sparse_ones() {
+    fn budget_goes_to_the_densest_columns() {
         let mut points: Vec<Point> = (0..4_000)
             .map(|k| Point::new(k as f64 / 8_000.0, 0.5 + (k % 7) as f64 * 1e-3, 1.0))
             .collect();
         points.extend(
             (0..4_000).map(|k| Point::new(0.5 + k as f64 / 8_000.0, (k * 7_919 % 4_000) as f64 / 4_000.0, 1.0)),
         );
-        let bounds = Bounds { x0: 0.0, w: 1.0, y0: 0.0, h: 1.0 };
         let qy: Vec<u32> = points.iter().map(|p| quantize(p.y, 0.0, 1.0)).collect();
         let starts = [0u32, 4_000, 8_000];
-        let nodes = [Node::from_points(&points[..4_000]), Node::from_points(&points[4_000..])];
-        let gate = Gate { min_points_per_cell: 16, span_factor: 4 };
         let mut scratch = RowScratch::default();
-        // 2^12 rows: the band covers ~25 rows (passes), the spread column ~4,000 rows (fails).
-        let cells = gated_cells(&points, &qy, &starts, &nodes, 12, &bounds, gate, &mut scratch);
+        // 2^8 rows: the band fills ~2 rows, the spread column ~256 rows (both qualify at ≥ 4
+        // points per cell). A 100-cell budget only fits the band.
+        let tight = Gate { budget: 100, min_column_points_per_cell: 4 };
+        let cells = gated_cells(&points, &qy, &starts, 8, tight, &mut scratch);
         assert!(!cells.is_empty());
-        assert!(cells.iter().all(|c| c.col == 0), "the spread column must be dropped");
+        assert!(cells.iter().all(|c| c.col == 0), "the spread column must be left out");
         assert!(cells.windows(2).all(|w| w[0].row < w[1].row), "rows sorted");
         let mass: f64 = cells.iter().map(|c| c.m.mass).sum();
         assert!((mass - 4_000.0).abs() < 1e-9);
-        // 2^4 rows: both columns pass.
-        let coarse = gated_cells(&points, &qy, &starts, &nodes, 4, &bounds, gate, &mut scratch);
-        assert!(coarse.iter().any(|c| c.col == 1));
+        let roomy = Gate { budget: 1_000, min_column_points_per_cell: 4 };
+        let both = gated_cells(&points, &qy, &starts, 8, roomy, &mut scratch);
+        assert!(both.iter().any(|c| c.col == 1));
+        // 2^12 rows: the spread column fills ~4,000 rows (< 4 points per cell) and never qualifies.
+        let fine = gated_cells(&points, &qy, &starts, 12, roomy, &mut scratch);
+        assert!(fine.iter().all(|c| c.col == 0));
     }
 }

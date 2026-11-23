@@ -201,12 +201,26 @@ describe("sparse grid explorer model", () => {
     expect(model.planes.length).toBeGreaterThan(0);
     for (const p of model.planes) {
       expect(p.i - p.j).toBeGreaterThanOrEqual(GRID_PARAMS.minAspect);
+      // Budget: at most N / minPointsPerCell cells; each stored column averages
+      // at least minColumnPointsPerCell points per cell.
       expect(p.cells.length * GRID_PARAMS.minPointsPerCell).toBeLessThanOrEqual(data.xs.length);
+      for (let c = 0; c + 1 < p.colStarts.length; c++) {
+        const cells = p.colStarts[c + 1]! - p.colStarts[c]!;
+        if (cells === 0) continue;
+        const col = model.columns[p.i]![c]!;
+        expect(cells * GRID_PARAMS.minColumnPointsPerCell).toBeLessThanOrEqual(col.end - col.start);
+      }
       expect(p.colStarts[p.colStarts.length - 1]).toBe(p.cells.length);
       for (let c = 0; c + 1 < p.colStarts.length; c++) {
         for (let k = p.colStarts[c]!; k < p.colStarts[c + 1]!; k++) expect(p.cells[k]!.col).toBe(c);
       }
-      expect(p.cells.reduce((s, c) => s + c.mass, 0)).toBeCloseTo(total, 6);
+      // Mass of the stored columns equals their exact column mass.
+      let stored = 0;
+      for (let c = 0; c + 1 < p.colStarts.length; c++) {
+        if (p.colStarts[c + 1]! > p.colStarts[c]!) stored += model.columns[p.i]![c]!.mass;
+      }
+      expect(p.cells.reduce((s, c) => s + c.mass, 0) / stored).toBeCloseTo(1, 9);
+      expect(stored).toBeLessThanOrEqual(total * (1 + 1e-12));
     }
     expect(model.objects.map((o) => o.key)).toEqual(["manifest.bin", "columns.bin", "cells.bin", "points.bin"]);
   });

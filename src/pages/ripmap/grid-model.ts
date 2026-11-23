@@ -12,6 +12,7 @@ import {
   assembleGroups,
   coalesceRuns,
   emptyCache,
+  mergeNodes,
   offscreenY,
   summarize,
 } from "./ripmap-model";
@@ -21,18 +22,20 @@ import { coalesceSpans } from "./quadtree-model";
  * In-browser model of `rust/progressive-grid` (`sparse_grid`, `PLPGRID1`).
  *
  * Mirrors the Rust builder (30-bit quantized bbox grid, column pyramid down to `colLeaf`
- * points, one sparse plane family per aspect `d = i - j`, finest level found by an aborting
- * pass, coarser levels by 2×2 merges) and the client (two candidate x-levels, record pages for
- * the visible columns plus the edge chains, exact decomposition, plane chosen by exact bytes,
- * one final round of cells + raw edge points).
+ * points, one sparse plane per level of every aspect `d = i - j`, whose cell budget is spent on
+ * the densest qualifying columns first) and the client (two candidate x-levels, record pages for
+ * the visible columns plus the edge chains, exact decomposition, plane chosen per column by
+ * exact bytes, one final round of cells + raw edge points, greedy cell merging).
  */
 
-export const GRID_CELL_BYTES = 28;
+/** Shared 16-byte `SparseCell`: `u16` row + 14-byte quantized moments. */
+export const GRID_CELL_BYTES = 16;
 export const COLUMNS_KEY = "columns.bin";
 export const CELLS_KEY = "cells.bin";
 const Q_BITS = 30;
 const Q_SCALE = 2 ** Q_BITS;
 export const MAX_LEVEL = 24;
+export const MAX_ROW_LEVEL = 16;
 export const MAX_COL_WIDTH = 0.9;
 export const PAGE_RECORDS = 8;
 const MAX_GAP_BYTES = 16 * 1024;
@@ -49,6 +52,8 @@ export interface GridParams {
   minAspect: number;
   maxAspect: number;
   aspectStep: number;
+  /** A column qualifies for a plane only if its cells average at least this many points. */
+  minColumnPointsPerCell: number;
 }
 
 /** `SparseGridStrategy::default()`. */
@@ -58,6 +63,7 @@ export const GRID_PARAMS: GridParams = {
   minAspect: -2,
   maxAspect: 12,
   aspectStep: 2,
+  minColumnPointsPerCell: 4,
 };
 
 export interface Bounds {
@@ -122,8 +128,8 @@ export interface GridModel {
   /** Byte offset of each level's records in `columns.bin`, and the record size. */
   levelOffsets: number[];
   recordBytes: number[];
-  /** Aspects the builder tried, with the finest level it kept (null = none). */
-  aspects: Array<{ d: number; finest: [number, number] | null; tried: Array<[number, number, number | null]> }>;
+  /** Per aspect: the levels `(i, j)` stored (any column passed the gate). */
+  aspects: Array<{ d: number; levels: Array<[number, number]> }>;
   objects: StoredObject[];
   totalBytes: number;
   rawBytes: number;
@@ -170,41 +176,41 @@ interface RawCell {
   s: Sums;
 }
 
-function gridCells(data: Dataset, qy: Uint32Array, starts: Int32Array, j: number, limit: number): RawCell[] | null {
-  const out: RawCell[] = [];
+/**
+ * `gated_cells` from `progressive-grid/src/builder.rs`: non-empty cells of plane `(i, j)`.
+ * A column of `p` points qualifies when it fills ≤ `p / minColumnPointsPerCell` rows; qualifying
+ * columns are admitted densest first while the plane stays within `budget` cells.
+ */
+function gatedCells(data: Dataset, qy: Uint32Array, starts: Int32Array, j: number, budget: number, minColumnPointsPerCell: number): RawCell[] {
+  const candidates: Array<[number, number, number]> = []; // column, points, rows
   for (let c = 0; c + 1 < starts.length; c++) {
     const s = starts[c]!;
     const e = starts[c + 1]!;
-    if (s === e) continue;
+    const maxRows = Math.floor((e - s) / minColumnPointsPerCell);
+    if (maxRows === 0) continue;
+    const seen = new Set<number>();
+    for (let k = s; k < e && seen.size <= maxRows; k++) seen.add(indexAt(qy[k]!, j));
+    if (seen.size <= maxRows) candidates.push([c, e - s, seen.size]);
+  }
+  candidates.sort((a, b) => b[1] * a[2] - a[1] * b[2] || a[0] - b[0]);
+  const admitted = new Set<number>();
+  let used = 0;
+  for (const [c, , count] of candidates) {
+    if (used + count > budget) break;
+    used += count;
+    admitted.add(c);
+  }
+  const out: RawCell[] = [];
+  for (let c = 0; c + 1 < starts.length; c++) {
+    if (!admitted.has(c)) continue;
     const rows = new Map<number, Sums>();
-    for (let k = s; k < e; k++) {
+    for (let k = starts[c]!; k < starts[c + 1]!; k++) {
       const row = indexAt(qy[k]!, j);
       let acc = rows.get(row);
       if (!acc) rows.set(row, (acc = new Sums()));
       acc.push(data.xs[k]!, data.ys[k]!, data.ws[k]!);
     }
-    for (const row of [...rows.keys()].sort((a, b) => a - b)) {
-      out.push({ col: c, row, s: rows.get(row)! });
-      if (out.length > limit) return null;
-    }
-  }
-  return out;
-}
-
-function coarsen(cells: RawCell[]): RawCell[] {
-  const out: RawCell[] = [];
-  let k = 0;
-  while (k < cells.length) {
-    const col = cells[k]!.col >> 1;
-    const rows = new Map<number, Sums>();
-    while (k < cells.length && cells[k]!.col >> 1 === col) {
-      const row = cells[k]!.row >> 1;
-      let acc = rows.get(row);
-      if (!acc) rows.set(row, (acc = new Sums()));
-      acc.add(cells[k]!.s);
-      k++;
-    }
-    for (const row of [...rows.keys()].sort((a, b) => a - b)) out.push({ col, row, s: rows.get(row)! });
+    for (const row of [...rows.keys()].sort((x, y) => x - y)) out.push({ col: c, row, s: rows.get(row)! });
   }
   return out;
 }
@@ -264,50 +270,34 @@ export function buildGrid(data: Dataset, inParams: GridParams): GridModel {
     }
   }
 
-  // Planes, aspect by aspect.
+  // Planes, aspect by aspect: every level built from the points, gated per column.
   const qy = new Uint32Array(n);
   for (let k = 0; k < n; k++) qy[k] = quantize(ys[k]!, bounds.y0, bounds.h);
-  const limit = Math.floor(n / params.minPointsPerCell);
+  const budget = Math.floor(n / params.minPointsPerCell);
   const planes: GridPlane[] = [];
   const aspects: GridModel["aspects"] = [];
   let writtenCells = 0;
   for (let d = params.minAspect; d <= params.maxAspect && n > 0; d += Math.max(params.aspectStep, 1)) {
-    const iFine = Math.min(maxLevel, d + MAX_LEVEL);
-    const jFine = iFine - d;
-    const record: GridModel["aspects"][number] = { d, finest: null, tried: [] };
+    const record: GridModel["aspects"][number] = { d, levels: [] };
     aspects.push(record);
-    if (iFine < 0 || jFine < 0) continue;
-    let i = iFine;
-    let j = jFine;
-    let cells: RawCell[] | null = null;
-    for (;;) {
-      cells = gridCells(data, qy, starts[i]!, j, limit);
-      record.tried.push([i, j, cells ? cells.length : null]);
-      if (cells || i === 0 || j === 0) break;
-      i--;
-      j--;
-    }
-    if (!cells) continue;
-    record.finest = [i, j];
-    for (;;) {
+    for (let i = Math.max(d, 0); i <= maxLevel; i++) {
+      const j = i - d;
+      if (j > MAX_ROW_LEVEL) break;
+      const cells = gatedCells(data, qy, starts[i]!, j, budget, params.minColumnPointsPerCell);
+      if (cells.length === 0) continue;
+      record.levels.push([i, j]);
       const colStarts = new Int32Array(2 ** i + 1);
       for (const cell of cells) colStarts[cell.col + 1]!++;
       for (let c = 1; c < colStarts.length; c++) colStarts[c] = colStarts[c]! + colStarts[c - 1]!;
-      const ii = i;
-      const jj = j;
       planes.push({
         id: 0,
         i,
         j,
-        cells: cells.map((raw) => toCell(bounds, ii, jj, raw)),
+        cells: cells.map((raw) => toCell(bounds, i, j, raw)),
         colStarts,
         offset: writtenCells * GRID_CELL_BYTES,
       });
       writtenCells += cells.length;
-      if (i === 0 || j === 0) break;
-      cells = coarsen(cells);
-      i--;
-      j--;
     }
   }
 
@@ -366,7 +356,7 @@ export interface GridPiece {
 
 export type GridRender =
   | { kind: "node"; col: MomentNode; reason: "fits" | "offscreen" }
-  | { kind: "cells"; col: MomentNode; plane: GridPlane; cells: GridCell[] }
+  | { kind: "cells"; col: MomentNode; plane: GridPlane; cells: GridCell[]; kernels: number }
   | { kind: "raw"; col: MomentNode; edge: boolean };
 
 export interface CandidateEval {
@@ -401,6 +391,61 @@ export interface GridQueryResult {
   wireBytes: number;
   kernelCount: number;
   cacheHits: number;
+}
+
+/**
+ * `emit_column_cells` from `progressive-grid/src/client.rs`: kernels emitted for one column's
+ * cells after collapsing far off-screen cells (above / below) and greedy merging in row order.
+ */
+export function mergedCellKernels(cells: GridCell[], query: ViewQuery, xFactor: number, yFactor: number, threshold: number) {
+  const asNode = (c: GridCell): MomentNode => ({
+    level: -1,
+    index: -1,
+    start: 0,
+    end: 0,
+    minX: c.rx0,
+    maxX: c.rx1,
+    minY: c.ry0,
+    maxY: c.ry1,
+    mass: c.mass,
+    x: c.x,
+    y: c.y,
+    cxx: c.cxx,
+    cxy: c.cxy,
+    cyy: c.cyy,
+  });
+  const fitsMerged = (n: MomentNode) => {
+    const dx = Math.max(n.x - n.minX, n.maxX - n.x) * xFactor;
+    const dy = Math.max(n.y - n.minY, n.maxY - n.y) * yFactor;
+    return dx * dx + dy * dy < threshold * threshold;
+  };
+  let below: MomentNode | null = null;
+  let above: MomentNode | null = null;
+  const groups: MomentNode[] = [];
+  for (const cell of cells) {
+    if (cell.mass <= 0) continue;
+    const node = asNode(cell);
+    if (query.yBounds && offscreenY(node, query, yFactor)) {
+      const isBelow = node.maxY < query.yBounds[0];
+      const side: MomentNode | null = isBelow ? below : above;
+      const merged: MomentNode = side ? mergeNodes([side, node], -1, -1) : node;
+      if (offscreenY(merged, query, yFactor)) {
+        if (isBelow) below = merged;
+        else above = merged;
+        continue;
+      }
+    }
+    const last = groups[groups.length - 1];
+    if (last) {
+      const merged = mergeNodes([last, node], -1, -1);
+      if (fitsMerged(merged)) {
+        groups[groups.length - 1] = merged;
+        continue;
+      }
+    }
+    groups.push(node);
+  }
+  return groups.length + (below ? 1 : 0) + (above ? 1 : 0);
 }
 
 function pagesFor(level: number, first: number, last: number, out: Array<[number, number]>) {
@@ -562,15 +607,16 @@ export function runGridQuery(model: GridModel, query: ViewQuery, cache: ClientCa
       }
       if (offscreenY(col, query, yFactorEstimate)) return { kind: "node", col, reason: "offscreen" };
       if (fitsThreshold(col, xFactor, yFactorEstimate, threshold)) return { kind: "node", col, reason: "fits" };
+      // A column the per-column gate left out of the plane (empty run) goes raw.
       const { plane } = pickPlane(col.level);
-      if (!plane) {
+      const s = plane ? plane.colStarts[col.index]! : 0;
+      const e = plane ? plane.colStarts[col.index + 1]! : 0;
+      if (!plane || e === s) {
         bytes += points * POINT_BYTES;
         return { kind: "raw", col, edge: false };
       }
-      const s = plane.colStarts[col.index]!;
-      const e = plane.colStarts[col.index + 1]!;
       bytes += (e - s) * GRID_CELL_BYTES;
-      return { kind: "cells", col, plane, cells: plane.cells.slice(s, e) };
+      return { kind: "cells", col, plane, cells: plane.cells.slice(s, e), kernels: 0 };
     });
     const { w, hMax, plane } = pickPlane(level);
     return { level, w, hMax, plane, pieces, renders, bytes };
@@ -628,7 +674,12 @@ export function runGridQuery(model: GridModel, query: ViewQuery, cache: ClientCa
   const effectiveY = query.yBounds ?? yRange;
   const yFactor = yFactorOf(effectiveY);
   const groups = assembleGroups(model, items, query, xFactor, yFactor, threshold);
-  const cellKernels = chosen.renders.reduce((s, r) => s + (r.kind === "cells" ? r.cells.length : 0), 0);
+  let cellKernels = 0;
+  for (const r of chosen.renders) {
+    if (r.kind !== "cells") continue;
+    r.kernels = mergedCellKernels(r.cells, query, xFactor, yFactor, threshold);
+    cellKernels += r.kernels;
+  }
   return {
     query,
     yRange,

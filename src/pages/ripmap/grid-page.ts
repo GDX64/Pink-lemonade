@@ -689,15 +689,19 @@ export async function runGridPage(args: { output: HTMLElement }) {
     const rawWindow = visible * 24;
     const counts = { cells: 0, node: 0, raw: 0 };
     let cellCount = 0;
+    let cellKernels = 0;
     for (const rd of r.chosen?.renders ?? []) {
       counts[rd.kind]++;
-      if (rd.kind === "cells") cellCount += rd.cells.length;
+      if (rd.kind === "cells") {
+        cellCount += rd.cells.length;
+        cellKernels += rd.kernels;
+      }
     }
     const chosen = r.chosen?.plane;
     const tiles: Array<[string, string, string]> = [
       ["Visible points", fmtCount(visible), `raw window ${fmtBytes(rawWindow)}`],
       ["Grid used", chosen ? `${2 ** chosen.i}×${2 ** chosen.j}` : r.chosen ? "raw" : "—", chosen ? `plane (i=${chosen.i}, j=${chosen.j}) · shape d=${chosen.i - chosen.j}` : "no plane fits at this level"],
-      ["Kernels emitted", fmtCount(r.kernelCount), `${fmtCount(cellCount)} cells · ${counts.node} column kernels · ${counts.raw} raw runs`],
+      ["Kernels emitted", fmtCount(r.kernelCount), `${fmtCount(cellCount)} cells → ${fmtCount(cellKernels)} merged · ${counts.node} column kernels · ${counts.raw} raw runs`],
       ["Bytes on the wire", fmtBytes(r.wireBytes), rawWindow > 0 ? `${((r.wireBytes / rawWindow) * 100).toFixed(1)}% of raw window` : ""],
       ["Range requests", String(r.requests.length), state.warmCache ? `${r.cacheHits} cache hits` : "cold cache"],
       ["Round trips", String(r.rounds), "sequential RTTs"],
@@ -783,7 +787,7 @@ export async function runGridPage(args: { output: HTMLElement }) {
           (finest: ${fmtCount(2 ** Math.max(model.maxLevel, 0))} columns ≈ ${fmtCount(Math.round(model.data.xs.length / 2 ** Math.max(model.maxLevel, 0)))} pts)
           · bbox y ∈ [${fmtNum(b.y0)}, ${fmtNum(b.y0 + b.h)}]</div>
         <div class="k">Shapes stored: ${model.aspects
-          .map((a) => `d=${a.d}${a.finest ? ` → (${a.finest[0]}, ${a.finest[1]})` : " none"}`)
+          .map((a) => `d=${a.d}: ${a.levels.length ? `${a.levels.length} planes (i ${a.levels[0]![0]}…${a.levels[a.levels.length - 1]![0]})` : "none"}`)
           .join(" · ")}</div>`;
       return;
     }
@@ -792,8 +796,8 @@ export async function runGridPage(args: { output: HTMLElement }) {
       const cols = 2 ** i;
       if (!plane) {
         inspector.innerHTML = `<h2>Plane (i=${i}, j=${j})</h2><div>Not stored: ${fmtCount(cols)} × ${fmtCount(2 ** j)} cells.</div>
-          <div class="k">Either its shape d=${i - j} is not one of the stored aspects, or its non-empty cells would average fewer than
-          ${model.params.minPointsPerCell} points (the builder's cut-off), so a view needing it reads raw points.</div>`;
+          <div class="k">Either its shape d=${i - j} is not one of the stored aspects, or no column qualified (cells averaging
+          ≥ ${model.params.minColumnPointsPerCell} points), so a view needing it reads raw points.</div>`;
         return;
       }
       const avg = model.data.xs.length / Math.max(plane.cells.length, 1);
@@ -802,7 +806,7 @@ export async function runGridPage(args: { output: HTMLElement }) {
           <b>${fmtCount(plane.cells.length)}</b> are non-empty (${((plane.cells.length / (cols * 2 ** j)) * 100).toFixed(2)}%), avg ${avg.toFixed(1)} points each.</div>
         <div class="k" style="margin-top:6px">Cell size: ${fmtNum(slot(b.w, i))} × ${fmtNum(slot(b.h, j))} data units.</div>
         <div class="k">Bytes: <code>cells.bin</code> [${fmtCount(plane.offset)}, +${fmtBytes(plane.cells.length * GRID_CELL_BYTES)}) — ${GRID_CELL_BYTES} B per cell
-          (row u32 + 24-byte moments), column-major.</div>
+          (u16 row + 14-byte quantized moments), column-major. Columns that failed the gate have an empty run.</div>
         <div class="k">Its CSC pointers are the ${model.planesByLevel[i]!.indexOf(plane) + 1}ᵗʰ of ${model.planesByLevel[i]!.length} cell starts in every
           level-${i} record (${model.recordBytes[i]} B each in <code>columns.bin</code>).</div>`;
       return;
@@ -821,7 +825,8 @@ export async function runGridPage(args: { output: HTMLElement }) {
       const p = render.plane;
       const s = p.colStarts[col.index]!;
       body = `<div style="margin-top:8px"><span class="tag" style="background:var(--plane)">cells</span> plane (i=${p.i}, j=${p.j}): ${render.cells.length} non-empty cells
-        out of ${fmtCount(2 ** p.j)} rows → <code>cells.bin</code> [${fmtCount(p.offset + s * GRID_CELL_BYTES)}, +${fmtBytes(render.cells.length * GRID_CELL_BYTES)})</div>`;
+        out of ${fmtCount(2 ** p.j)} rows → <code>cells.bin</code> [${fmtCount(p.offset + s * GRID_CELL_BYTES)}, +${fmtBytes(render.cells.length * GRID_CELL_BYTES)}),
+        merged into ${render.kernels} kernel${render.kernels === 1 ? "" : "s"}</div>`;
       if (cell) {
         body += `<div class="eq">row ${cell.row}: y ∈ [${fmtNum(cell.ry0)}, ${fmtNum(cell.ry1)})
 ${cell.count} points · mass ${fmtNum(cell.mass)}
@@ -831,7 +836,7 @@ on screen: ${(slot(b.w, p.i) * r.xFactor).toFixed(2)}σ × ${(slot(b.h, p.j) * r
     } else if (render.kind === "node") {
       body = `<div style="margin-top:8px"><span class="tag" style="background:var(--resolved)">one kernel</span> ${render.reason === "fits" ? "the column's whole box fits the merge threshold" : "far off-screen in y (explicit y_bounds)"} — no cells read.</div>`;
     } else {
-      body = `<div style="margin-top:8px"><span class="tag" style="background:var(--leaf)">raw</span> ${render.edge ? "straddles the viewport edge at the bottom of its chain: points are read and clipped to the view" : "no stored plane has rows fine enough at this level: the column's points are read"}.</div>`;
+      body = `<div style="margin-top:8px"><span class="tag" style="background:var(--leaf)">raw</span> ${render.edge ? "straddles the viewport edge at the bottom of its chain: points are read and clipped to the view" : "no stored plane at this level has rows fine enough for this column (or the column failed that plane's density gate): its points are read"}.</div>`;
     }
     inspector.innerHTML = head + body;
   }
@@ -953,8 +958,9 @@ const STEPS = `
   <div class="panel"><h3>1 · one sparse grid per cell shape</h3>
     The bounding box is cut into 2<sup>i</sup> columns × 2<sup>j</sup> rows. Instead of square cells only, grids are kept for
     several shapes d = i − j (by default −2, 0, 2, …, 12: from rows 4× finer than columns to columns 4096× finer than rows).
-    Only non-empty cells are stored, each as a row index + 24-byte moments. For each shape the finest grid kept is the one
-    whose cells still average ≥ 16 points; coarser grids of the same shape are 2×2 merges of it.</div>
+    Only non-empty cells are stored, as shared 16-byte cells (u16 row + quantized moments). Each grid may hold at most N/16
+    cells; that budget goes to the densest columns first (any column averaging ≥ 4 points per cell qualifies), so on evenly
+    dense data whole grids are kept and on uneven data the dense columns still get fine rows.</div>
   <div class="panel"><h3>2 · column records point into every grid</h3>
     Points are stored in x order, so a column at any level is one run of <code>points.bin</code>. Each level has one record per
     column: the column's exact moment node, its first point, and its first cell in <em>every</em> grid of that level (CSC
@@ -967,7 +973,7 @@ const STEPS = `
     picks, per level, the coarsest stored rows that fit (w² + h² &lt; t²) and keeps the level that reads fewer bytes. Round 2
     reads those cells and the raw edge points together.</div>
   <div class="panel"><h3>4 · where it struggles</h3>
-    The 16-points-per-cell cut-off is global. White noise with spikes stretches the bbox so most rows are empty, and very fine
-    grids get dropped even though the noise band itself is dense; deep y-zooms (Y zoom 4× and beyond, or Shift+wheel) then
-    fall back to raw points. Try the "0 only" shape set to see the quadtree's problem come back when you zoom 20× on white noise.</div>`;
+    Deep y-zooms on white noise still go raw: at those rows a column has fewer than 4 points per non-empty row, so none
+    qualifies (Y zoom 4× after Zoom 20×). Try the "0 only" shape set to see the quadtree's problem come back
+    when you zoom 20× on white noise.</div>`;
 
