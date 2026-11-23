@@ -20,6 +20,7 @@ Guide for coding agents working in `pink-lemonade`.
   - `rust/progressive-kdtree/` (`pink-lemonade-progressive-kdtree`) — 2D moment k-d tree (`KdTreeStrategy`): k-d permutation of the points over the shared hierarchy format.
   - `rust/progressive-ripmap/` (`pink-lemonade-progressive-ripmap`) — Moment ripmap (`RipmapStrategy`): x-hierarchy plus dense per-block y-bin moment planes (`plane_{ℓ}_{k}.bin`).
   - `rust/progressive-quadtree/` (`pink-lemonade-progressive-quadtree`) — Classic moment quadtree (`QuadtreeStrategy`, `PLPQUAD1`): midpoint quadrant splits over the data bbox, 72-byte records (moments + child/point link), top depths inlined in the manifest, deeper depths back to back in one `nodes.bin` (per-depth offset table), so every dataset is three objects.
+  - `rust/progressive-grid/` (`pink-lemonade-progressive-grid`) — Sparse moment grid pyramid (`SparseGridStrategy`, `PLPGRID1`): power-of-two grids over the data bbox at several cell aspect ratios (`d = i - j`), only non-empty cells stored column-major (CSC) in `cells.bin`, direct-addressed through per-level column records in `columns.bin` (exact column node, point start, cell start in every plane of the level); two rounds of reads per view.
 - `benchmarks/` — Exported reports (`benchmarks/results/latest.json`) and Jupyter notebook (`benchmarks/analysis.ipynb`).
 - `journal/` — Chronological experiment notes and benchmark ablations (append-only history; see [Experiment Journal](#experiment-journal)).
 - `requirements.txt` & `.venv/` — Root Python dependencies and virtual environment (`.venv/` gitignored).
@@ -40,7 +41,7 @@ Guide for coding agents working in `pink-lemonade`.
 ### Rust / WASM Direct Commands
 ```powershell
 cargo test --workspace --manifest-path rust/Cargo.toml
-cargo check -p pink-lemonade-wasm -p pink-lemonade-progressive-core -p pink-lemonade-progressive-common -p pink-lemonade-progressive-tree -p pink-lemonade-progressive-kdtree -p pink-lemonade-progressive-ripmap --target wasm32-unknown-unknown --manifest-path rust/Cargo.toml
+cargo check -p pink-lemonade-wasm -p pink-lemonade-progressive-core -p pink-lemonade-progressive-common -p pink-lemonade-progressive-tree -p pink-lemonade-progressive-kdtree -p pink-lemonade-progressive-ripmap -p pink-lemonade-progressive-quadtree -p pink-lemonade-progressive-grid --target wasm32-unknown-unknown --manifest-path rust/Cargo.toml
 cargo run --profile fast -p pink-lemonade-progressive-tree --example export_reports --manifest-path rust/Cargo.toml -- --only heavy_white_noise --out <path>.json   # single scenario
 ```
 

@@ -1,0 +1,17 @@
+[package]
+name = "pink-lemonade-progressive-grid"
+version = "0.1.0"
+edition = "2024"
+description = "Sparse moment grid pyramid: direct-addressed power-of-two grids at several cell aspect ratios, stored column-major (CSC) over static byte-range storage."
+
+[dependencies]
+pink-lemonade-progressive-common = { path = "../progressive-common" }
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }
+pink-lemonade-progressive-kdtree = { path = "../progressive-kdtree" }
+pink-lemonade-progressive-quadtree = { path = "../progressive-quadtree" }
+pink-lemonade-progressive-ripmap = { path = "../progressive-ripmap" }
+pink-lemonade-progressive-tree = { path = "../progressive-tree" }
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

@@ -141,6 +141,7 @@ def cmd_clippy(_args: argparse.Namespace) -> None:
             "pink-lemonade-progressive-ripmap",
             "-p",
             "pink-lemonade-progressive-quadtree",
+            "pink-lemonade-progressive-grid",
             "--all-targets",
             "--manifest-path",
             str(RUST_MANIFEST),

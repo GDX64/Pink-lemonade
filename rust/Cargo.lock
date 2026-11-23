@@ -52,6 +52,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-grid"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-common",
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-kdtree",
+ "pink-lemonade-progressive-quadtree",
+ "pink-lemonade-progressive-ripmap",
+ "pink-lemonade-progressive-tree",
+ "tokio",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-harness"
 version = "0.1.0"
 dependencies = [
@@ -110,6 +124,7 @@ version = "0.1.0"
 dependencies = [
  "pink-lemonade-progressive-common",
  "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-grid",
  "pink-lemonade-progressive-harness",
  "pink-lemonade-progressive-kdtree",
  "pink-lemonade-progressive-naive",

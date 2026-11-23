@@ -7,6 +7,7 @@
 //!   ... -- --only heavy_white_noise --out benchmarks/results/heavy_white_noise.json
 
 use pink_lemonade_progressive_core::ProgressiveStrategy;
+use pink_lemonade_progressive_grid::SparseGridStrategy;
 use pink_lemonade_progressive_harness::benchmarks::{self, BenchmarkScenario};
 use pink_lemonade_progressive_harness::write_reports_json;
 use pink_lemonade_progressive_kdtree::KdTreeStrategy;
@@ -48,10 +49,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kdtree = KdTreeStrategy::default();
     let ripmap = RipmapStrategy::default();
     let quadtree = QuadtreeStrategy::default();
-    let all_strategies: [&dyn ProgressiveStrategy; 5] =
-        [&NaiveStrategy, &tree, &kdtree, &ripmap, &quadtree];
+    let grid = SparseGridStrategy::default();
+    let all_strategies: [&dyn ProgressiveStrategy; 6] =
+        [&NaiveStrategy, &tree, &kdtree, &ripmap, &quadtree, &grid];
     // Heavy (10M) scenarios skip the naive full download (228.9 MiB per workload).
-    let progressive_only: [&dyn ProgressiveStrategy; 4] = [&tree, &kdtree, &ripmap, &quadtree];
+    let progressive_only: [&dyn ProgressiveStrategy; 5] = [&tree, &kdtree, &ripmap, &quadtree, &grid];
 
     let mut runs: Vec<(BenchmarkScenario, &[&dyn ProgressiveStrategy])> = vec![
         (BenchmarkScenario::Light, &all_strategies),
