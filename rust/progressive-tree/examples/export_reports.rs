@@ -11,6 +11,7 @@ use pink_lemonade_progressive_harness::benchmarks::{self, BenchmarkScenario};
 use pink_lemonade_progressive_harness::write_reports_json;
 use pink_lemonade_progressive_kdtree::KdTreeStrategy;
 use pink_lemonade_progressive_naive::NaiveStrategy;
+use pink_lemonade_progressive_quadtree::QuadtreeStrategy;
 use pink_lemonade_progressive_ripmap::RipmapStrategy;
 use pink_lemonade_progressive_tree::PagedTreeStrategy;
 
@@ -46,9 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tree = PagedTreeStrategy::default();
     let kdtree = KdTreeStrategy::default();
     let ripmap = RipmapStrategy::default();
-    let all_strategies: [&dyn ProgressiveStrategy; 4] = [&NaiveStrategy, &tree, &kdtree, &ripmap];
+    let quadtree = QuadtreeStrategy::default();
+    let all_strategies: [&dyn ProgressiveStrategy; 5] =
+        [&NaiveStrategy, &tree, &kdtree, &ripmap, &quadtree];
     // Heavy (10M) scenarios skip the naive full download (240 MiB per workload).
-    let progressive_only: [&dyn ProgressiveStrategy; 3] = [&tree, &kdtree, &ripmap];
+    let progressive_only: [&dyn ProgressiveStrategy; 4] = [&tree, &kdtree, &ripmap, &quadtree];
 
     let mut runs: Vec<(BenchmarkScenario, &[&dyn ProgressiveStrategy])> = vec![
         (BenchmarkScenario::Light, &all_strategies),

@@ -25,7 +25,7 @@ pub mod writer;
 
 pub use cache::{CacheKey, CacheValue, LruPageCache};
 pub use cell::{CELL_BYTES, MomentCell, Moments, decode_cells};
-pub use fetch::{coalesce_runs, join2, try_join_all};
+pub use fetch::{coalesce_runs, coalesce_spans, join2, try_join_all};
 pub use format::{MANIFEST_KEY, Manifest, POINTS_KEY, level_key};
 pub use node::{NODE_BYTES, Node, POINT_BYTES, PackedNode, decode_packed_nodes, decode_points};
 pub use reader::{Decision, FrontierItem, HierarchyReader, read_whole_object};

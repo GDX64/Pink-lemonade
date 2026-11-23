@@ -37,6 +37,31 @@ pub fn coalesce_runs(mut indices: Vec<u64>, max_gap: u64, max_run: usize) -> Vec
     runs
 }
 
+/// Coalesce disjoint variable-length `(start, len)` spans into `(start, end)` reads,
+/// bridging gaps of up to `max_gap` units and capping merged reads at `max_run` units
+/// (a single span longer than `max_run` is still read alone, in one piece).
+pub fn coalesce_spans(mut spans: Vec<(u64, u64)>, max_gap: u64, max_run: u64) -> Vec<(u64, u64)> {
+    spans.retain(|&(_, len)| len > 0);
+    if spans.is_empty() {
+        return Vec::new();
+    }
+    spans.sort_unstable();
+    spans.dedup();
+    let mut reads = Vec::new();
+    let (mut start, mut end) = (spans[0].0, spans[0].0 + spans[0].1);
+    for &(s, len) in &spans[1..] {
+        let e = s + len;
+        if s <= end.saturating_add(max_gap) && e.max(end) - start <= max_run {
+            end = end.max(e);
+        } else {
+            reads.push((start, end));
+            (start, end) = (s, e);
+        }
+    }
+    reads.push((start, end));
+    reads
+}
+
 /// Poll all `futures` concurrently on the caller's executor, returning all outputs in order
 /// or the first error (dropping all remaining in-flight futures immediately).
 pub fn try_join_all<F, T, E>(futures: Vec<F>) -> TryJoinAll<F, T>
@@ -151,5 +176,19 @@ where
         } else {
             Poll::Pending
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesce_spans_bridges_gaps_and_caps_runs() {
+        assert_eq!(coalesce_spans(vec![(10, 2), (0, 4), (5, 1)], 1, 100), vec![(0, 6), (10, 12)]);
+        assert_eq!(coalesce_spans(vec![(0, 4), (5, 1)], 0, 100), vec![(0, 4), (5, 6)]);
+        assert_eq!(coalesce_spans(vec![(0, 4), (4, 4), (8, 4)], 0, 8), vec![(0, 8), (8, 12)]);
+        assert_eq!(coalesce_spans(vec![(0, 50), (50, 1)], 0, 8), vec![(0, 50), (50, 51)]);
+        assert!(coalesce_spans(vec![(3, 0)], 0, 8).is_empty());
     }
 }

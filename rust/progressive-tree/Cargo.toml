@@ -13,4 +13,5 @@ pink-lemonade-progressive-harness = { path = "../progressive-harness" }
 pink-lemonade-progressive-kdtree = { path = "../progressive-kdtree" }
 pink-lemonade-progressive-naive = { path = "../progressive-naive" }
 pink-lemonade-progressive-ripmap = { path = "../progressive-ripmap" }
+pink-lemonade-progressive-quadtree = { path = "../progressive-quadtree" }
 tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

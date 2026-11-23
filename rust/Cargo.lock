@@ -80,6 +80,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-quadtree"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-common",
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+ "pink-lemonade-progressive-kdtree",
+ "pink-lemonade-progressive-ripmap",
+ "pink-lemonade-progressive-tree",
+ "tokio",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-ripmap"
 version = "0.1.0"
 dependencies = [
@@ -100,6 +113,7 @@ dependencies = [
  "pink-lemonade-progressive-harness",
  "pink-lemonade-progressive-kdtree",
  "pink-lemonade-progressive-naive",
+ "pink-lemonade-progressive-quadtree",
  "pink-lemonade-progressive-ripmap",
  "tokio",
 ]

@@ -17,6 +17,8 @@ pub enum CacheKey {
     LeafPoints(u64),
     /// All `2^k` y-bin cells of x-block `block` in moment plane `(level, k)`.
     PlaneBlock { level: u16, k: u8, block: u64 },
+    /// Strategy-defined raw byte blob (e.g. a variable-length record page), decoded on use.
+    Blob { space: u16, id: u64 },
 }
 
 #[derive(Clone)]
@@ -24,6 +26,7 @@ pub enum CacheValue {
     TreePage(Arc<[PackedNode]>),
     LeafPoints(Arc<[Point]>),
     Cells(Arc<[MomentCell]>),
+    Bytes(Arc<[u8]>),
 }
 
 impl CacheValue {
@@ -32,6 +35,7 @@ impl CacheValue {
             Self::TreePage(nodes) => nodes.len() * std::mem::size_of::<PackedNode>(),
             Self::LeafPoints(pts) => pts.len() * std::mem::size_of::<Point>(),
             Self::Cells(cells) => cells.len() * std::mem::size_of::<MomentCell>(),
+            Self::Bytes(bytes) => bytes.len(),
         }
     }
 }
@@ -104,6 +108,17 @@ impl LruPageCache {
             block,
         };
         self.insert(key, CacheValue::Cells(cells));
+    }
+
+    pub fn get_blob(&mut self, space: u16, id: u64) -> Option<Arc<[u8]>> {
+        match self.touch(&CacheKey::Blob { space, id })? {
+            CacheValue::Bytes(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    pub fn insert_blob(&mut self, space: u16, id: u64, bytes: Arc<[u8]>) {
+        self.insert(CacheKey::Blob { space, id }, CacheValue::Bytes(bytes));
     }
 
     pub fn insert_tree_page(&mut self, level: usize, page: u64, nodes: Arc<[PackedNode]>) {

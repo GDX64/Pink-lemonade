@@ -8,6 +8,7 @@ members = [
     "progressive-tree",
     "progressive-kdtree",
     "progressive-ripmap",
+    "progressive-quadtree",
 ]
 
 [package]
