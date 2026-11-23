@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quadtree = QuadtreeStrategy::default();
     let all_strategies: [&dyn ProgressiveStrategy; 5] =
         [&NaiveStrategy, &tree, &kdtree, &ripmap, &quadtree];
-    // Heavy (10M) scenarios skip the naive full download (240 MiB per workload).
+    // Heavy (10M) scenarios skip the naive full download (228.9 MiB per workload).
     let progressive_only: [&dyn ProgressiveStrategy; 4] = [&tree, &kdtree, &ripmap, &quadtree];
 
     let mut runs: Vec<(BenchmarkScenario, &[&dyn ProgressiveStrategy])> = vec![

@@ -23,7 +23,7 @@ The existing in-memory `TreeDownsampler` (`rust/src/tree_merge.rs`) handles mill
 - **`Medium` (`sine_wave`, 1M points, 22.89 MiB raw, broadband 30 ms / 50 Mbps, 4 MiB budget):**
   - `naive_full_download` exceeded the 4 MiB budget on every step, transferring `22.89–183.11 MiB` at `3,871 ms` mean latency.
   - `paged_moment_tree` (`v1`) cut `cold_overview` to **`1.97 MiB`** (`282 ms`, 0 bytes of `points.bin`) and `lateral_pan` to **`386 KiB`** (`110 ms` — **485× less wire**, **35× faster**).
-- **`ConstrainedMobile` (`noisy_spikes`, 1M points) & `Heavy` (`multi_regime`, 10M points, 240 MiB raw):**
+- **`ConstrainedMobile` (`noisy_spikes`, 1M points) & `Heavy` (`multi_regime`, 10M points, 228.88 MiB raw):**
   - **Failure mode discovered:** On IID/white vertical noise, consecutive `x`-samples jump across a wide `y` band (`Δy >> 1σ`). No internal node or 64-point leaf ever satisfied `fits_threshold`, so the 1D x-ordered tree descended all the way into `points.bin` and downloaded **100% of the dataset** (`24.86 MiB` on 1M, `248.57 MiB` on 10M).
 
 ### Takeaway 1
@@ -38,18 +38,20 @@ Our target datasets (financial/telemetry time series, matching `src/data/noise.t
 - **Why the scaling flips mathematically:** For a Brownian walk of $N$ steps, global vertical span grows as $\Theta(\sqrt{N})$ and any $k$-step slice spans $\Theta(\sqrt{k})$. Reaching $\Delta y < 1\sigma$ on a screen of height $H/\sigma \approx 67.5$ requires slice fraction $f = k/N \lesssim (1 / 67.5)^2 \approx 1 / 4556$ — **independent of $N$**.
 - Ported `src/data/noise.ts` (`Box-Muller N(0, 1)` cumulative sum + bimodal weight distribution) as `DatasetShape::RandomWalk { seed: 578_211 }` and switched `ConstrainedMobile`, `Heavy`, and `Gigabyte` to it.
 
-### `Heavy` (`random_walk`, 10M points, 240 MiB raw, broadband, 16 MiB budget) — `v1` Baseline
+### `Heavy` (`random_walk`, 10M points, 228.88 MiB raw, broadband, 16 MiB budget) — `v1` Baseline
+
+> **Correction (2026-11-22):** 10M points × 24 B = 240,000,000 B = **228.88 MiB**, not 240 MiB; storage overheads and ratios against raw below have been recomputed (raw wire/latency numbers are unchanged).
 
 | Workload | Wire | Requests | Mean Latency | Peak Mem |
 | --- | ---: | ---: | ---: | ---: |
-| `cold_overview` | `710 KiB` (0.29% of raw) | `33` | `240 ms` | `720 KiB` |
+| `cold_overview` | `710 KiB` (0.30% of raw) | `33` | `240 ms` | `720 KiB` |
 | `progressive_zoom_in` | `7.71 MiB` | `1,042` | `965 ms` | `7.87 MiB` |
 | `lateral_pan` | `6.63 MiB` | `2,045` | `1,455 ms` | `6.80 MiB` |
 | `jump_and_revisit` | `18.67 MiB` | `5,973` | `5,312 ms` | `16.00 MiB` |
 | `rapid_interrupt_pan` | `2.53 MiB` | `908` | `4,840 ms` | `2.60 MiB` |
 
 ### Takeaway 2
-`cold_overview` dropped **346×** vs raw (`240 MiB → 710 KiB`), confirming the $\sqrt{k}/\sqrt{N}$ scaling on 10M points. However, zoomed workloads showed severe **request fragmentation**: `jump_and_revisit` downloaded only `18.7 MiB` yet fired **5,973 tiny requests** (`5.3 s` latency) because `max_gap = 0` couldn't merge alternating calm/steep pages ("swiss-cheese" access pattern).
+`cold_overview` dropped **330×** vs raw (`228.9 MiB → 710 KiB`), confirming the $\sqrt{k}/\sqrt{N}$ scaling on 10M points. However, zoomed workloads showed severe **request fragmentation**: `jump_and_revisit` downloaded only `18.7 MiB` yet fired **5,973 tiny requests** (`5.3 s` latency) because `max_gap = 0` couldn't merge alternating calm/steep pages ("swiss-cheese" access pattern).
 
 ---
 
@@ -73,11 +75,11 @@ Our target datasets (financial/telemetry time series, matching `src/data/noise.t
 
 ### Key Findings from the Sweep
 - **Tree height dominates RTT (`FANOUT = 32` wins):** `FANOUT = 8` (Exp C) and `FANOUT = 16` (Exp B) added 1–2 extra remote levels, increasing sequential RTTs on overview and pan. Keeping `FANOUT = 32` keeps 10M points at only 3 remote levels (`cold_overview = 6 reqs / 107 ms`).
-- **Smaller leaves dramatically reduce `points.bin` spills (`LEAF_POINTS = 32` wins):** At `LEAF_POINTS = 64`, ~10–15% of Brownian leaves exceeded `1σ` on 5% zooms; halving leaf size to `32` cut vertical span by $\sqrt{2}$ while keeping storage overhead at **+3.6%** (`248.57 MiB` vs `240 MiB` raw, thanks to the 64 B node).
+- **Smaller leaves dramatically reduce `points.bin` spills (`LEAF_POINTS = 32` wins):** At `LEAF_POINTS = 64`, ~10–15% of Brownian leaves exceeded `1σ` on 5% zooms; halving leaf size to `32` cut vertical span by $\sqrt{2}$ while keeping storage overhead at **+8.6%** (`248.57 MiB` vs `228.88 MiB` raw: one 64 B node per 768 B leaf, plus the upper levels).
 - **Aggressive raw-leaf gap-bridging backfires on cache:** Bridging 12–16 leaves in `points.bin` (Exp A and a `gap_leaf=16` check) grabbed too many unneeded raw leaves, overflowing the 16 MiB cache and causing `revisit_A` to miss. Pairing `gap_leaf = 8` (6 KiB) with **selective leaf caching** dropped `jump_and_revisit` peak client RAM from **`16.00 MiB → 6.66 MiB`** (100% cache hits on both revisits!).
 
 ### Summary of `v1 → v2` Gains
-- **`Heavy` (10M `random_walk`):** 2.2×–5.4× lower mean latency across all 5 workloads, 3.6×–8.5× fewer requests, 1.8×–2.2× less wire on pan/jump/interrupt, and 2.4× lower peak RAM on `jump_and_revisit` (`6.66 MiB` for a 240 MiB dataset).
+- **`Heavy` (10M `random_walk`):** 2.2×–5.4× lower mean latency across all 5 workloads, 3.6×–8.5× fewer requests, 1.8×–2.2× less wire on pan/jump/interrupt, and 2.4× lower peak RAM on `jump_and_revisit` (`6.66 MiB` for a 228.9 MiB dataset).
 - **`ConstrainedMobile` (1M `random_walk`, 5 Mbps / 100 ms RTT):** `progressive_zoom_in` dropped `2,006 ms → 595 ms` (**3.4×**), `cold_overview` `1,241 ms` vs naive's `38,501 ms` (**31×**).
 - **`Medium` (1M `sine_wave`):** `cold_overview` `34 → 11 reqs` (`282 ms → 186 ms`), `lateral_pan` `364 KiB` / `92 ms`.
 

@@ -29,7 +29,9 @@ The 1D x-ordered `paged_moment_tree` (v2, [previous entry](./2026-11-20-progress
 
 ---
 
-## Experiment 4 — Heavy Head-to-Head (10M points, 240 MiB raw, broadband 30 ms / 50 Mbps, 16 MiB budget)
+## Experiment 4 — Heavy Head-to-Head (10M points, 228.88 MiB raw, broadband 30 ms / 50 Mbps, 16 MiB budget)
+
+> **Correction (2026-11-22):** 10M points × 24 B = 240,000,000 B = **228.88 MiB**, not 240 MiB; storage overheads and ratios against raw below have been recomputed (raw wire/latency numbers are unchanged).
 
 Numbers below are from `benchmarks/results/latest.json`. Wire bytes, request counts, and kernel counts are fully deterministic under virtual time; mean latencies jitter by ≤ 0.1% between runs (Tokio paused-clock auto-advance).
 
@@ -37,11 +39,11 @@ Numbers below are from `benchmarks/results/latest.json`. Wire bytes, request cou
 
 | Strategy | Storage | Overhead vs raw | Objects | Build |
 | --- | ---: | ---: | ---: | ---: |
-| `paged_moment_tree` (v2) | `248.57 MiB` | `+3.6%` | 5 | ~0.7–1.3 s |
-| `moment_kdtree` | `250.67 MiB` | `+4.4%` | 5 | ~2.3–2.8 s |
-| `moment_ripmap` | `406.99 MiB` | `+69.6%` (1.70×) | 44 | ~1.9–2.4 s |
+| `paged_moment_tree` (v2) | `248.57 MiB` | `+8.6%` | 5 | ~0.7–1.3 s |
+| `moment_kdtree` | `250.67 MiB` | `+9.5%` | 5 | ~2.3–2.8 s |
+| `moment_ripmap` | `406.99 MiB` | `+77.8%` (1.78×) | 44 | ~1.9–2.4 s |
 
-Ripmap breakdown: `240 MiB` points + `~26.7 MiB` fanout-4 x-levels + `~140 MiB` planes.
+Ripmap breakdown: `228.9 MiB` points + `25.4 MiB` fanout-4 x-levels + `152.7 MiB` planes.
 
 ### `Heavy` — integrated Gaussian noise (`random_walk`): wire / requests / mean latency
 
@@ -88,9 +90,9 @@ On plane-served workloads the ripmap's per-bin covariances give **~7–80× lowe
 ## Findings
 
 1. **The ripmap dominates on both signal families**, not just white noise. On the target `random_walk` signal it cuts wire **6–17×** vs v2 (`jump_and_revisit`: `10.53 MiB / 1,562 ms → 646 KiB / 175 ms`; `cold_overview` `80 KiB` = 0.03% of raw) while improving density accuracy. Rendering σ-wide x-blocks as a handful of y-bins is far cheaper than descending an x-tree until each node is also `< 1σ` tall. On white noise it reduces the x-tree's 100% download by **15–270×** (`cold_overview` `248.6 MiB → 937 KiB`, 13.7 s → 181 ms).
-2. **The fixed-shape k-d tree only helps the overview.** It nails the white-noise overview (`875 KiB`), but its cells are shaped for the overview aspect: at a 20× x-zoom they are ~20× too wide, so windowed views fall through to raw leaves *plus* `O(√cells)` boundary leaves per viewport edge, ending up at or above the x-tree (`lateral_pan` `45.3` vs `42.9 MiB`). On random walk, its extra levels/boundary leaves cost 5–8× more requests than v2. It is dominated by the ripmap everywhere except storage (+4.4% vs +70%).
+2. **The fixed-shape k-d tree only helps the overview.** It nails the white-noise overview (`875 KiB`), but its cells are shaped for the overview aspect: at a 20× x-zoom they are ~20× too wide, so windowed views fall through to raw leaves *plus* `O(√cells)` boundary leaves per viewport edge, ending up at or above the x-tree (`lateral_pan` `45.3` vs `42.9 MiB`). On random walk, its extra levels/boundary leaves cost 5–8× more requests than v2. It is dominated by the ripmap everywhere except storage (+9.5% vs +78%).
 3. **Deep vertical zoom on white noise remains unsolved for all three** (`y_zoom` ≈ the 12.4 MiB raw window). The ripmap is *worse* in request count (979): `+80` spikes stretch each block's `[min_y, max_y]`, so equal-width dense bins spend their depth on the empty noise–spike gap, `k_needed > kmax` on spike-containing blocks, and those fall back to fragmented raw leaves (the 2× step alone costs 8 MiB). On random walk, `y_zoom` works well for the ripmap (`762 KiB`) and k-d tree (`2.83 MiB`, aided by off-screen culling).
-4. **Storage is the ripmap's price:** 1.70× raw (planes ≈ 0.58×, fanout-4 x-levels ≈ 0.11×), tunable via `min_points_per_bin` and by skipping planes at levels/depths the query policy rarely selects.
+4. **Storage is the ripmap's price:** 1.78× raw (planes ≈ 0.67×, fanout-4 x-levels ≈ 0.11×), tunable via `min_points_per_bin` and by skipping planes at levels/depths the query policy rarely selects.
 
 ## Methodology Notes
 
