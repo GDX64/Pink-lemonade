@@ -494,10 +494,62 @@ impl HierarchyReader {
     }
 }
 
-/// Read a complete small object (e.g. a manifest) in one range request.
+/// Default initial EOF-clamped read length for single-RTT manifest loads.
+pub const DEFAULT_MANIFEST_READ_BYTES: usize = 128 * 1024;
+
+/// Read a complete small object (e.g. a manifest) using `object_len` + `read_range` (2 RTTs).
 pub async fn read_whole_object(store: &dyn ByteRangeStore, key: &str) -> Result<Vec<u8>, ClientError> {
     let len = store.object_len(key).await?;
     let len_usize = usize::try_from(len)
         .map_err(|_| ClientError::CorruptData(format!("{key} exceeds usize")))?;
     Ok(store.read_range(key, 0, len_usize).await?)
+}
+
+/// Read a self-describing manifest in 1 RTT via an EOF-clamped `read_range(0, initial_bytes)`.
+///
+/// `declared_len` parses the total byte length from the received prefix; if the manifest is
+/// larger than `initial_bytes`, the exact remaining suffix is fetched in one follow-up read.
+pub async fn read_manifest<F>(
+    store: &dyn ByteRangeStore,
+    key: &str,
+    initial_bytes: usize,
+    declared_len: F,
+) -> Result<Vec<u8>, ClientError>
+where
+    F: FnOnce(&[u8]) -> Result<usize, ClientError>,
+{
+    let mut raw = store.read_range(key, 0, initial_bytes).await?;
+    let declared = declared_len(&raw)?;
+    if raw.len() < declared {
+        let tail = store
+            .read_range(key, raw.len() as u64, declared - raw.len())
+            .await?;
+        raw.extend_from_slice(&tail);
+    } else if raw.len() > declared {
+        raw.truncate(declared);
+    }
+    Ok(raw)
+}
+
+/// Read a complete small object in 1 RTT via an EOF-clamped `read_range(0, initial_bytes)`,
+/// falling back to `object_len` + tail read only when the object is `>= initial_bytes`.
+pub async fn read_small_object(
+    store: &dyn ByteRangeStore,
+    key: &str,
+    initial_bytes: usize,
+) -> Result<Vec<u8>, ClientError> {
+    let mut raw = store.read_range(key, 0, initial_bytes).await?;
+    if raw.len() < initial_bytes {
+        return Ok(raw);
+    }
+    let total = store.object_len(key).await?;
+    let total_usize = usize::try_from(total)
+        .map_err(|_| ClientError::CorruptData(format!("{key} exceeds usize")))?;
+    if raw.len() < total_usize {
+        let tail = store
+            .read_range(key, raw.len() as u64, total_usize - raw.len())
+            .await?;
+        raw.extend_from_slice(&tail);
+    }
+    Ok(raw)
 }

@@ -4,7 +4,9 @@
 
 use std::io::Write;
 
-use pink_lemonade_progressive_common::{Moments, Node, POINT_BYTES, PointCollector};
+use pink_lemonade_progressive_common::{
+    Moments, Node, POINT_BYTES, PointCollector, SPARSE_CELL_BYTES, SparseCell,
+};
 use pink_lemonade_progressive_core::{
     BuildError, DatasetBuilder, ObjectWriter, Point, StoreError,
 };
@@ -12,8 +14,8 @@ use pink_lemonade_progressive_core::{
 use crate::RipmapStrategy;
 use crate::format::{
     LEVELS_KEY, LevelInfo, MANIFEST_KEY, PLANES_KEY, POINTS_KEY, PlaneDirEntry, PlaneInfo,
-    RipmapManifest, RipmapRecord, SPARSE_CELL_BYTES, SparseCell, bin_geometry, max_bins_per_block,
-    plane_depths_for_level, record_bytes,
+    RipmapManifest, RipmapRecord, bin_geometry, max_bins_per_block, plane_depths_for_level,
+    record_bytes,
 };
 
 /// Shifted raw-moment accumulator (`u = x - min_x`, `v = y - min_y`): avoids divisions in the

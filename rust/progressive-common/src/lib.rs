@@ -24,11 +24,17 @@ pub mod render;
 pub mod writer;
 
 pub use cache::{CacheKey, CacheValue, LruPageCache};
-pub use cell::{CELL_BYTES, MomentCell, Moments, decode_cells};
+pub use cell::{
+    CELL_BYTES, MomentCell, Moments, QUANTIZED_MOMENTS_BYTES, QuantizedMoments, SPARSE_CELL_BYTES,
+    SparseCell, decode_cells, decode_sparse_cells,
+};
 pub use fetch::{coalesce_runs, coalesce_spans, join2, try_join_all};
 pub use format::{MANIFEST_KEY, Manifest, POINTS_KEY, level_key};
 pub use node::{NODE_BYTES, Node, POINT_BYTES, PackedNode, decode_packed_nodes, decode_points};
-pub use reader::{Decision, FrontierItem, HierarchyReader, read_whole_object};
+pub use reader::{
+    DEFAULT_MANIFEST_READ_BYTES, Decision, FrontierItem, HierarchyReader, read_manifest,
+    read_small_object, read_whole_object,
+};
 pub use render::{
     assemble_frame, collect_points, offscreen_y, push_group, sort_line_points, standard_decision,
 };

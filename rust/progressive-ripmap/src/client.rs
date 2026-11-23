@@ -6,8 +6,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use pink_lemonade_progressive_common::{
-    LruPageCache, Node, POINT_BYTES, coalesce_runs, coalesce_spans, decode_points, join2,
-    offscreen_y, push_group, sort_line_points, try_join_all,
+    DEFAULT_MANIFEST_READ_BYTES, LruPageCache, Node, POINT_BYTES, SPARSE_CELL_BYTES, SparseCell,
+    coalesce_runs, coalesce_spans, decode_points, decode_sparse_cells, join2, offscreen_y,
+    push_group, read_manifest, sort_line_points, try_join_all,
 };
 use pink_lemonade_progressive_core::{
     ByteRangeStore, ClientConfig, ClientError, Frame, Point, ProgressiveClient, ViewQuery,
@@ -16,11 +17,9 @@ use pink_lemonade_progressive_core::{
 
 use crate::format::{
     LEVELS_KEY, MANIFEST_KEY, PLANES_KEY, POINTS_KEY, PlaneDirEntry, RipmapManifest, RipmapRecord,
-    SPARSE_CELL_BYTES, SparseCell, decode_sparse_cells, node_bin_geometry, record_bytes,
+    node_bin_geometry, record_bytes,
 };
 
-/// Initial EOF-clamped read size for `manifest.bin` (1 RTT without `HEAD` for typical manifests).
-const MANIFEST_INITIAL_READ_BYTES: usize = 128 * 1024;
 /// Resolve via planes once an x-block is at most this fraction of the merge threshold wide.
 const MAX_PLANE_BLOCK_WIDTH: f64 = 0.9;
 /// Bridge gaps of up to 16 KiB between tree pages; cap merged reads at 256 KiB.
@@ -87,18 +86,13 @@ impl RipmapClient {
         store: Arc<dyn ByteRangeStore>,
         config: ClientConfig,
     ) -> Result<Self, ClientError> {
-        let mut raw = store
-            .read_range(MANIFEST_KEY, 0, MANIFEST_INITIAL_READ_BYTES)
-            .await?;
-        let declared = RipmapManifest::declared_len(&raw)?;
-        if raw.len() < declared {
-            let tail = store
-                .read_range(MANIFEST_KEY, raw.len() as u64, declared - raw.len())
-                .await?;
-            raw.extend_from_slice(&tail);
-        } else if raw.len() > declared {
-            raw.truncate(declared);
-        }
+        let raw = read_manifest(
+            store.as_ref(),
+            MANIFEST_KEY,
+            DEFAULT_MANIFEST_READ_BYTES,
+            RipmapManifest::declared_len,
+        )
+        .await?;
         let manifest = RipmapManifest::decode(&raw)?;
         let cache_budget = config
             .memory_budget_bytes
@@ -1319,7 +1313,7 @@ fn emit_sparse_plane(
     let y_bounds = query.y_bounds;
 
     for cell in cells {
-        if cell.mass <= 0.0 {
+        if cell.is_empty() {
             continue;
         }
         let (bin_lo, bin_h) = node_bin_geometry(node, actual_k, cell.bin as usize);

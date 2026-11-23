@@ -10,7 +10,7 @@
 //!   non-empty bins sorted by `bin: u16` as 16-byte [`SparseCell`]s.
 //! - `points.bin`: flat packed 24-byte `(x, y, weight)` records in x-sorted order.
 
-use pink_lemonade_progressive_common::{Moments, NODE_BYTES, Node, PackedNode};
+use pink_lemonade_progressive_common::{NODE_BYTES, Node, PackedNode};
 use pink_lemonade_progressive_core::ClientError;
 
 use crate::MAX_Y_DEPTH;
@@ -25,8 +25,6 @@ const RIPMAP_VERSION: u32 = 1;
 
 /// One sparse plane directory slot attached to a node record: `(cell_offset: u32, cell_count: u16)`.
 pub const DIR_ENTRY_BYTES: usize = 6;
-/// 16-byte quantized sparse moment cell (4-byte aligned).
-pub const SPARSE_CELL_BYTES: usize = 16;
 
 /// Deepest `k` depth considered for mid-level windowed planes (handles 2×–4× y-zoom on spiky data).
 const MAX_STORED_K_WINDOWED: u8 = 9;
@@ -171,138 +169,6 @@ impl RipmapRecord {
         }
         Ok(out)
     }
-}
-
-/// 16-byte quantized sparse moment cell using Popoviciu's `[0, 0.25]` normalized variance bound.
-///
-/// - `tx, ty ∈ [0, 1]` quantized to `u16` (`0..=65535`)
-/// - `norm_var_x, norm_var_y ∈ [0, 0.25]` quantized to `u16` (`0..=65535`)
-/// - `norm_cov_xy ∈ [-0.25, 0.25]` quantized to `i16` (`-32767..=32767`)
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub struct SparseCell {
-    pub bin: u16,
-    pub q_tx: u16,
-    pub q_ty: u16,
-    pub q_var_x: u16,
-    pub q_cov_xy: i16,
-    pub q_var_y: u16,
-    pub mass: f32,
-}
-
-const _: () = assert!(std::mem::size_of::<SparseCell>() == SPARSE_CELL_BYTES);
-
-impl SparseCell {
-    /// Pack normalized moments `m` for bin `bin` within `[x_lo, x_lo + dx] × [y_lo, y_lo + dy]`.
-    pub fn pack(bin: u16, m: Moments, x_lo: f64, dx: f64, y_lo: f64, dy: f64) -> Self {
-        if m.mass == 0.0 {
-            return Self::default();
-        }
-        let inv_mass = 1.0 / m.mass;
-        let tx = if dx > 0.0 {
-            ((m.x - x_lo) / dx).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let ty = if dy > 0.0 {
-            ((m.y - y_lo) / dy).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let nvx = if dx > 0.0 {
-            (m.m2_xx * inv_mass / (dx * dx)).clamp(0.0, 0.25)
-        } else {
-            0.0
-        };
-        let nvy = if dy > 0.0 {
-            (m.m2_yy * inv_mass / (dy * dy)).clamp(0.0, 0.25)
-        } else {
-            0.0
-        };
-        let ncxy = if dx > 0.0 && dy > 0.0 {
-            (m.m2_xy * inv_mass / (dx * dy)).clamp(-0.25, 0.25)
-        } else {
-            0.0
-        };
-        Self {
-            bin,
-            q_tx: (tx * 65535.0).round() as u16,
-            q_ty: (ty * 65535.0).round() as u16,
-            q_var_x: (nvx * 4.0 * 65535.0).round() as u16,
-            q_cov_xy: (ncxy * 4.0 * 32767.0).round() as i16,
-            q_var_y: (nvy * 4.0 * 65535.0).round() as u16,
-            mass: m.mass as f32,
-        }
-    }
-
-    pub fn unpack(self, x_lo: f64, dx: f64, y_lo: f64, dy: f64) -> Node {
-        let mass = self.mass as f64;
-        let tx = self.q_tx as f64 / 65535.0;
-        let ty = self.q_ty as f64 / 65535.0;
-        let nvx = self.q_var_x as f64 / (4.0 * 65535.0);
-        let nvy = self.q_var_y as f64 / (4.0 * 65535.0);
-        let max_cov = (nvx * nvy).sqrt();
-        let ncxy = (self.q_cov_xy as f64 / (4.0 * 32767.0)).clamp(-max_cov, max_cov);
-
-        let (x_hi, y_hi) = (x_lo + dx, y_lo + dy);
-        Node {
-            mass,
-            x: x_lo + tx * dx,
-            y: y_lo + ty * dy,
-            m2_xx: nvx * mass * dx * dx,
-            m2_xy: ncxy * mass * dx * dy,
-            m2_yy: nvy * mass * dy * dy,
-            min_x: x_lo,
-            max_x: x_hi,
-            min_y: y_lo,
-            max_y: y_hi,
-            first_x: x_lo,
-            first_y: y_lo,
-            last_x: x_hi,
-            last_y: y_lo,
-            min_y_x: x_lo,
-            max_y_x: x_lo,
-        }
-    }
-
-    pub fn to_bytes(self) -> [u8; SPARSE_CELL_BYTES] {
-        let mut buf = [0u8; SPARSE_CELL_BYTES];
-        buf[0..2].copy_from_slice(&self.bin.to_le_bytes());
-        buf[2..4].copy_from_slice(&self.q_tx.to_le_bytes());
-        buf[4..6].copy_from_slice(&self.q_ty.to_le_bytes());
-        buf[6..8].copy_from_slice(&self.q_var_x.to_le_bytes());
-        buf[8..10].copy_from_slice(&self.q_cov_xy.to_le_bytes());
-        buf[10..12].copy_from_slice(&self.q_var_y.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.mass.to_le_bytes());
-        buf
-    }
-
-    pub fn from_bytes(buf: &[u8; SPARSE_CELL_BYTES]) -> Self {
-        Self {
-            bin: u16::from_le_bytes(buf[0..2].try_into().unwrap()),
-            q_tx: u16::from_le_bytes(buf[2..4].try_into().unwrap()),
-            q_ty: u16::from_le_bytes(buf[4..6].try_into().unwrap()),
-            q_var_x: u16::from_le_bytes(buf[6..8].try_into().unwrap()),
-            q_cov_xy: i16::from_le_bytes(buf[8..10].try_into().unwrap()),
-            q_var_y: u16::from_le_bytes(buf[10..12].try_into().unwrap()),
-            mass: f32::from_le_bytes(buf[12..16].try_into().unwrap()),
-        }
-    }
-}
-
-pub fn decode_sparse_cells(bytes: &[u8]) -> Result<Vec<SparseCell>, String> {
-    if !bytes.len().is_multiple_of(SPARSE_CELL_BYTES) {
-        return Err(format!(
-            "sparse cell slice length {} is not a multiple of {SPARSE_CELL_BYTES}",
-            bytes.len()
-        ));
-    }
-    Ok(bytes
-        .as_chunks::<SPARSE_CELL_BYTES>()
-        .0
-        .iter()
-        .map(SparseCell::from_bytes)
-        .collect())
 }
 
 /// Metadata for one stored plane `(level, k)` packed inside `planes.bin`.
@@ -495,40 +361,5 @@ impl RipmapManifest {
             levels,
             root_records,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pink_lemonade_progressive_core::Point;
-
-    #[test]
-    fn sparse_cell_roundtrip_preserves_moments() {
-        let pts = [
-            Point::new(0.1, 2.0, 1.0),
-            Point::new(0.2, 2.5, 3.0),
-            Point::new(0.35, 2.2, 0.5),
-        ];
-        let mut m = Moments::default();
-        for p in pts {
-            m.push(p);
-        }
-        let packed = SparseCell::from_bytes(&SparseCell::pack(7, m, 0.0, 0.4, 2.0, 0.5).to_bytes());
-        assert_eq!(packed.bin, 7);
-        let n = packed.unpack(0.0, 0.4, 2.0, 0.5);
-        for (got, want) in [
-            (n.mass, m.mass),
-            (n.x, m.x),
-            (n.y, m.y),
-            (n.m2_xx, m.m2_xx),
-            (n.m2_xy, m.m2_xy),
-            (n.m2_yy, m.m2_yy),
-        ] {
-            assert!(
-                (got - want).abs() <= 1e-4 * want.abs().max(1.0),
-                "{got} vs {want}"
-            );
-        }
     }
 }
