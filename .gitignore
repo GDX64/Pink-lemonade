@@ -10,3 +10,4 @@ pkg
 .venv/
 .ipynb_checkpoints/
 results
+board/
