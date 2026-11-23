@@ -59,12 +59,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         (BenchmarkScenario::Light, &all_strategies),
         (BenchmarkScenario::Medium, &all_strategies),
         (BenchmarkScenario::MediumWhiteNoise, &all_strategies),
+        (BenchmarkScenario::MediumBursty, &all_strategies),
     ];
     if !fast {
         runs.extend([
             (BenchmarkScenario::ConstrainedMobile, &all_strategies[..]),
             (BenchmarkScenario::Heavy, &progressive_only[..]),
             (BenchmarkScenario::HeavyWhiteNoise, &progressive_only[..]),
+            (BenchmarkScenario::HeavySmallKernel, &progressive_only[..]),
+            (BenchmarkScenario::HeavyWhiteNoiseSmallKernel, &progressive_only[..]),
+            (BenchmarkScenario::HeavyBursty, &progressive_only[..]),
         ]);
     }
     if !only.is_empty() {

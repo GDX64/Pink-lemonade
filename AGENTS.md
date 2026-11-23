@@ -13,7 +13,7 @@ Guide for coding agents working in `pink-lemonade`.
 - `rust/` — Cargo workspace (`rust/Cargo.toml`, nightly toolchain pinned in `rust/rust-toolchain.toml`):
   - `rust/` (`pink-lemonade-wasm`) — Existing in-memory WASM downsamplers (`merge`, `tree_merge`, `runnalls`, `salmond`), built into `pkg/` by `npm run wasm`.
   - `rust/progressive-core/` (`pink-lemonade-progressive-core`) — Lean, WASM-compatible core types (`Point`, `ViewQuery`, `Frame`, `ClientConfig`) and `dyn`-compatible async traits (`ByteRangeStore`, `ObjectWriter`, `DatasetBuilder`, `ProgressiveClient`, `ProgressiveStrategy`).
-  - `rust/progressive-harness/` (`pink-lemonade-progressive-harness`) — Test/benchmark harness crate meant strictly for `[dev-dependencies]`: `MemoryStore`, `DiskStore`, `SimulatedTransport` (`NetworkProfile`), `TrackingAllocator`, streaming fixtures (`DatasetStream`), moment & density NMAE evaluators, conformance suite (`run_conformance_suite`), standard scenarios (`benchmarks::run_on`, `benchmarks::compare`), and JSON report export.
+  - `rust/progressive-harness/` (`pink-lemonade-progressive-harness`) — Test/benchmark harness crate meant strictly for `[dev-dependencies]`: `MemoryStore`, `DiskStore`, `SimulatedTransport` (`NetworkProfile`), `TrackingAllocator`, streaming fixtures (`DatasetStream`; shapes `SineWave`, `RandomWalk`, `NoisySpikes`, `MultiRegime`, `BurstyX`), moment & density NMAE evaluators, conformance suite (`run_conformance_suite`), standard scenarios (`benchmarks::run_on`, `benchmarks::compare`), and JSON report export.
   - `rust/progressive-common/` (`pink-lemonade-progressive-common`) — WASM-ready shared strategy building blocks: 64-byte `PackedNode` / `Node` moments, 24-byte `MomentCell`, byte-bounded `LruPageCache`, runtime-agnostic `coalesce_runs` / `try_join_all` / `join2`, and the paged moment hierarchy (`write_hierarchy` + `HierarchyReader` with pluggable per-node `Decision`s) shared by the tree, k-d tree, and ripmap; plus `coalesce_spans` for variable-length range reads.
   - `rust/progressive-naive/` (`pink-lemonade-progressive-naive`) — Simplest full-download baseline strategy.
   - `rust/progressive-tree/` (`pink-lemonade-progressive-tree`) — 1D x-ordered paged moment tree (`PagedTreeStrategy`, `PLPTREE2`) and the benchmark exporter (`examples/export_reports.rs`).
@@ -30,9 +30,9 @@ Guide for coding agents working in `pink-lemonade`.
 
 ### Progressive Rust Workflow (via `./dev`)
 ```powershell
-./dev benchmark --fast            # [profile.fast], Light (10K) + Medium + MediumWhiteNoise (1M) -> benchmarks/results/latest.json
+./dev benchmark --fast            # [profile.fast], Light (10K) + Medium + MediumWhiteNoise + MediumBursty (1M) -> benchmarks/results/latest.json
 ./dev benchmark --fast --render   # Same, plus headless re-execution of benchmarks/analysis.ipynb
-./dev benchmark                   # Full scenarios (+ ConstrainedMobile, Heavy & HeavyWhiteNoise [10M, non-naive]) + re-render notebook
+./dev benchmark                   # Full scenarios (+ ConstrainedMobile, Heavy, HeavyWhiteNoise, their σ=4 px *SmallKernel variants & HeavyBursty [10M, non-naive]) + re-render notebook
 ./dev notebook                    # Launch JupyterLab on benchmarks/analysis.ipynb using .venv
 ./dev test                        # Run all Rust workspace tests
 ./dev clippy                      # Run clippy (-D warnings) on all progressive crates

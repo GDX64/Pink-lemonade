@@ -46,6 +46,10 @@ pub enum DatasetShape {
     NoisySpikes { seed: u64 },
     /// Non-uniform x spacing with dense bursts, drifting baseline, and varying weights.
     MultiRegime { seed: u64 },
+    /// Strongly non-uniform x: 90% of points in ten 1%-wide bursts, 10% spread over the
+    /// background, and three 7%-wide stretches with no points at all. `y` is a Brownian random
+    /// walk with unit weights. Separates count-based x-partitions from geometric columns.
+    BurstyX { seed: u64 },
 }
 
 impl DatasetShape {
@@ -55,6 +59,7 @@ impl DatasetShape {
             Self::RandomWalk { .. } => "random_walk",
             Self::NoisySpikes { .. } => "noisy_spikes",
             Self::MultiRegime { .. } => "multi_regime",
+            Self::BurstyX { .. } => "bursty_x",
         }
     }
 }
@@ -76,7 +81,8 @@ impl DatasetStream {
             DatasetShape::SineWave => 0,
             DatasetShape::RandomWalk { seed }
             | DatasetShape::NoisySpikes { seed }
-            | DatasetShape::MultiRegime { seed } => seed,
+            | DatasetShape::MultiRegime { seed }
+            | DatasetShape::BurstyX { seed } => seed,
         };
         let walk_acc = total_points as f64 / 1000.0;
         Self {
@@ -139,6 +145,10 @@ impl DatasetStream {
                 let weight = 0.5 + self.rng.unit() * 4.5;
                 Point::new(x, base + jitter, weight)
             }
+            DatasetShape::BurstyX { .. } => {
+                self.walk_acc += self.rng.normal();
+                Point::new(bursty_x(index as f64 / n), self.walk_acc, 1.0)
+            }
         }
     }
 }
@@ -175,7 +185,84 @@ pub fn stream_into_builder(
     Ok(count)
 }
 
+/// `BurstyX` layout: ten bursts of 9% of the points each, 1% of x wide, centred on
+/// `0.05 + 0.1k`; three empty stretches; the remaining 10% spread uniformly over the rest.
+const BURST_HALF_WIDTH: f64 = 0.005;
+const BURST_MASS: f64 = 0.09;
+const BURSTY_GAPS: [(f64, f64); 3] = [(0.165, 0.235), (0.465, 0.535), (0.765, 0.835)];
+
+/// Piecewise-linear segments `(x0, x1, cumulative mass at x0, mass)` of the `BurstyX` CDF.
+fn bursty_segments() -> &'static [(f64, f64, f64, f64)] {
+    static SEGMENTS: std::sync::OnceLock<Vec<(f64, f64, f64, f64)>> = std::sync::OnceLock::new();
+    SEGMENTS.get_or_init(|| {
+        let bursts: Vec<(f64, f64)> = (0..10)
+            .map(|k| {
+                let c = 0.05 + 0.1 * k as f64;
+                (c - BURST_HALF_WIDTH, c + BURST_HALF_WIDTH)
+            })
+            .collect();
+        let mut cuts = vec![0.0, 1.0];
+        for &(a, b) in bursts.iter().chain(BURSTY_GAPS.iter()) {
+            cuts.extend([a, b]);
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup();
+        let inside = |set: &[(f64, f64)], m: f64| set.iter().any(|&(a, b)| a <= m && m <= b);
+        let gap_len: f64 = BURSTY_GAPS.iter().map(|(a, b)| b - a).sum();
+        let background_len = 1.0 - gap_len - bursts.len() as f64 * 2.0 * BURST_HALF_WIDTH;
+        let background_mass = 1.0 - bursts.len() as f64 * BURST_MASS;
+        let mut segments = Vec::new();
+        let mut cumulative = 0.0;
+        for w in cuts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let mid = 0.5 * (a + b);
+            let mass = if inside(&bursts, mid) {
+                BURST_MASS * (b - a) / (2.0 * BURST_HALF_WIDTH)
+            } else if inside(&BURSTY_GAPS, mid) {
+                continue;
+            } else {
+                background_mass * (b - a) / background_len
+            };
+            segments.push((a, b, cumulative, mass));
+            cumulative += mass;
+        }
+        segments
+    })
+}
+
+/// Monotone inverse CDF of the `BurstyX` layout: `t ∈ [0, 1)` → `x ∈ [0, 1]`.
+pub fn bursty_x(t: f64) -> f64 {
+    let segments = bursty_segments();
+    let i = segments
+        .partition_point(|&(_, _, cumulative, _)| cumulative <= t)
+        .saturating_sub(1);
+    let (x0, x1, cumulative, mass) = segments[i];
+    (x0 + (t - cumulative) / mass * (x1 - x0)).clamp(x0, x1)
+}
+
 fn gaussian_sample(mean: f64, std_dev: f64, x: f64) -> f64 {
     let z = (x - mean) / std_dev;
     (-0.5 * z * z).exp()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bursty_x_is_sorted_bursty_and_has_empty_gaps() {
+        let n = 200_000u64;
+        let points = DatasetStream::new(DatasetShape::BurstyX { seed: 1 }, n, 8_192).collect_all();
+        assert!(points.windows(2).all(|w| w[0].x <= w[1].x), "x must be sorted");
+        assert!(points.iter().all(|p| (0.0..=1.0).contains(&p.x)));
+        let in_bursts = points
+            .iter()
+            .filter(|p| (0..10).any(|k| (p.x - (0.05 + 0.1 * k as f64)).abs() <= BURST_HALF_WIDTH))
+            .count() as f64
+            / n as f64;
+        assert!((in_bursts - 0.9).abs() < 0.005, "burst fraction {in_bursts}");
+        for (a, b) in BURSTY_GAPS {
+            assert!(points.iter().all(|p| p.x <= a || p.x >= b), "points inside gap ({a}, {b})");
+        }
+    }
 }

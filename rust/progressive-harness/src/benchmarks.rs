@@ -60,6 +60,15 @@ pub enum BenchmarkScenario {
     /// 10M points (~240 MiB raw) of uncorrelated `NoisySpikes` white noise, `MemoryStore`,
     /// broadband, 16 MiB client budget (2D space-partitioning stress test).
     HeavyWhiteNoise,
+    /// `Heavy` (10M `RandomWalk`) rendered with a 4 px kernel instead of 16 px: every view needs
+    /// ~16× more kernels, exposing constants tuned to one kernel size.
+    HeavySmallKernel,
+    /// `HeavyWhiteNoise` (10M `NoisySpikes`) rendered with a 4 px kernel.
+    HeavyWhiteNoiseSmallKernel,
+    /// 1M points of `BurstyX` (90% of points in 10% of x, empty stretches), broadband, 4 MiB budget.
+    MediumBursty,
+    /// 10M points of `BurstyX`, broadband, 16 MiB budget: count-based vs geometric x-partitions.
+    HeavyBursty,
     /// 50M points (~1.2 GiB raw, integrated Gaussian `RandomWalk`), `MemoryStore`, broadband, 32 MiB client budget.
     Gigabyte,
     /// 1M points (integrated Gaussian `RandomWalk`), `MemoryStore`, 5 Mbps / 100 ms mobile link, 2 MiB client budget.
@@ -81,11 +90,35 @@ fn preset(
     network: NetworkProfile,
     memory_budget_bytes: usize,
 ) -> ScenarioSpec {
+    preset_with_sigma(
+        name,
+        shape,
+        point_count,
+        chunk_size,
+        network,
+        memory_budget_bytes,
+        HarnessConfig::default().sigma_px,
+    )
+}
+
+/// Kernel size used by the `*SmallKernel` scenarios (vs the default 16 px).
+pub const SMALL_KERNEL_SIGMA_PX: f64 = 4.0;
+
+fn preset_with_sigma(
+    name: &str,
+    shape: DatasetShape,
+    point_count: u64,
+    chunk_size: usize,
+    network: NetworkProfile,
+    memory_budget_bytes: usize,
+    sigma_px: f64,
+) -> ScenarioSpec {
     let harness = HarnessConfig {
         network,
         client: ClientConfig {
             memory_budget_bytes,
         },
+        sigma_px,
         ..HarnessConfig::default()
     };
     let y_center = match shape {
@@ -117,6 +150,7 @@ impl BenchmarkScenario {
     pub fn spec(&self) -> ScenarioSpec {
         let walk = DatasetShape::RandomWalk { seed: 578_211 };
         let noise = DatasetShape::NoisySpikes { seed: 4_242 };
+        let bursty = DatasetShape::BurstyX { seed: 9_001 };
         let broadband = NetworkProfile::broadband();
         match self {
             Self::Light => preset("light", DatasetShape::SineWave, 10_000, 1_000, broadband, MIB),
@@ -145,6 +179,26 @@ impl BenchmarkScenario {
                 broadband,
                 16 * MIB,
             ),
+            Self::HeavySmallKernel => preset_with_sigma(
+                "heavy_sigma4",
+                walk,
+                10_000_000,
+                131_072,
+                broadband,
+                16 * MIB,
+                SMALL_KERNEL_SIGMA_PX,
+            ),
+            Self::HeavyWhiteNoiseSmallKernel => preset_with_sigma(
+                "heavy_white_noise_sigma4",
+                noise,
+                10_000_000,
+                131_072,
+                broadband,
+                16 * MIB,
+                SMALL_KERNEL_SIGMA_PX,
+            ),
+            Self::MediumBursty => preset("medium_bursty", bursty, 1_000_000, 65_536, broadband, 4 * MIB),
+            Self::HeavyBursty => preset("heavy_bursty", bursty, 10_000_000, 131_072, broadband, 16 * MIB),
             Self::Gigabyte => preset("gigabyte", walk, 50_000_000, 262_144, broadband, 32 * MIB),
             Self::ConstrainedMobile => preset(
                 "constrained_mobile",
