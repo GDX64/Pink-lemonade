@@ -17,6 +17,7 @@ import {
   CELL_BYTES,
   emptyCache,
   generateDataset,
+  recordBytesFor,
   runQuery,
 } from "./ripmap-model";
 import {
@@ -930,10 +931,11 @@ then, left to right (push_group):
     }
     if (!hover) {
       const kmaxRows = model.levelCounts
-        .map(
-          (count, level) =>
-            `<div>ℓ${level}: ${fmtCount(count)} blocks × ${fmtCount(blockPointsAt(rm().params, level))} pts → kmax ${rm().kmax[level]}</div>`,
-        )
+        .map((count, level) => {
+          const ks = rm().planeDepths[level]!;
+          const desc = ks.length > 0 ? `k ∈ {${ks.join(", ")}}` : "no planes";
+          return `<div>ℓ${level}: ${fmtCount(count)} blocks × ${fmtCount(blockPointsAt(rm().params, level))} pts → ${desc}</div>`;
+        })
         .reverse()
         .join("");
       inspector.innerHTML = `<h2>Inspector</h2>
@@ -942,10 +944,10 @@ then, left to right (push_group):
 w² + span² &lt; t²        → resolve
 w ≤ ${MAX_PLANE_BLOCK_WIDTH}·t and
   k = ⌈log₂(span/√(t²−w²))⌉
-  k ≤ kmax(ℓ)          → plane(ℓ, k)
+  stored sparse slot ≥ k → plane(ℓ, k)
 otherwise              → expand
   (at ℓ0: raw leaf from points.bin)</div>
-        <div class="k" style="margin-top:8px">Stored plane depths (kmax = ⌊log₂(block_pts / ${rm().params.minPointsPerBin})⌋, cap 14)</div>
+        <div class="k" style="margin-top:8px">Data-derived sparse plane depths (non-empty bins ≤ block_pts / ${rm().params.minPointsPerBin}, cap 14)</div>
         ${kmaxRows}`;
       return;
     }
@@ -991,8 +993,14 @@ otherwise              → expand
     let cellsHtml = "";
     if (hover.kind === "item" && hover.item.kind === "plane") {
       const k = hover.item.k;
-      const blockBytes = 2 ** k * CELL_BYTES;
-      bytes = `<div class="k">Bytes: <code>plane_${node.level}_${k}.bin</code> [${fmtCount(node.index * blockBytes)}, +${fmtBytes(blockBytes)})</div>`;
+      const ks = rm().planeDepths[node.level]!;
+      const slot = ks.indexOf(k);
+      const dir = slot >= 0 ? rm().blockDirs[node.level]![node.index]![slot]! : null;
+      const baseOff = slot >= 0 ? rm().planeByteOffsets[node.level]![slot]! : 0;
+      const nonEmpty = dir ? dir.cellCount : hover.item.cells.filter((c) => c.count > 0).length;
+      const blockBytes = nonEmpty * CELL_BYTES;
+      const byteOff = dir ? baseOff + dir.cellOffset * CELL_BYTES : 0;
+      bytes = `<div class="k">Bytes: <code>planes.bin</code> [${fmtCount(byteOff)}, +${fmtBytes(blockBytes)}) · ${nonEmpty}/${2 ** k} non-empty 16 B SparseCells</div>`;
       const cell = hover.cell;
       if (cell) {
         bytes += `<div>Bin ${cell.bin} / ${2 ** k}: y ∈ [${fmtNum(cell.lo)}, ${fmtNum(cell.lo + cell.h)}), ${fmtCount(cell.count)} pts, mass ${fmtNum(cell.mass)}</div>`;
@@ -1007,7 +1015,12 @@ otherwise              → expand
           ? `<div class="k">Record inlined in <code>manifest.bin</code> (depth ${node.level})</div>`
           : `<div class="k">Record: <code>nodes.bin</code> [${fmtCount(info.offset + node.index * RECORD_BYTES)}, +${RECORD_BYTES} B)</div>`;
     } else if (node.level < model.levelCounts.length - 1) {
-      bytes = `<div class="k">Node bytes: <code>level_${node.level}.bin</code> page ${Math.floor(node.index / rm().params.fanout)} (${rm().params.fanout} × 64 B)</div>`;
+      if (model.strategy === "ripmap") {
+        const stride = recordBytesFor(rm().planeDepths[node.level]!.length);
+        bytes = `<div class="k">Node bytes: <code>levels.bin</code> ℓ${node.level} page ${Math.floor(node.index / rm().params.fanout)} (${rm().params.fanout} × ${stride} B)</div>`;
+      } else {
+        bytes = `<div class="k">Node bytes: <code>level_${node.level}.bin</code> page ${Math.floor(node.index / rm().params.fanout)} (${rm().params.fanout} × 64 B)</div>`;
+      }
     } else {
       bytes = `<div class="k">Root node — inlined in <code>manifest.bin</code></div>`;
     }
@@ -1064,7 +1077,8 @@ dx² + dy² = ${(dx * dx + dy * dy).toFixed(2)} &lt; t² = ${(t * t).toFixed(2)}
     const rowH = (H - 14) / cells.length;
     ctx.font = "10px ui-sans-serif, Segoe UI, sans-serif";
     ctx.fillStyle = c.muted;
-    ctx.fillText(`${cells.length} dense MomentCells (top = max_y), bar = mass`, 0, 10);
+    const nonEmpty = cells.filter((x) => x.count > 0).length;
+    ctx.fillText(`${nonEmpty}/${cells.length} sparse 16 B cells (top = max_y), bar = mass`, 0, 10);
     for (const cell of cells) {
       const y = 14 + (cells.length - 1 - cell.bin) * rowH;
       ctx.fillStyle = c.grid;
@@ -1201,26 +1215,24 @@ dx² + dy² = ${(dx * dx + dy * dy).toFixed(2)} &lt; t² = ${(t * t).toFixed(2)}
 // helpers
 
 const RIPMAP_STEPS = `
-  <div class="panel"><h3>1 · x-ordered moment hierarchy</h3>
-    Points are kept in x order and grouped into 32-point leaves, then summarised level by level with a small
-    <b>fanout of 4</b> so x-block widths come in fine ×4 steps. Each 64-byte node stores mass, mean, covariance and its
-    exact bounding box. Levels ≤ <code>root_cap</code> nodes are inlined in <code>manifest.bin</code>; the rest live
-    in <code>level_ℓ.bin</code>, raw points in <code>points.bin</code>.</div>
-  <div class="panel"><h3>2 · dense y-bin planes</h3>
-    For every level ℓ and depth k = 1…kmax(ℓ), <code>plane_ℓ_k.bin</code> stores 2<sup>k</sup> 24-byte
-    <code>MomentCell</code>s per x-block, splitting that block's own [min_y, max_y] into equal bins (empty bins are zero).
-    Block j is the contiguous byte range [j·2<sup>k</sup>, (j+1)·2<sup>k</sup>)·24, so a run of neighbouring blocks is one
-    range request. Planes stop once bins would average fewer than <code>min_points_per_bin</code> points.</div>
-  <div class="panel"><h3>3 · query: decouple x and y resolution</h3>
-    After the exact visible y-range, the client walks the hierarchy level by level. A node straddling the viewport edge
-    always descends (exact moments come from x-containment). A fully-inside node that fits inside the merge threshold
-    becomes one kernel. Otherwise, once it is at most 0.9σ wide, it is answered from plane (ℓ, k) with the smallest k
-    whose bin height keeps w² + h² ≤ t² — instead of descending until every node is also less than σ tall.</div>
-  <div class="panel"><h3>4 · fetch: one contiguous range per plane run</h3>
-    Tree pages are fetched one level per round trip. Then the needed plane blocks (grouped per (ℓ, k), bridging gaps
-    ≤ 16 KiB) and the raw boundary leaves (bridging ≤ 8 leaves) are fetched concurrently in a single final round.
-    On vertically incoherent data such as white noise this replaces downloading nearly every raw point with a
-    handful of plane ranges.</div>`;
+  <div class="panel"><h3>1 · 4-object x-hierarchy with inline directories</h3>
+    Points stay in x order (32-point leaves, <b>fanout 4</b>). Each node record packs a 64-byte moment node plus
+    inline 6-byte <code>(cell_offset, cell_count)</code> slots for every stored plane at that level. Top levels live
+    in <code>manifest.bin</code> (read in 1 RTT); deeper levels pack back-to-back in <code>levels.bin</code>,
+    planes in <code>planes.bin</code>, raw points in <code>points.bin</code>.</div>
+  <div class="panel"><h3>2 · sparse 16-byte y-bin planes</h3>
+    For levels ℓ ≥ 1, data-derived y-depths store only <b>non-empty</b> bins as 16-byte quantized
+    <code>SparseCell</code>s (Popoviciu-bounded variances). A block is stored at depth k only while its non-empty
+    count stays ≤ <code>block_points / min_points_per_bin</code>, letting outlier-stretched blocks reach +2 extra
+    depths without paying for empty zeros.</div>
+  <div class="panel"><h3>3 · query: per-node level jump &amp; decoupled resolution</h3>
+    Each root node jumps directly to the level where its own x-width satisfies w ≤ 0.9·t (so narrow burst blocks
+    never get dragged down by a wide gap). Explicit <code>y_bounds</code> skips Phase 1. Fully-inside nodes resolve
+    when w² + span² &lt; t², or pick the coarsest stored sparse plane slot ≥ k with non-empty cells.</div>
+  <div class="panel"><h3>4 · fetch: coalesced spans &amp; greedy merging</h3>
+    Inline directories give exact byte ranges in <code>planes.bin</code> with zero extra RTTs. Missing plane spans
+    (reusing cached finer k when available) and boundary leaves fetch concurrently, then emitted plane bins are
+    greedily merged (and off-screen y bins collapsed) into exact moment-preserving kernels.</div>`;
 
 const TREE_STEPS = `
   <div class="panel"><h3>1 · x-ordered moment hierarchy</h3>
@@ -1263,11 +1275,12 @@ const QUAD_STEPS = `
 
 const TEXT: Record<PageStrategy, { title: string; lead: string; screenLegend: string; treeLegend: string; steps: string }> = {
   ripmap: {
-    title: "Moment ripmap explorer",
-    lead: `An in-browser model of <code>rust/progressive-ripmap</code>. The dataset is built into an
-      x-ordered moment hierarchy plus dense per-block y-bin <em>planes</em>; every pan or zoom re-runs the
-      client's query policy and shows which nodes resolve to one kernel, which σ-wide x-blocks are answered by a
-      plane, which boundary leaves fall back to raw points, and the byte ranges that would go over the wire.`,
+    title: "Moment ripmap v2 explorer",
+    lead: `An in-browser model of <code>rust/progressive-ripmap</code> (<code>PLPRIPM2</code>). The dataset is packed
+      into 4 static objects: an x-ordered hierarchy with inline plane directories plus 16-byte sparse y-bin
+      <em>planes</em>. Every pan or zoom re-runs the level-jumping query policy and shows which nodes resolve,
+      which σ-wide x-blocks are answered from <code>planes.bin</code>, which boundary leaves fall back to raw
+      points, and the byte ranges that would go over the wire.`,
     screenLegend: `
       <span><i class="sw" style="background:var(--plane)"></i>plane bin (one kernel per non-empty bin)</span>
       <span><i class="sw" style="background:var(--resolved)"></i>resolved node</span>

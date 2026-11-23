@@ -26,25 +26,21 @@ const RIPMAP_VERSION: u32 = 1;
 /// One sparse plane directory slot attached to a node record: `(cell_offset: u32, cell_count: u16)`.
 pub const DIR_ENTRY_BYTES: usize = 6;
 
-/// Deepest `k` depth considered for mid-level windowed planes (handles 2×–4× y-zoom on spiky data).
-const MAX_STORED_K_WINDOWED: u8 = 9;
-/// Deepest `k` depth for coarse near-overview blocks (`>= 8192` points/block).
-const MAX_STORED_K_COARSE: u8 = 8;
-/// Extra y-depth beyond the dense budget allowed for sparse blocks (e.g., outlier-stretched blocks
-/// whose occupied bins remain `<= block_points / min_points_per_bin`).
-const SPARSE_EXTRA_DEPTH: u8 = 2;
-
 /// Candidate y-depths `k` stored at `level` for blocks of `block_points` points.
 ///
-/// - Level 0 (raw 32-point leaves) stores no planes.
+/// Purely data-derived (no screen-resolution constants):
+/// - Level 0 (raw `leaf_points`-point leaves) stores no planes (raw leaves are tiny and only
+///   reached at extreme zoom).
 /// - Cheap depths (`k <= k_dense - 2`, costing `<= 1%` of raw storage each) are stored at stride 1
 ///   so vertically coherent signals hit their exact `k` without 2× rounding overhead.
-/// - Expensive top depths use stride 2 up to `min(k_dense + 2, k_max_level)`, giving sparse
-///   outlier-stretched blocks +2 extra depth while capping coarse near-overview blocks at `k <= 8`.
+/// - Expensive top depths use stride 2 up to `min(k_dense + sparse_extra_depth, MAX_Y_DEPTH)`.
+///   The per-block gate (`non_empty <= block_points / min_points_per_bin`) bounds every stored
+///   plane to `<= N` bytes regardless of depth.
 pub fn plane_depths_for_level(
     level: usize,
     block_points: u64,
     min_points_per_bin: u32,
+    sparse_extra_depth: u8,
 ) -> Vec<u8> {
     if level == 0 {
         return Vec::new();
@@ -54,15 +50,7 @@ pub fn plane_depths_for_level(
         return Vec::new();
     }
     let k_dense = (ratio.ilog2() as u8).min(MAX_Y_DEPTH);
-    let max_k = if block_points >= 8_192 {
-        MAX_STORED_K_COARSE
-    } else {
-        MAX_STORED_K_WINDOWED
-    };
-    let k_cap = k_dense
-        .saturating_add(SPARSE_EXTRA_DEPTH)
-        .min(max_k)
-        .min(MAX_Y_DEPTH);
+    let k_cap = k_dense.saturating_add(sparse_extra_depth).min(MAX_Y_DEPTH);
     let stride1_end = k_dense.saturating_sub(2).min(k_cap);
 
     let mut ks = Vec::new();

@@ -6,6 +6,7 @@ import {
   generateDataset,
   levelCounts,
   maxDepth,
+  planeDepthsForLevel,
   runQuery,
   TREE_PARAMS,
   type ViewQuery,
@@ -37,6 +38,11 @@ describe("ripmap explorer model", () => {
     expect(maxDepth(32, 16)).toBe(1);
     expect(maxDepth(8192, 16)).toBe(9);
     expect(maxDepth(16, 16)).toBe(0);
+    expect(planeDepthsForLevel(0, 32, 16, 2)).toEqual([]);
+    expect(planeDepthsForLevel(1, 128, 16, 2)).toEqual([1, 3, 5]);
+    expect(planeDepthsForLevel(2, 512, 16, 2)).toEqual([1, 2, 3, 5, 7]);
+    expect(planeDepthsForLevel(3, 2048, 16, 2)).toEqual([1, 2, 3, 4, 5, 7, 9]);
+    expect(planeDepthsForLevel(4, 8192, 16, 2)).toEqual([1, 2, 3, 4, 5, 6, 7, 9, 11]);
     expect(coalesceRuns([5, 1, 2, 9, 30], 3, 100)).toEqual([[1, 9], [30, 1]]);
     expect(coalesceRuns([0, 1, 2, 3], 0, 2)).toEqual([[0, 2], [2, 2]]);
   });
@@ -106,8 +112,9 @@ describe("ripmap explorer model", () => {
     expect(r.wireBytes).toBeGreaterThan(model.rawBytes * 0.9);
   });
 
-  it("serves the white-noise overview mostly from planes", () => {
+  it("serves the white-noise overview mostly from planes in a 4-object PLPRIPM2 layout", () => {
     const model = buildRipmap(generateDataset("noisy_spikes", 300_000), DEFAULT_PARAMS);
+    expect(model.objects.map((o) => o.key)).toEqual(["manifest.bin", "levels.bin", "planes.bin", "points.bin"]);
     const r = runQuery(model, view(0, 1));
     expect(r.items.some((i) => i.kind === "plane")).toBe(true);
     expect(r.wireBytes).toBeLessThan(model.rawBytes / 10);
