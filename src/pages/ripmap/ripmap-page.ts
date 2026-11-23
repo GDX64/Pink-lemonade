@@ -19,10 +19,26 @@ import {
   generateDataset,
   runQuery,
 } from "./ripmap-model";
+import {
+  INLINE_OBJECT,
+  QUAD_PARAMS,
+  type QuadModel,
+  type QuadNode,
+  type QuadParams,
+  RECORD_BYTES,
+  buildQuadtree,
+  nodesKey,
+  runQuadQuery,
+} from "./quadtree-model";
+
+/** Explorer modes: the two x-hierarchies (ripmap, x-tree) and the 2D moment quadtree. */
+export type PageStrategy = Strategy | "quadtree";
+type AnyModel = RipmapModel | QuadModel;
 
 /**
- * Interactive explainer for the hierarchy-based progressive strategies (`progressive-ripmap`
- * and the `progressive-tree` x-tree): build a dataset in-browser, then pan/zoom a viewport and
+ * Interactive explainer for the hierarchy-based progressive strategies (`progressive-ripmap`,
+ * the `progressive-tree` x-tree, and the `progressive-quadtree` moment quadtree): build a
+ * dataset in-browser, then pan/zoom a viewport and
  * watch which hierarchy nodes resolve, which x-blocks are served through y-bin planes (ripmap
  * only), which leaves fall back to raw points, how the frame greedily merges everything into
  * kernels, and which byte ranges are fetched.
@@ -92,11 +108,13 @@ const STYLE = `
 const GUTTER = 88; // left label gutter shared by the screen and the hierarchy canvas
 const PAD_Y = 12;
 const LEVEL_ROW = 26;
+const QUAD_ROW = 34;
 
 interface State {
   shape: DatasetShape;
   n: number;
   params: RipmapParams;
+  quad: QuadParams;
   sigmaPx: number;
   threshold: number;
   minX: number;
@@ -114,10 +132,13 @@ type Hover =
   | { kind: "trace"; entry: TraceEntry }
   | null;
 
-export async function runRipmapPage(args: { output: HTMLElement; strategy?: Strategy }) {
+export async function runRipmapPage(args: { output: HTMLElement; strategy?: PageStrategy }) {
   const { output } = args;
-  const strategy: Strategy = args.strategy ?? "ripmap";
+  const strategy: PageStrategy = args.strategy ?? "ripmap";
   const isTree = strategy === "tree";
+  const isQuad = strategy === "quadtree";
+  /** Strategies without moment planes (resolve-or-expand only). */
+  const noPlanes = strategy !== "ripmap";
   const text = TEXT[strategy];
   output.innerHTML = "";
   const style = document.createElement("style");
@@ -136,7 +157,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
         <h2>Screen — what the client renders</h2>
         <div class="canvas-wrap"><canvas data-ref="screen"></canvas></div>
         <div class="legend">${text.screenLegend}</div>
-        <h2 style="margin-top:14px">Hierarchy traversal — shared x-axis</h2>
+        <h2 style="margin-top:14px">${isQuad ? "Quadtree depths — shared x-axis, y compressed per row" : "Hierarchy traversal — shared x-axis"}</h2>
         <div class="canvas-wrap"><canvas data-ref="tree"></canvas></div>
         <div class="legend">${text.treeLegend}</div>
         <div class="hint">Wheel: zoom x · Shift+wheel: zoom y (switches to explicit <code>y_bounds</code>) · Drag: pan · Double-click: overview · Hover anything for the decision math.</div>
@@ -165,6 +186,8 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
     // A small ripmap root cap makes the level-by-level descent visible; the Rust default is 1024.
     // The x-tree uses `PagedTreeStrategy::default()` (fanout 32, root cap = fanout).
     params: isTree ? { ...TREE_PARAMS } : { ...DEFAULT_PARAMS, rootCap: 16 },
+    // A small root cap / object threshold makes the descent and the object packing visible.
+    quad: { ...QUAD_PARAMS, rootCap: 21, minObjectNodes: 4096 },
     sigmaPx: 14,
     threshold: 1,
     minX: 0,
@@ -177,7 +200,16 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
     warmCache: false,
   };
 
-  let model: RipmapModel = buildRipmap(generateDataset(state.shape, state.n), state.params, strategy);
+  const build = (): AnyModel => {
+    const data = generateDataset(state.shape, state.n);
+    return isQuad ? buildQuadtree(data, state.quad) : buildRipmap(data, state.params, strategy as Strategy);
+  };
+  let model: AnyModel = build();
+  /** The x-hierarchy model (ripmap / x-tree modes only). */
+  const rm = () => model as RipmapModel;
+  const qm = () => model as QuadModel;
+  /** x-sorted points (the quadtree stores its own copy in Z order). */
+  const sortedData = () => (model.strategy === "quadtree" ? model.sorted : model.data);
   let cache: ClientCache = emptyCache();
   let result: QueryResult | null = null;
   let hover: Hover = null;
@@ -235,7 +267,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   };
 
   const rebuild = () => {
-    model = buildRipmap(generateDataset(state.shape, state.n), state.params, strategy);
+    model = build();
     cache = emptyCache();
     update();
   };
@@ -248,7 +280,20 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
     state.n = Number(v);
     rebuild();
   });
-  if (isTree) {
+  if (isQuad) {
+    select("Leaf points", [["8", "8"], ["32", "32 (default)"], ["128", "128"]], String(state.quad.leafPoints), (v) => {
+      state.quad.leafPoints = Number(v);
+      rebuild();
+    });
+    select("Root cap (inlined nodes)", [["1", "1 (root only)"], ["21", "21"], ["1024", "1024 (Rust default)"]], String(state.quad.rootCap), (v) => {
+      state.quad.rootCap = Number(v);
+      rebuild();
+    });
+    select("Min nodes per object", [["256", "256"], ["4096", "4096"], ["65536", "65,536 (default)"]], String(state.quad.minObjectNodes), (v) => {
+      state.quad.minObjectNodes = Number(v);
+      rebuild();
+    });
+  } else if (isTree) {
     select("Fanout (= root cap)", [["4", "4"], ["8", "8"], ["16", "16"], ["32", "32 (default)"]], String(state.params.fanout), (v) => {
       state.params.fanout = Number(v);
       state.params.rootCap = Number(v);
@@ -352,7 +397,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
       mergeThreshold: state.threshold,
     };
     if (!state.warmCache) cache = emptyCache();
-    result = runQuery(model, query, cache);
+    result = model.strategy === "quadtree" ? runQuadQuery(model, query, cache) : runQuery(model, query, cache);
     hover = null;
     renderStats();
     renderObjects();
@@ -434,7 +479,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   }
 
   function drawRaw(ctx: CanvasRenderingContext2D, c: Palette, W: number, H: number) {
-    const { xs, ys } = model.data;
+    const { xs, ys } = sortedData();
     const lo = lowerBound(xs, state.minX);
     const hi = lowerBound(xs, state.maxX + 1e-15);
     const dpr = window.devicePixelRatio || 1;
@@ -470,6 +515,18 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   }
 
   function drawFrontier(ctx: CanvasRenderingContext2D, r: QueryResult, c: Palette) {
+    if (isQuad) {
+      // The classic quadrant grid of every visited node (faint), under the tight boxes.
+      ctx.strokeStyle = c.boundary;
+      ctx.globalAlpha = 0.35;
+      for (const entries of r.trace) {
+        for (const e of entries) {
+          const q = e.node as QuadNode;
+          ctx.strokeRect(sx(q.rx0) + 0.5, sy(q.ry1) + 0.5, sx(q.rx1) - sx(q.rx0), sy(q.ry0) - sy(q.ry1));
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
     let maxDensity = 0;
     for (const item of r.items) {
       if (item.kind !== "plane") continue;
@@ -577,6 +634,10 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   }
 
   function drawTree(r: QueryResult) {
+    if (model.strategy === "quadtree") {
+      drawQuadDepths(r, model);
+      return;
+    }
     const rows = model.levelCounts.length;
     const W = tree.clientWidth;
     const H = (rows + 1) * LEVEL_ROW + 8;
@@ -597,7 +658,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
       ctx.fillText(`ℓ${level}${level === rows - 1 ? " root" : ""}`, 4, y + LEVEL_ROW / 2 - 6);
       ctx.fillStyle = c.muted;
       ctx.fillText(
-        `${fmtCount(blockPointsAt(model.params, level))}p${isTree ? "" : ` · k≤${model.kmax[level]}`}`,
+        `${fmtCount(blockPointsAt(rm().params, level))}p${isTree ? "" : ` · k≤${rm().kmax[level]}`}`,
         4,
         y + LEVEL_ROW / 2 + 6,
       );
@@ -640,11 +701,86 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
     }
   }
 
+  /** One row per depth: each node drawn as its quadrant, y mapped into the row. */
+  function drawQuadDepths(r: QueryResult, m: QuadModel) {
+    const rows = m.levelCounts.length;
+    const W = tree.clientWidth;
+    const H = (rows + 1) * QUAD_ROW + 8;
+    const ctx = setupCanvas(tree, W, H);
+    const c = colors(root);
+    ctx.fillStyle = c.panel;
+    ctx.fillRect(0, 0, W, H);
+    ctx.font = "11px ui-sans-serif, Segoe UI, sans-serif";
+    ctx.textBaseline = "middle";
+    const rootNode = m.levels[0]?.[0];
+    for (let depth = 0; depth < rows; depth++) {
+      const y = 4 + depth * QUAD_ROW;
+      const info = m.depthInfo[depth]!;
+      ctx.fillStyle = c.grid;
+      ctx.fillRect(GUTTER, y + 2, W - GUTTER, QUAD_ROW - 4);
+      ctx.fillStyle = c.ink;
+      ctx.textAlign = "left";
+      ctx.fillText(`d${depth}${depth === 0 ? " root" : ""}`, 4, y + QUAD_ROW / 2 - 6);
+      ctx.fillStyle = c.muted;
+      ctx.fillText(
+        `${fmtCount(info.count)} · ${info.object === INLINE_OBJECT ? "manifest" : `nodes_${info.object}`}`,
+        4,
+        y + QUAD_ROW / 2 + 7,
+      );
+      if (!rootNode) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(GUTTER, y, W - GUTTER, QUAD_ROW);
+      ctx.clip();
+      for (const entry of r.trace[depth] ?? []) {
+        const [x0, x1, y0, y1] = quadRowBox(entry.node as QuadNode, rootNode, y, W);
+        ctx.fillStyle = traceColor(entry, c);
+        ctx.fillRect(x0, y0, Math.max(x1 - x0 - 0.5, 0.75), Math.max(y1 - y0 - 0.5, 0.75));
+        if (hover?.kind === "trace" && hover.entry === entry) {
+          ctx.strokeStyle = c.accent;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2);
+          ctx.lineWidth = 1;
+        }
+      }
+      ctx.restore();
+    }
+    const y = 4 + rows * QUAD_ROW;
+    ctx.fillStyle = c.ink;
+    ctx.textAlign = "left";
+    ctx.fillText("points.bin", 4, y + QUAD_ROW / 2);
+    ctx.fillStyle = c.grid;
+    ctx.fillRect(GUTTER, y + 2, W - GUTTER, QUAD_ROW - 4);
+    ctx.fillStyle = c.leaf;
+    for (const item of r.items) {
+      if (item.kind !== "leaf" || !rootNode) continue;
+      const [x0, x1, y0, y1] = quadRowBox(item.node as QuadNode, rootNode, y, W);
+      ctx.fillRect(x0, y0, Math.max(x1 - x0, 1), Math.max(y1 - y0, 1));
+    }
+  }
+
+  /** Screen box of quadrant `q` inside a depth row starting at `rowTop` (y spans the root region). */
+  function quadRowBox(q: QuadNode, rootNode: QuadNode, rowTop: number, W: number): [number, number, number, number] {
+    const x0 = Math.max(sx(q.rx0), GUTTER - 2);
+    const x1 = Math.min(Math.max(sx(q.rx1), x0 + 1), W + 2);
+    const span = Math.max(rootNode.ry1 - rootNode.ry0, 1e-12);
+    const inner = QUAD_ROW - 6;
+    const y0 = rowTop + 3 + (1 - (q.ry1 - rootNode.ry0) / span) * inner;
+    const y1 = rowTop + 3 + (1 - (q.ry0 - rootNode.ry0) / span) * inner;
+    return [x0, x1, y0, Math.max(y1, y0 + 1)];
+  }
+
+  /** An expanded node with nothing below it: its raw points come from `points.bin`. */
+  function isRawLeaf(entry: TraceEntry) {
+    if (entry.decision.kind !== "expand") return false;
+    return isQuad ? (entry.node as QuadNode).isLeaf : entry.node.level === 0;
+  }
+
   function traceColor(entry: TraceEntry, c: Palette) {
     const d = entry.decision;
     if (d.kind === "plane") return c.plane;
     if (d.kind === "resolve") return c.resolved;
-    if (entry.node.level === 0) return c.leaf;
+    if (isRawLeaf(entry)) return c.leaf;
     return d.reason === "boundary" ? c.boundary : c.expand;
   }
 
@@ -652,7 +788,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   function renderStats() {
     if (!result) return;
     const r = result;
-    const { xs } = model.data;
+    const { xs } = sortedData();
     const visible = lowerBound(xs, state.maxX + 1e-15) - lowerBound(xs, state.minX);
     const counts = { resolved: 0, plane: 0, leaf: 0 };
     for (const item of r.items) counts[item.kind]++;
@@ -662,7 +798,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
       [
         "Kernels emitted",
         fmtCount(r.kernelCount),
-        isTree
+        noPlanes
           ? `${counts.resolved} nodes + ${counts.leaf} leaves → ${fmtCount(r.groups.length)} after greedy merge`
           : `${counts.plane} plane blocks · ${counts.resolved} nodes · ${counts.leaf} leaves`,
       ],
@@ -719,10 +855,18 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
       byRound.set(req.round, list);
     }
     const phaseText: Record<string, string> = {
-      open: isTree ? "open: manifest (root level inlined)" : "open: manifest + ripmap header (join2)",
+      open: isQuad
+        ? `open: manifest (depth table + ${qm().inlineDepths} inlined depth${qm().inlineDepths === 1 ? "" : "s"})`
+        : isTree
+          ? "open: manifest (root level inlined)"
+          : "open: manifest + ripmap header (join2)",
       "y-range": "exact visible y-range: descend straddling edge nodes",
-      frontier: "frontier: fetch child pages of expanded nodes",
-      "planes+leaves": isTree ? "raw leaves (boundary + still too big at ℓ0)" : "plane blocks + raw boundary leaves (join2)",
+      frontier: isQuad ? "frontier: child pages of expanded nodes (one depth per round trip)" : "frontier: fetch child pages of expanded nodes",
+      "planes+leaves": isQuad
+        ? "raw leaves (boundary + leaves still too big)"
+        : isTree
+          ? "raw leaves (boundary + still too big at ℓ0)"
+          : "plane blocks + raw boundary leaves (join2)",
     };
     const rows = [...byRound.entries()].sort((a, b) => a[0] - b[0]);
     roundsEl.innerHTML =
@@ -740,11 +884,36 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Stra
   }
 
   function renderInspector() {
+    if (!hover && model.strategy === "quadtree") {
+      const m = model;
+      const depthRows = m.depthInfo
+        .map(
+          (info, d) =>
+            `<div>d${d}: ${fmtCount(info.count)} nodes → ${info.object === INLINE_OBJECT ? "manifest.bin" : `<code>${nodesKey(info.object)}</code> @ ${fmtBytes(info.offset)}`}</div>`,
+        )
+        .join("");
+      inspector.innerHTML = `<h2>Inspector</h2>
+        <div>Hover a node, a raw leaf, or a cell in the depth rows to see why the client chose it and which kernel it merged into.</div>
+        <div class="eq">straddles viewport edge → expand
+w² + span² &lt; t²        → resolve
+otherwise              → expand
+  (a leaf: raw points from points.bin)
+
+w, span: the node's tight bbox on
+screen — not its quadrant
+
+then, in Z order (push_group):
+  merge into previous kernel while
+  dx² + dy² &lt; t²</div>
+        <div class="k" style="margin-top:8px">Depths (${m.params.leafPoints}-point leaves · ${RECORD_BYTES}-byte records)</div>
+        ${depthRows}`;
+      return;
+    }
     if (!hover && isTree) {
       const levelRows = model.levelCounts
         .map(
           (count, level) =>
-            `<div>ℓ${level}: ${fmtCount(count)} nodes × ${fmtCount(blockPointsAt(model.params, level))} pts${level === model.levelCounts.length - 1 ? " (in manifest)" : ` · pages of ${model.params.fanout} × 64 B`}</div>`,
+            `<div>ℓ${level}: ${fmtCount(count)} nodes × ${fmtCount(blockPointsAt(rm().params, level))} pts${level === model.levelCounts.length - 1 ? " (in manifest)" : ` · pages of ${rm().params.fanout} × 64 B`}</div>`,
         )
         .reverse()
         .join("");
@@ -769,7 +938,7 @@ then, left to right (push_group):
       const kmaxRows = model.levelCounts
         .map(
           (count, level) =>
-            `<div>ℓ${level}: ${fmtCount(count)} blocks × ${fmtCount(blockPointsAt(model.params, level))} pts → kmax ${model.kmax[level]}</div>`,
+            `<div>ℓ${level}: ${fmtCount(count)} blocks × ${fmtCount(blockPointsAt(rm().params, level))} pts → kmax ${rm().kmax[level]}</div>`,
         )
         .reverse()
         .join("");
@@ -782,7 +951,7 @@ w ≤ ${MAX_PLANE_BLOCK_WIDTH}·t and
   k ≤ kmax(ℓ)          → plane(ℓ, k)
 otherwise              → expand
   (at ℓ0: raw leaf from points.bin)</div>
-        <div class="k" style="margin-top:8px">Stored plane depths (kmax = ⌊log₂(block_pts / ${model.params.minPointsPerBin})⌋, cap 14)</div>
+        <div class="k" style="margin-top:8px">Stored plane depths (kmax = ⌊log₂(block_pts / ${rm().params.minPointsPerBin})⌋, cap 14)</div>
         ${kmaxRows}`;
       return;
     }
@@ -802,7 +971,7 @@ otherwise              → expand
           ? tagFor("var(--plane)", `plane(ℓ${node.level}, k=${decision.k})`)
           : decision.kind === "resolve"
             ? tagFor("var(--resolved)", decision.reason === "fits" ? "resolve: fits" : "resolve: off-screen in y")
-            : node.level === 0
+            : isRawLeaf(entry)
               ? tagFor("var(--leaf)", "raw leaf")
               : tagFor(decision.reason === "boundary" ? "var(--boundary)" : "var(--expand)", `expand: ${decision.reason}`);
       const lines = [
@@ -812,7 +981,7 @@ otherwise              → expand
       if (!d.fullyInside) lines.push(`straddles the viewport edge → must descend`);
       else {
         lines.push(`w² + span² = ${(d.w * d.w + d.span * d.span).toFixed(2)} ${d.w * d.w + d.span * d.span < t * t ? "<" : "≥"} t² = ${(t * t).toFixed(2)}`);
-        if (decision.kind !== "resolve") {
+        if (decision.kind !== "resolve" && !noPlanes) {
           lines.push(`w ${d.w <= MAX_PLANE_BLOCK_WIDTH * t ? "≤" : ">"} ${MAX_PLANE_BLOCK_WIDTH}·t = ${(MAX_PLANE_BLOCK_WIDTH * t).toFixed(2)}`);
         }
         if (d.kNeeded !== null) {
@@ -837,21 +1006,34 @@ otherwise              → expand
       cellsHtml = `<canvas data-ref="cells" style="height:${Math.min(2 ** k * 6 + 20, 260)}px;margin-top:6px"></canvas>`;
     } else if (hover.kind === "item" && hover.item.kind === "leaf") {
       bytes = `<div class="k">Bytes: <code>points.bin</code> [${fmtCount(node.start * 24)}, +${fmtBytes((node.end - node.start) * 24)})</div>`;
+    } else if (model.strategy === "quadtree") {
+      const info = model.depthInfo[node.level]!;
+      bytes =
+        info.object === INLINE_OBJECT
+          ? `<div class="k">Record inlined in <code>manifest.bin</code> (depth ${node.level})</div>`
+          : `<div class="k">Record: <code>${nodesKey(info.object)}</code> [${fmtCount(info.offset + node.index * RECORD_BYTES)}, +${RECORD_BYTES} B)</div>`;
     } else if (node.level < model.levelCounts.length - 1) {
-      bytes = `<div class="k">Node bytes: <code>level_${node.level}.bin</code> page ${Math.floor(node.index / model.params.fanout)} (${model.params.fanout} × 64 B)</div>`;
+      bytes = `<div class="k">Node bytes: <code>level_${node.level}.bin</code> page ${Math.floor(node.index / rm().params.fanout)} (${rm().params.fanout} × 64 B)</div>`;
     } else {
       bytes = `<div class="k">Root node — inlined in <code>manifest.bin</code></div>`;
     }
     const groupHtml = hover.kind === "item" && hover.item.kind !== "plane" ? describeGroup(hover.item) : "";
     inspector.innerHTML = `<h2>Inspector</h2>
       <div>${tag}</div>
-      <div style="margin-top:6px">Level ℓ${node.level}, block ${fmtCount(node.index)} · points [${fmtCount(node.start)}, ${fmtCount(node.end)})</div>
-      <div class="k">x ∈ [${fmtNum(node.minX)}, ${fmtNum(node.maxX)}] · y ∈ [${fmtNum(node.minY)}, ${fmtNum(node.maxY)}]</div>
+      <div style="margin-top:6px">${isQuad ? `Depth ${node.level}, node ${fmtCount(node.index)} · ${fmtCount(node.end - node.start)} points (Z-order [${fmtCount(node.start)}, ${fmtCount(node.end)}))` : `Level ℓ${node.level}, block ${fmtCount(node.index)} · points [${fmtCount(node.start)}, ${fmtCount(node.end)})`}</div>
+      <div class="k">${isQuad ? "tight bbox " : ""}x ∈ [${fmtNum(node.minX)}, ${fmtNum(node.maxX)}] · y ∈ [${fmtNum(node.minY)}, ${fmtNum(node.maxY)}]</div>${quadRegion(node)}
       ${math}${bytes}${groupHtml}${cellsHtml}`;
     const cellsCanvas = inspector.querySelector<HTMLCanvasElement>('[data-ref="cells"]');
     if (cellsCanvas && hover.kind === "item" && hover.item.kind === "plane") {
       drawCells(cellsCanvas, hover.item.cells, hover.cell);
     }
+  }
+
+  function quadRegion(node: TraceEntry["node"]) {
+    if (!isQuad) return "";
+    const q = node as QuadNode;
+    const kind = q.isLeaf ? "leaf" : `${q.childCount} non-empty child quadrant${q.childCount === 1 ? "" : "s"}`;
+    return `<div class="k">quadrant x ∈ [${fmtNum(q.rx0)}, ${fmtNum(q.rx1)}) · y ∈ [${fmtNum(q.ry0)}, ${fmtNum(q.ry1)}) · ${kind}</div>`;
   }
 
   function describeGroup(item: FrontierItem) {
@@ -920,6 +1102,18 @@ dx² + dy² = ${(dx * dx + dy * dy).toFixed(2)} &lt; t² = ${(t * t).toFixed(2)}
 
   function hitTrace(px: number, py: number): Hover {
     if (!result) return null;
+    if (model.strategy === "quadtree") {
+      const depth = Math.floor((py - 4) / QUAD_ROW);
+      const rootNode = model.levels[0]?.[0];
+      if (!rootNode || depth < 0 || depth >= model.levelCounts.length) return null;
+      const rowTop = 4 + depth * QUAD_ROW;
+      const W = tree.clientWidth;
+      const entry = result.trace[depth]?.find((e) => {
+        const [x0, x1, y0, y1] = quadRowBox(e.node as QuadNode, rootNode, rowTop, W);
+        return px >= x0 - 2 && px <= x1 + 2 && py >= y0 - 2 && py <= y1 + 2;
+      });
+      return entry ? { kind: "trace", entry } : null;
+    }
     const rows = model.levelCounts.length;
     const level = rows - 1 - Math.floor((py - 4) / LEVEL_ROW);
     if (level < 0 || level >= rows) return null;
@@ -1053,7 +1247,27 @@ const TREE_STEPS = `
     high up. Vertically incoherent data (white noise) never fits, because thinner x-slices are just as tall, so the
     overview descends to every leaf and downloads ~100% of <code>points.bin</code>. Compare with the ripmap page.</div>`;
 
-const TEXT: Record<Strategy, { title: string; lead: string; screenLegend: string; treeLegend: string; steps: string }> = {
+const QUAD_STEPS = `
+  <div class="panel"><h3>1 · split space, not x</h3>
+    Starting from the data's bounding box, every node with more than 32 points splits its region at the midpoint into
+    4 equal quadrants — squares in normalized data coordinates. Empty quadrants are dropped, so sparse areas cost
+    nothing. Points are stored in quadtree (Z) order, which makes every subtree one contiguous run of
+    <code>points.bin</code>; each leaf is sorted by x.</div>
+  <div class="panel"><h3>2 · 72-byte records, packed objects</h3>
+    Each node is the usual 64-byte moment node plus an 8-byte link: its children's position in the next depth, or its
+    point range. Depths are arrays ordered by parent, so a node's ≤ 4 children are adjacent. The top depths are inlined
+    in <code>manifest.bin</code>; deeper depths are packed back to back into <code>nodes_g.bin</code> objects of at least
+    64K records, so even a deep tree is a handful of files.</div>
+  <div class="panel"><h3>3 · query: one depth per round trip</h3>
+    Same rules as the x-tree, on 2D boxes: a node straddling the viewport edge descends; a fully-inside node whose tight
+    bounding box fits (w² + h² &lt; t²) becomes one kernel; anything else expands, down to raw leaves. Cells are short as
+    well as narrow, so white noise resolves without downloading every point — but every depth is a round trip.</div>
+  <div class="panel"><h3>4 · where it struggles</h3>
+    Cells are square, but time series are zoomed in x. Zoom 20× and the cells that are narrow enough on screen are also
+    20× shorter than they need to be, so a dense band splits into far more cells than pixels — try white noise at
+    Zoom 20×. Thin curves (random walks) also make the tree deep: more round trips than the x-tree.</div>`;
+
+const TEXT: Record<PageStrategy, { title: string; lead: string; screenLegend: string; treeLegend: string; steps: string }> = {
   ripmap: {
     title: "Moment ripmap explorer",
     lead: `An in-browser model of <code>rust/progressive-ripmap</code>. The dataset is built into an
@@ -1091,6 +1305,26 @@ const TEXT: Record<Strategy, { title: string; lead: string; screenLegend: string
       <span><i class="sw" style="background:var(--resolved)"></i>resolved</span>
       <span><i class="sw" style="background:var(--leaf)"></i>raw leaf</span>`,
     steps: TREE_STEPS,
+  },
+  quadtree: {
+    title: "Moment quadtree explorer",
+    lead: `An in-browser model of <code>rust/progressive-quadtree</code> (<code>moment_quadtree</code>). The dataset is
+      split into a classic point-region quadtree — midpoint quadrants, empty ones dropped — with exact moments per node.
+      Every pan or zoom re-runs the client's query: which cells resolve to one kernel, which straddle the viewport edge or
+      are still too big and descend, which leaves fall back to raw points, and the byte ranges read from the packed
+      <code>nodes_g.bin</code> objects.`,
+    screenLegend: `
+      <span><i class="sw" style="background:var(--boundary)"></i>quadrant grid of visited nodes</span>
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved node (tight bbox fits)</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw leaf points</span>
+      <span><i class="sw" style="background:var(--group)"></i>merged kernel (2+ pieces)</span>
+      <span><i class="sw" style="background:var(--kde)"></i>rendered KDE preview</span>`,
+    treeLegend: `
+      <span><i class="sw" style="background:var(--expand)"></i>expanded (doesn't fit)</span>
+      <span><i class="sw" style="background:var(--boundary)"></i>straddles viewport edge → must descend</span>
+      <span><i class="sw" style="background:var(--resolved)"></i>resolved</span>
+      <span><i class="sw" style="background:var(--leaf)"></i>raw leaf</span>`,
+    steps: QUAD_STEPS,
   },
 };
 

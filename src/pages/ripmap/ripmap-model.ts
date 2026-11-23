@@ -306,7 +306,7 @@ class Acc {
   }
 }
 
-function summarize(data: Dataset, level: number, index: number, start: number, end: number) {
+export function summarize(data: Dataset, level: number, index: number, start: number, end: number) {
   const acc = new Acc();
   for (let i = start; i < end; i++) acc.push(data.xs[i]!, data.ys[i]!, data.ws[i]!);
   return toNode(acc, level, index, start, end);
@@ -511,7 +511,7 @@ export function neededDepth(node: MomentNode, w: number, yFactor: number, thresh
   return { k: Math.min(Math.max(Math.ceil(Math.log2(bins)), 1), 63), hMax, span };
 }
 
-function offscreenY(node: MomentNode, query: ViewQuery, yFactor: number): boolean {
+export function offscreenY(node: MomentNode, query: ViewQuery, yFactor: number): boolean {
   if (!query.yBounds) return false;
   const [lo, hi] = query.yBounds;
   const spread = Math.sqrt(1 + node.cyy * yFactor * yFactor);
@@ -792,8 +792,8 @@ function fitsThreshold(node: MomentNode, xFactor: number, yFactor: number, thres
   return dx * dx + dy * dy < threshold * threshold;
 }
 
-function assembleGroups(
-  model: RipmapModel,
+export function assembleGroups(
+  model: { data: Dataset },
   items: FrontierItem[],
   query: ViewQuery,
   xFactor: number,
