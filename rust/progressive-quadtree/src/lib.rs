@@ -8,9 +8,9 @@
 //! fits the merge threshold on screen, descending otherwise (straddling nodes always descend
 //! to raw leaves for exact clipping).
 //!
-//! Layout: the top depths (≤ `root_cap` nodes) are inlined in `manifest.bin`; deeper depths
-//! are packed into `nodes_{g}.bin` objects of at least `min_object_nodes` records each, so
-//! deep trees never turn into thousands of tiny objects; raw points live in one `points.bin`.
+//! Layout: three objects. The top depths (≤ `root_cap` nodes) are inlined in `manifest.bin`;
+//! deeper depths are stored back to back in `nodes.bin` (located through a per-depth offset
+//! table); raw points live in `points.bin`.
 //!
 //! Known tradeoffs this baseline is meant to measure:
 //! - one round trip per depth, and thin curves (random walks) make the tree deep;
@@ -35,8 +35,6 @@ pub use format::MAGIC;
 pub const DEFAULT_LEAF_POINTS: u32 = 32;
 /// Inline the top depths in `manifest.bin` while they total at most this many nodes.
 pub const DEFAULT_ROOT_CAP: u32 = 1024;
-/// Pack consecutive depths into one object until it holds at least this many nodes.
-pub const DEFAULT_MIN_OBJECT_NODES: u32 = 64 * 1024;
 /// Guards against unbounded splitting of near-coincident points.
 pub const DEFAULT_MAX_DEPTH: u32 = 40;
 
@@ -44,7 +42,6 @@ pub const DEFAULT_MAX_DEPTH: u32 = 40;
 pub struct QuadtreeStrategy {
     pub leaf_points: u32,
     pub root_cap: u32,
-    pub min_object_nodes: u32,
     /// Capped at 62 (the client's frontier ordering key holds 63 depths).
     pub max_depth: u32,
 }
@@ -54,7 +51,6 @@ impl Default for QuadtreeStrategy {
         Self {
             leaf_points: DEFAULT_LEAF_POINTS,
             root_cap: DEFAULT_ROOT_CAP,
-            min_object_nodes: DEFAULT_MIN_OBJECT_NODES,
             max_depth: DEFAULT_MAX_DEPTH,
         }
     }

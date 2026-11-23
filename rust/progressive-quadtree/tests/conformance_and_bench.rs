@@ -32,12 +32,12 @@ async fn passes_conformance_on_deep_tree() {
         .expect("QuadtreeStrategy should satisfy conformance at 200K points");
 }
 
-/// A tiny object threshold forces many `nodes_{g}.bin` objects, exercising cross-object reads.
+/// Inlining only the root puts every other depth in `nodes.bin`, exercising per-depth offsets
+/// from the very first descent.
 #[tokio::test(start_paused = true)]
-async fn passes_conformance_with_many_small_objects() {
+async fn passes_conformance_with_only_the_root_inlined() {
     let strategy = QuadtreeStrategy {
-        root_cap: 4,
-        min_object_nodes: 64,
+        root_cap: 1,
         ..QuadtreeStrategy::default()
     };
     let config = ConformanceConfig {
@@ -48,7 +48,7 @@ async fn passes_conformance_with_many_small_objects() {
     };
     run_conformance_suite(&strategy, &config)
         .await
-        .expect("QuadtreeStrategy should satisfy conformance with small objects");
+        .expect("QuadtreeStrategy should satisfy conformance with only the root inlined");
 }
 
 /// Density NMAE stays within 5% on every standard workload for both signal families.

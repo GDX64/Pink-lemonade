@@ -20,14 +20,12 @@ import {
   runQuery,
 } from "./ripmap-model";
 import {
-  INLINE_OBJECT,
   QUAD_PARAMS,
   type QuadModel,
   type QuadNode,
   type QuadParams,
   RECORD_BYTES,
   buildQuadtree,
-  nodesKey,
   runQuadQuery,
 } from "./quadtree-model";
 
@@ -186,8 +184,8 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Page
     // A small ripmap root cap makes the level-by-level descent visible; the Rust default is 1024.
     // The x-tree uses `PagedTreeStrategy::default()` (fanout 32, root cap = fanout).
     params: isTree ? { ...TREE_PARAMS } : { ...DEFAULT_PARAMS, rootCap: 16 },
-    // A small root cap / object threshold makes the descent and the object packing visible.
-    quad: { ...QUAD_PARAMS, rootCap: 21, minObjectNodes: 4096 },
+    // A small root cap makes the depth-by-depth descent visible; the Rust default is 1024.
+    quad: { ...QUAD_PARAMS, rootCap: 21 },
     sigmaPx: 14,
     threshold: 1,
     minX: 0,
@@ -287,10 +285,6 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Page
     });
     select("Root cap (inlined nodes)", [["1", "1 (root only)"], ["21", "21"], ["1024", "1024 (Rust default)"]], String(state.quad.rootCap), (v) => {
       state.quad.rootCap = Number(v);
-      rebuild();
-    });
-    select("Min nodes per object", [["256", "256"], ["4096", "4096"], ["65536", "65,536 (default)"]], String(state.quad.minObjectNodes), (v) => {
-      state.quad.minObjectNodes = Number(v);
       rebuild();
     });
   } else if (isTree) {
@@ -723,7 +717,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Page
       ctx.fillText(`d${depth}${depth === 0 ? " root" : ""}`, 4, y + QUAD_ROW / 2 - 6);
       ctx.fillStyle = c.muted;
       ctx.fillText(
-        `${fmtCount(info.count)} · ${info.object === INLINE_OBJECT ? "manifest" : `nodes_${info.object}`}`,
+        `${fmtCount(info.count)} · ${info.inline ? "manifest" : "nodes.bin"}`,
         4,
         y + QUAD_ROW / 2 + 7,
       );
@@ -889,7 +883,7 @@ export async function runRipmapPage(args: { output: HTMLElement; strategy?: Page
       const depthRows = m.depthInfo
         .map(
           (info, d) =>
-            `<div>d${d}: ${fmtCount(info.count)} nodes → ${info.object === INLINE_OBJECT ? "manifest.bin" : `<code>${nodesKey(info.object)}</code> @ ${fmtBytes(info.offset)}`}</div>`,
+            `<div>d${d}: ${fmtCount(info.count)} nodes → ${info.inline ? "manifest.bin" : `<code>nodes.bin</code> @ ${fmtBytes(info.offset)}`}</div>`,
         )
         .join("");
       inspector.innerHTML = `<h2>Inspector</h2>
@@ -1009,9 +1003,9 @@ otherwise              → expand
     } else if (model.strategy === "quadtree") {
       const info = model.depthInfo[node.level]!;
       bytes =
-        info.object === INLINE_OBJECT
+        info.inline
           ? `<div class="k">Record inlined in <code>manifest.bin</code> (depth ${node.level})</div>`
-          : `<div class="k">Record: <code>${nodesKey(info.object)}</code> [${fmtCount(info.offset + node.index * RECORD_BYTES)}, +${RECORD_BYTES} B)</div>`;
+          : `<div class="k">Record: <code>nodes.bin</code> [${fmtCount(info.offset + node.index * RECORD_BYTES)}, +${RECORD_BYTES} B)</div>`;
     } else if (node.level < model.levelCounts.length - 1) {
       bytes = `<div class="k">Node bytes: <code>level_${node.level}.bin</code> page ${Math.floor(node.index / rm().params.fanout)} (${rm().params.fanout} × 64 B)</div>`;
     } else {
@@ -1256,8 +1250,8 @@ const QUAD_STEPS = `
   <div class="panel"><h3>2 · 72-byte records, packed objects</h3>
     Each node is the usual 64-byte moment node plus an 8-byte link: its children's position in the next depth, or its
     point range. Depths are arrays ordered by parent, so a node's ≤ 4 children are adjacent. The top depths are inlined
-    in <code>manifest.bin</code>; deeper depths are packed back to back into <code>nodes_g.bin</code> objects of at least
-    64K records, so even a deep tree is a handful of files.</div>
+    in <code>manifest.bin</code>; every deeper depth follows the previous one in a single <code>nodes.bin</code>, found
+    through a per-depth byte offset. Reads are byte ranges anyway, so the whole dataset is just three objects.</div>
   <div class="panel"><h3>3 · query: one depth per round trip</h3>
     Same rules as the x-tree, on 2D boxes: a node straddling the viewport edge descends; a fully-inside node whose tight
     bounding box fits (w² + h² &lt; t²) becomes one kernel; anything else expands, down to raw leaves. Cells are short as
@@ -1312,7 +1306,7 @@ const TEXT: Record<PageStrategy, { title: string; lead: string; screenLegend: st
       split into a classic point-region quadtree — midpoint quadrants, empty ones dropped — with exact moments per node.
       Every pan or zoom re-runs the client's query: which cells resolve to one kernel, which straddle the viewport edge or
       are still too big and descend, which leaves fall back to raw points, and the byte ranges read from the packed
-      <code>nodes_g.bin</code> objects.`,
+      single <code>nodes.bin</code>.`,
     screenLegend: `
       <span><i class="sw" style="background:var(--boundary)"></i>quadrant grid of visited nodes</span>
       <span><i class="sw" style="background:var(--resolved)"></i>resolved node (tight bbox fits)</span>

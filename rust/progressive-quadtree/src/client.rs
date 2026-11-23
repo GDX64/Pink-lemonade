@@ -15,7 +15,9 @@ use pink_lemonade_progressive_core::{
     ByteRangeStore, ClientError, Frame, Point, ProgressiveClient, ViewQuery, async_trait,
 };
 
-use crate::format::{Link, MANIFEST_KEY, Manifest, POINTS_KEY, QuadRecord, RECORD_BYTES, decode_records, nodes_key};
+use crate::format::{
+    Link, MANIFEST_KEY, Manifest, NODES_KEY, POINTS_KEY, QuadRecord, RECORD_BYTES, decode_records,
+};
 
 /// Bridge gaps of up to 16 KiB between child pages; cap merged reads at 256 KiB.
 const MAX_GAP_RECORD_BYTES: u64 = 16 * 1024;
@@ -102,16 +104,14 @@ impl QuadtreeClient {
             MAX_GAP_RECORD_BYTES / RECORD_BYTES as u64,
             MAX_RUN_RECORD_BYTES / RECORD_BYTES as u64,
         );
-        let key = nodes_key(info.object);
         let futures: Vec<_> = reads
             .iter()
             .map(|&(start, end)| {
                 let store = Arc::clone(&self.store);
-                let key = key.clone();
                 let offset = info.offset + start * RECORD_BYTES as u64;
                 let len = (end - start) as usize * RECORD_BYTES;
                 async move {
-                    let bytes = store.read_range(&key, offset, len).await?;
+                    let bytes = store.read_range(NODES_KEY, offset, len).await?;
                     Ok::<_, ClientError>((start, bytes))
                 }
             })

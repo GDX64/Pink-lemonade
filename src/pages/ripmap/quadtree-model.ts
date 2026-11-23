@@ -30,17 +30,16 @@ import {
 /** 64-byte moment node + `first: u32` + `count: u32`. */
 export const RECORD_BYTES = 72;
 const HEADER_BYTES = 32;
-const DEPTH_INFO_BYTES = 24;
+const DEPTH_INFO_BYTES = 16;
 const MAX_GAP_RECORDS = Math.floor((16 * 1024) / RECORD_BYTES);
 const MAX_RUN_RECORDS = Math.floor((256 * 1024) / RECORD_BYTES);
 const MAX_GAP_POINTS = 256;
 const MAX_RUN_POINTS = 8 * 1024;
-export const INLINE_OBJECT = -1;
+export const NODES_KEY = "nodes.bin";
 
 export interface QuadParams {
   leafPoints: number;
   rootCap: number;
-  minObjectNodes: number;
   maxDepth: number;
 }
 
@@ -48,7 +47,6 @@ export interface QuadParams {
 export const QUAD_PARAMS: QuadParams = {
   leafPoints: 32,
   rootCap: 1024,
-  minObjectNodes: 64 * 1024,
   maxDepth: 40,
 };
 
@@ -69,8 +67,8 @@ export interface QuadNode extends MomentNode {
 
 export interface DepthInfo {
   count: number;
-  /** `nodes_{object}.bin`, or `INLINE_OBJECT` for depths inlined in the manifest. */
-  object: number;
+  /** Inlined in `manifest.bin` (top depths) or stored in `nodes.bin` at `offset`. */
+  inline: boolean;
   offset: number;
 }
 
@@ -213,37 +211,29 @@ export function buildQuadtree(sorted: Dataset, inParams: QuadParams): QuadModel 
   }
 
   const levelCounts = levels.map((l) => l.length);
-  const [inlineDepths, objectOf] = planObjects(levelCounts, params.rootCap, params.minObjectNodes);
+  const inlineDepths = countInlineDepths(levelCounts, params.rootCap);
   const depthInfo: DepthInfo[] = [];
-  const objectBytes = new Map<number, number>();
+  let nodesBytes = 0;
   for (let d = 0; d < levelCounts.length; d++) {
     if (d < inlineDepths) {
-      depthInfo.push({ count: levelCounts[d]!, object: INLINE_OBJECT, offset: 0 });
+      depthInfo.push({ count: levelCounts[d]!, inline: true, offset: 0 });
       continue;
     }
-    const object = objectOf[d - inlineDepths]!;
-    const offset = objectBytes.get(object) ?? 0;
-    depthInfo.push({ count: levelCounts[d]!, object, offset });
-    objectBytes.set(object, offset + levelCounts[d]! * RECORD_BYTES);
+    depthInfo.push({ count: levelCounts[d]!, inline: false, offset: nodesBytes });
+    nodesBytes += levelCounts[d]! * RECORD_BYTES;
   }
   const inlineNodes = levelCounts.slice(0, inlineDepths).reduce((s, c) => s + c, 0);
   const objects: StoredObject[] = [
     { key: "manifest.bin", bytes: HEADER_BYTES + levelCounts.length * DEPTH_INFO_BYTES + inlineNodes * RECORD_BYTES, kind: "manifest" },
   ];
-  for (const [object, bytes] of [...objectBytes.entries()].sort((a, b) => a[0] - b[0])) {
-    objects.push({ key: nodesKey(object), bytes, kind: "level", level: object });
-  }
+  if (nodesBytes > 0) objects.push({ key: NODES_KEY, bytes: nodesBytes, kind: "level" });
   if (n > 0) objects.push({ key: "points.bin", bytes: n * POINT_BYTES, kind: "points" });
   const totalBytes = objects.reduce((s, o) => s + o.bytes, 0);
   return { strategy: "quadtree", data, sorted, params, levelCounts, levels, depthInfo, inlineDepths, objects, totalBytes, rawBytes: n * POINT_BYTES };
 }
 
-export function nodesKey(object: number) {
-  return `nodes_${object}.bin`;
-}
-
-/** `plan_objects` from `progressive-quadtree/src/builder.rs`. */
-export function planObjects(counts: number[], rootCap: number, minObjectNodes: number): [number, number[]] {
+/** `inline_depths` from `progressive-quadtree/src/builder.rs`: top depths totalling ≤ `rootCap`. */
+export function countInlineDepths(counts: number[], rootCap: number): number {
   let inline = 0;
   let inlined = 0;
   for (const c of counts) {
@@ -251,21 +241,7 @@ export function planObjects(counts: number[], rootCap: number, minObjectNodes: n
     inlined += c;
     inline++;
   }
-  const objects: number[] = [];
-  let object = 0;
-  let filled = 0;
-  for (const c of counts.slice(inline)) {
-    if (filled >= minObjectNodes) {
-      object++;
-      filled = 0;
-    }
-    objects.push(object);
-    filled += c;
-  }
-  if (object > 0 && filled < minObjectNodes) {
-    for (let i = 0; i < objects.length; i++) if (objects[i] === object) objects[i] = object - 1;
-  }
-  return [inline, objects];
+  return inline;
 }
 
 /** `coalesce_spans` from `progressive-common/src/fetch.rs`: `(start, len)` → `[start, end)` reads. */
@@ -301,7 +277,7 @@ export function runQuadQuery(model: QuadModel, query: ViewQuery, cache: ClientCa
   // Child pages of `parents` (all at depth `childDepth - 1`): free when inlined, else one round.
   const fetchChildren = (childDepth: number, parents: QuadNode[], phase: RangeRequest["phase"]) => {
     const info = depthInfo[childDepth];
-    if (!info || info.object === INLINE_OBJECT) return;
+    if (!info || info.inline) return;
     const missing: Array<[number, number]> = [];
     for (const p of parents) {
       if (cache.treePages.has(`${childDepth}:${p.firstChild}`)) cacheHits++;
@@ -310,7 +286,7 @@ export function runQuadQuery(model: QuadModel, query: ViewQuery, cache: ClientCa
     if (missing.length === 0) return;
     for (const [start, end] of coalesceSpans(missing, MAX_GAP_RECORDS, MAX_RUN_RECORDS)) {
       requests.push({
-        key: nodesKey(info.object),
+        key: NODES_KEY,
         offset: info.offset + start * RECORD_BYTES,
         len: (end - start) * RECORD_BYTES,
         round,

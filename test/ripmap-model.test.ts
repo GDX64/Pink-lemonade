@@ -15,7 +15,7 @@ import {
   RECORD_BYTES,
   buildQuadtree,
   coalesceSpans,
-  planObjects,
+  countInlineDepths,
   runQuadQuery,
 } from "../src/pages/ripmap/quadtree-model";
 
@@ -114,10 +114,11 @@ describe("ripmap explorer model", () => {
 });
 
 describe("quadtree explorer model", () => {
-  it("mirrors plan_objects and coalesce_spans from Rust", () => {
-    expect(planObjects([1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 3000], 1024, 65_536)).toEqual([5, [0, 0, 0, 0, 0]]);
-    expect(planObjects([1, 70_000, 70_000, 10], 1024, 65_536)).toEqual([1, [0, 1, 1]]);
-    expect(planObjects([1, 5000], 1, 10)[0]).toBe(1);
+  it("mirrors inline_depths and coalesce_spans from Rust", () => {
+    expect(countInlineDepths([1, 4, 16, 64, 256, 1024, 4096], 1024)).toBe(5);
+    expect(countInlineDepths([1, 4, 16], 1024)).toBe(3);
+    expect(countInlineDepths([1, 5000], 0)).toBe(1);
+    expect(countInlineDepths([], 1024)).toBe(0);
     expect(coalesceSpans([[10, 2], [0, 4], [5, 1]], 1, 100)).toEqual([[0, 6], [10, 12]]);
     expect(coalesceSpans([[0, 4], [4, 4], [8, 4]], 0, 8)).toEqual([[0, 8], [8, 12]]);
     expect(coalesceSpans([[0, 50], [50, 1]], 0, 8)).toEqual([[0, 50], [50, 51]]);
@@ -160,13 +161,16 @@ describe("quadtree explorer model", () => {
     });
   }
 
-  it("packs deep depths into few objects", () => {
+  it("stores every remote depth back to back in one nodes.bin", () => {
     const model = buildQuadtree(generateDataset("noisy_spikes", 300_000), QUAD_PARAMS);
-    const keys = model.objects.map((o) => o.key);
-    expect(keys[0]).toBe("manifest.bin");
-    expect(keys[keys.length - 1]).toBe("points.bin");
-    const nodeObjects = model.objects.filter((o) => o.kind === "level");
-    expect(nodeObjects.length).toBeGreaterThan(0);
-    for (const o of nodeObjects.slice(0, -1)) expect(o.bytes / RECORD_BYTES).toBeGreaterThanOrEqual(QUAD_PARAMS.minObjectNodes);
+    expect(model.objects.map((o) => o.key)).toEqual(["manifest.bin", "nodes.bin", "points.bin"]);
+    let offset = 0;
+    for (const [d, info] of model.depthInfo.entries()) {
+      expect(info.inline).toBe(d < model.inlineDepths);
+      if (info.inline) continue;
+      expect(info.offset).toBe(offset);
+      offset += info.count * RECORD_BYTES;
+    }
+    expect(model.objects[1]!.bytes).toBe(offset);
   });
 });

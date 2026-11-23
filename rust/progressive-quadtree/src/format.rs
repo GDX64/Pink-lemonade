@@ -1,10 +1,10 @@
 //! Static layout of the moment quadtree.
 //!
 //! - `manifest.bin`: header, one [`DepthInfo`] per depth, and the inlined top depths.
-//! - `nodes_{g}.bin`: consecutive depths packed together until the object holds at least
-//!   `min_object_nodes` records (only the last object may be smaller), so a deep tree never
-//!   becomes thousands of tiny objects. Each depth is a contiguous array of 72-byte
-//!   [`QuadRecord`]s ordered by parent, so the children of one node are adjacent.
+//! - `nodes.bin`: every remaining depth back to back. Each depth is a contiguous array of
+//!   72-byte [`QuadRecord`]s ordered by parent (so the children of one node are adjacent),
+//!   located by its byte offset in the depth table. Reads are byte ranges either way, so one
+//!   object costs nothing at query time and keeps the dataset at three objects.
 //! - `points.bin`: 24-byte `(x, y, weight)` records in quadtree (Z) order; every subtree is a
 //!   contiguous run and every leaf is sorted by x.
 
@@ -12,24 +12,18 @@ use pink_lemonade_progressive_common::{NODE_BYTES, Node, PackedNode};
 use pink_lemonade_progressive_core::ClientError;
 
 pub const MAGIC: [u8; 8] = *b"PLPQUAD1";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 pub const MANIFEST_KEY: &str = "manifest.bin";
+pub const NODES_KEY: &str = "nodes.bin";
 pub const POINTS_KEY: &str = "points.bin";
 
 /// 64-byte moment node + `first: u32` + `count: u32`.
 pub const RECORD_BYTES: usize = NODE_BYTES + 8;
 /// High bit of `count` marks a leaf (`first` = point start, `count & !LEAF_BIT` = points).
 pub const LEAF_BIT: u32 = 1 << 31;
-/// `DepthInfo::object` value for depths inlined in the manifest.
-pub const INLINE_OBJECT: u32 = u32::MAX;
-
 const HEADER_BYTES: usize = 32;
-const DEPTH_INFO_BYTES: usize = 24;
-
-pub fn nodes_key(object: u32) -> String {
-    format!("nodes_{object}.bin")
-}
+const DEPTH_INFO_BYTES: usize = 16;
 
 /// One quadtree node: exact moments plus either its children or its raw points.
 #[derive(Debug, Clone, Copy)]
@@ -117,9 +111,7 @@ pub fn decode_records(bytes: &[u8]) -> Result<Vec<QuadRecord>, String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DepthInfo {
     pub count: u64,
-    /// `nodes_{object}.bin`, or [`INLINE_OBJECT`] for depths stored in the manifest.
-    pub object: u32,
-    /// Byte offset of the depth's first record inside its object.
+    /// Byte offset of the depth's first record in `nodes.bin` (`0` for inlined depths).
     pub offset: u64,
 }
 
@@ -128,7 +120,8 @@ pub struct Manifest {
     pub total_points: u64,
     pub leaf_points: u32,
     pub depths: Vec<DepthInfo>,
-    /// Records of the inlined top depths (`inline[d]` = depth `d`).
+    /// Records of the inlined top depths (`inline[d]` = depth `d`); deeper depths are in
+    /// `nodes.bin`.
     pub inline: Vec<Vec<QuadRecord>>,
 }
 
@@ -160,8 +153,6 @@ impl Manifest {
         out.extend_from_slice(&self.total_points.to_le_bytes());
         for d in &self.depths {
             out.extend_from_slice(&d.count.to_le_bytes());
-            out.extend_from_slice(&d.object.to_le_bytes());
-            out.extend_from_slice(&0u32.to_le_bytes());
             out.extend_from_slice(&d.offset.to_le_bytes());
         }
         for record in self.inline.iter().flatten() {
@@ -200,8 +191,7 @@ impl Manifest {
                 let off = HEADER_BYTES + d * DEPTH_INFO_BYTES;
                 DepthInfo {
                     count: u64_at(off),
-                    object: u32_at(off + 8),
-                    offset: u64_at(off + 16),
+                    offset: u64_at(off + 8),
                 }
             })
             .collect();
@@ -211,9 +201,6 @@ impl Manifest {
             .into_iter();
         let mut inline = Vec::with_capacity(inline_depths);
         for info in &depths[..inline_depths] {
-            if info.object != INLINE_OBJECT {
-                return Err(corrupt("inline depth points at an object"));
-            }
             let depth: Vec<QuadRecord> = records.by_ref().take(info.count as usize).collect();
             if depth.len() as u64 != info.count {
                 return Err(corrupt("truncated inline records"));
@@ -222,9 +209,6 @@ impl Manifest {
         }
         if records.next().is_some() {
             return Err(corrupt("trailing inline records"));
-        }
-        if depths[inline_depths..].iter().any(|d| d.object == INLINE_OBJECT) {
-            return Err(corrupt("remote depth marked inline"));
         }
 
         Ok(Self {
@@ -256,8 +240,8 @@ mod tests {
             total_points: 2,
             leaf_points: 32,
             depths: vec![
-                DepthInfo { count: 1, object: INLINE_OBJECT, offset: 0 },
-                DepthInfo { count: 4, object: 0, offset: 0 },
+                DepthInfo { count: 1, offset: 0 },
+                DepthInfo { count: 4, offset: 0 },
             ],
             inline: vec![vec![internal]],
         };

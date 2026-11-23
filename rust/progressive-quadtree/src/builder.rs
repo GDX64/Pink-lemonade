@@ -11,8 +11,7 @@ use pink_lemonade_progressive_core::{BuildError, DatasetBuilder, ObjectWriter, P
 
 use crate::QuadtreeStrategy;
 use crate::format::{
-    DepthInfo, INLINE_OBJECT, LEAF_BIT, MANIFEST_KEY, Manifest, POINTS_KEY, QuadRecord,
-    RECORD_BYTES, nodes_key,
+    DepthInfo, LEAF_BIT, MANIFEST_KEY, Manifest, NODES_KEY, POINTS_KEY, QuadRecord, RECORD_BYTES,
 };
 
 pub struct QuadtreeBuilder {
@@ -169,10 +168,9 @@ fn build_records(points: &mut [Point], leaf_points: usize, max_depth: u32) -> Ve
         .collect()
 }
 
-/// Assign depths to the manifest (top depths totalling ≤ `root_cap` records) or to packed
-/// `nodes_{g}.bin` objects of at least `min_object_nodes` records; a short final group is
-/// merged into the previous object. Returns `(inline_depths, object index per remote depth)`.
-pub(crate) fn plan_objects(counts: &[u64], root_cap: u64, min_object_nodes: u64) -> (usize, Vec<u32>) {
+/// Number of top depths inlined in the manifest: the longest prefix totalling at most
+/// `root_cap` records (the root depth always, even above the cap).
+pub(crate) fn inline_depths(counts: &[u64], root_cap: u64) -> usize {
     let mut inline = 0;
     let mut inlined = 0u64;
     for &c in counts {
@@ -182,23 +180,7 @@ pub(crate) fn plan_objects(counts: &[u64], root_cap: u64, min_object_nodes: u64)
         inlined += c;
         inline += 1;
     }
-
-    let mut objects = Vec::with_capacity(counts.len() - inline);
-    let (mut object, mut filled) = (0u32, 0u64);
-    for &c in &counts[inline..] {
-        if filled >= min_object_nodes {
-            object += 1;
-            filled = 0;
-        }
-        objects.push(object);
-        filled += c;
-    }
-    if object > 0 && filled < min_object_nodes {
-        for o in objects.iter_mut().filter(|o| **o == object) {
-            *o -= 1;
-        }
-    }
-    (inline, objects)
+    inline
 }
 
 fn write_layout(
@@ -208,11 +190,7 @@ fn write_layout(
     writer: &mut dyn ObjectWriter,
 ) -> Result<(), BuildError> {
     let counts: Vec<u64> = depths.iter().map(|d| d.len() as u64).collect();
-    let (inline_depths, objects) = if counts.is_empty() {
-        (0, Vec::new())
-    } else {
-        plan_objects(&counts, config.root_cap as u64, config.min_object_nodes as u64)
-    };
+    let inline = inline_depths(&counts, config.root_cap as u64);
 
     if !points.is_empty() {
         let mut sink = writer.create_object(POINTS_KEY)?;
@@ -224,27 +202,23 @@ fn write_layout(
         sink.flush().map_err(StoreError::from)?;
     }
 
-    let mut infos: Vec<DepthInfo> = counts[..inline_depths]
+    let mut infos: Vec<DepthInfo> = counts[..inline]
         .iter()
-        .map(|&count| DepthInfo { count, object: INLINE_OBJECT, offset: 0 })
+        .map(|&count| DepthInfo { count, offset: 0 })
         .collect();
-    let remote = &depths[inline_depths..];
-    let mut d = 0;
-    while d < remote.len() {
-        let object = objects[d];
-        let mut sink = writer.create_object(&nodes_key(object))?;
+    let remote = &depths[inline..];
+    if !remote.is_empty() {
+        let mut sink = writer.create_object(NODES_KEY)?;
         let mut offset = 0u64;
-        while d < remote.len() && objects[d] == object {
+        for depth in remote {
             infos.push(DepthInfo {
-                count: remote[d].len() as u64,
-                object,
+                count: depth.len() as u64,
                 offset,
             });
-            for record in &remote[d] {
+            for record in depth {
                 sink.write_all(&record.to_bytes()).map_err(StoreError::from)?;
             }
-            offset += (remote[d].len() * RECORD_BYTES) as u64;
-            d += 1;
+            offset += (depth.len() * RECORD_BYTES) as u64;
         }
         sink.flush().map_err(StoreError::from)?;
     }
@@ -253,7 +227,7 @@ fn write_layout(
         total_points: points.len() as u64,
         leaf_points: config.leaf_points,
         depths: infos,
-        inline: depths[..inline_depths].to_vec(),
+        inline: depths[..inline].to_vec(),
     };
     writer.write_object(MANIFEST_KEY, &manifest.encode())?;
     Ok(())
@@ -265,17 +239,13 @@ mod tests {
     use crate::format::Link;
 
     #[test]
-    fn plan_packs_depths_into_large_objects() {
-        // 1 + 4 + 16 + 64 + 256 = 341 ≤ 1024 inline; then 1024, 4096, 16384, 65536, 3000.
-        let counts = [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 3000];
-        let (inline, objects) = plan_objects(&counts, 1024, 65_536);
-        assert_eq!(inline, 5);
-        // Depths 5..=8 reach 87,040 ≥ 64K; the 3,000-node tail joins them.
-        assert_eq!(objects, vec![0, 0, 0, 0, 0]);
-        let (_, objects) = plan_objects(&[1, 70_000, 70_000, 10], 1024, 65_536);
-        assert_eq!(objects, vec![0, 1, 1]);
+    fn inlines_the_top_depths_up_to_root_cap() {
+        // 1 + 4 + 16 + 64 + 256 = 341 ≤ 1024; adding 1024 would exceed it.
+        assert_eq!(inline_depths(&[1, 4, 16, 64, 256, 1024, 4096], 1024), 5);
+        assert_eq!(inline_depths(&[1, 4, 16], 1024), 3);
         // The root depth is always inline, even above the cap.
-        assert_eq!(plan_objects(&[1, 5000], 1, 10).0, 1);
+        assert_eq!(inline_depths(&[1, 5000], 0), 1);
+        assert_eq!(inline_depths(&[], 1024), 0);
     }
 
     #[test]

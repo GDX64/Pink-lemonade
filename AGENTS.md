@@ -19,7 +19,7 @@ Guide for coding agents working in `pink-lemonade`.
   - `rust/progressive-tree/` (`pink-lemonade-progressive-tree`) — 1D x-ordered paged moment tree (`PagedTreeStrategy`, `PLPTREE2`) and the benchmark exporter (`examples/export_reports.rs`).
   - `rust/progressive-kdtree/` (`pink-lemonade-progressive-kdtree`) — 2D moment k-d tree (`KdTreeStrategy`): k-d permutation of the points over the shared hierarchy format.
   - `rust/progressive-ripmap/` (`pink-lemonade-progressive-ripmap`) — Moment ripmap (`RipmapStrategy`): x-hierarchy plus dense per-block y-bin moment planes (`plane_{ℓ}_{k}.bin`).
-  - `rust/progressive-quadtree/` (`pink-lemonade-progressive-quadtree`) — Classic moment quadtree (`QuadtreeStrategy`, `PLPQUAD1`): midpoint quadrant splits over the data bbox, 72-byte records (moments + child/point link), top depths inlined in the manifest and deeper depths packed into `nodes_{g}.bin` objects of ≥ 64K nodes.
+  - `rust/progressive-quadtree/` (`pink-lemonade-progressive-quadtree`) — Classic moment quadtree (`QuadtreeStrategy`, `PLPQUAD1`): midpoint quadrant splits over the data bbox, 72-byte records (moments + child/point link), top depths inlined in the manifest, deeper depths back to back in one `nodes.bin` (per-depth offset table), so every dataset is three objects.
 - `benchmarks/` — Exported reports (`benchmarks/results/latest.json`) and Jupyter notebook (`benchmarks/analysis.ipynb`).
 - `journal/` — Chronological experiment notes and benchmark ablations.
 - `requirements.txt` & `.venv/` — Root Python dependencies and virtual environment (`.venv/` gitignored).
