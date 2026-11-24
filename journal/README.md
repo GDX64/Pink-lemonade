@@ -15,3 +15,4 @@ Chronological research notes, ablations, and measured benchmark results for `pin
 - [2026-11-22: Sparse Grid Phase C (16-Byte Cells, Budgeted Column Gate, Cell Merging) and the Final Head-to-Head](./2026-11-22-sparse-grid-phase-c-and-final-head-to-head.md)
 - [2026-11-23: Salmond Tree — Sibling Groups Chosen by Gaussian Mixture Clustering](./2026-11-23-salmond-tree.md)
 - [2026-11-23: From Batched Mixture Reduction to Mergeable Summaries (design discussion)](./2026-11-23-mergeable-summaries.md)
+- [2026-11-24: Haar-Coded Density Summary — Offline Rate-Distortion Against the Moment x-Tree](./2026-11-24-haar-summary-offline.md)

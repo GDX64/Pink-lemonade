@@ -1,0 +1,12 @@
+[package]
+name = "pink-lemonade-progressive-summaries"
+version = "0.1.0"
+edition = "2024"
+description = "Offline (in-memory) node-summary experiments: Haar-coded density pyramid vs the moment x-tree, compared on rate against distortion."
+
+[dependencies]
+pink-lemonade-progressive-common = { path = "../progressive-common" }
+pink-lemonade-progressive-core = { path = "../progressive-core" }
+
+[dev-dependencies]
+pink-lemonade-progressive-harness = { path = "../progressive-harness" }

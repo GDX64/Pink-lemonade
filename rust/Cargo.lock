@@ -119,6 +119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pink-lemonade-progressive-summaries"
+version = "0.1.0"
+dependencies = [
+ "pink-lemonade-progressive-common",
+ "pink-lemonade-progressive-core",
+ "pink-lemonade-progressive-harness",
+]
+
+[[package]]
 name = "pink-lemonade-progressive-tree"
 version = "0.1.0"
 dependencies = [
